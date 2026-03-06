@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  Card,
+  CardContent,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+
 interface Session {
   id: string;
   engine: string;
@@ -9,10 +15,10 @@ interface Session {
   lastActivity: string;
 }
 
-const statusStyles: Record<string, string> = {
-  idle: "bg-green-500",
-  running: "bg-yellow-500",
-  error: "bg-red-500",
+const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  idle: "secondary",
+  running: "default",
+  error: "destructive",
 };
 
 const statusLabel: Record<string, string> = {
@@ -33,12 +39,6 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function engineIcon(engine: string): string {
-  if (engine === "claude") return "C";
-  if (engine === "codex") return "X";
-  return "?";
-}
-
 export function SessionList({
   sessions,
   selectedId,
@@ -50,64 +50,131 @@ export function SessionList({
 }) {
   if (sessions.length === 0) {
     return (
-      <div className="rounded-xl border border-neutral-200 bg-white px-5 py-12 text-center text-sm text-neutral-400">
-        No sessions found
-      </div>
+      <Card>
+        <CardContent>
+          <div
+            style={{
+              textAlign: "center",
+              padding: "var(--space-6)",
+              color: "var(--text-tertiary)",
+              fontSize: "var(--text-body)",
+            }}
+          >
+            No sessions found
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-neutral-100 text-left text-xs font-medium uppercase tracking-wide text-neutral-400">
-            <th className="px-4 py-3">Engine</th>
-            <th className="px-4 py-3">Source</th>
-            <th className="px-4 py-3">Employee</th>
-            <th className="px-4 py-3">Status</th>
-            <th className="px-4 py-3">Last Activity</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-neutral-100">
-          {sessions.map((s) => (
-            <tr
-              key={s.id}
-              onClick={() => onSelect(s.id)}
-              className={`cursor-pointer transition-colors ${
-                selectedId === s.id
-                  ? "bg-blue-50"
-                  : "hover:bg-neutral-50"
-              }`}
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-3)",
+      }}
+    >
+      {sessions.map((s) => (
+        <Card
+          key={s.id}
+          className="py-3 cursor-pointer transition-colors"
+          onClick={() => onSelect(s.id)}
+          style={{
+            cursor: "pointer",
+            borderColor:
+              selectedId === s.id
+                ? "var(--accent)"
+                : undefined,
+            background:
+              selectedId === s.id
+                ? "color-mix(in srgb, var(--accent) 5%, var(--bg-card, var(--bg)))"
+                : undefined,
+          }}
+        >
+          <CardContent className="flex items-center justify-between gap-4">
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-3)",
+                flex: 1,
+                minWidth: 0,
+              }}
             >
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-neutral-100 text-xs font-mono font-medium text-neutral-600">
-                    {engineIcon(s.engine)}
-                  </span>
-                  <span className="capitalize">{s.engine}</span>
-                </div>
-              </td>
-              <td className="px-4 py-3 text-neutral-600">{s.source}</td>
-              <td className="px-4 py-3 text-neutral-600">
-                {s.employee || "Jimmy"}
-              </td>
-              <td className="px-4 py-3">
-                <span className="inline-flex items-center gap-1.5">
+              {/* Engine icon */}
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: "var(--radius-sm, 8px)",
+                  background: "var(--fill-secondary)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--text-caption1)",
+                  fontWeight: "var(--weight-semibold)",
+                  color: "var(--text-secondary)",
+                  flexShrink: 0,
+                  textTransform: "uppercase",
+                }}
+              >
+                {s.engine.charAt(0)}
+              </div>
+
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--space-2)",
+                    marginBottom: 2,
+                  }}
+                >
                   <span
-                    className={`inline-block w-2 h-2 rounded-full ${statusStyles[s.status] || "bg-neutral-300"}`}
-                  />
-                  <span className="text-neutral-700">
-                    {statusLabel[s.status] || s.status}
+                    style={{
+                      fontSize: "var(--text-body)",
+                      fontWeight: "var(--weight-semibold)",
+                      color: "var(--text-primary)",
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {s.engine}
                   </span>
-                </span>
-              </td>
-              <td className="px-4 py-3 text-neutral-500 text-xs">
-                {relativeTime(s.lastActivity)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                  <Badge variant={statusVariant[s.status] ?? "secondary"}>
+                    {statusLabel[s.status] || s.status}
+                  </Badge>
+                </div>
+                <div
+                  style={{
+                    fontSize: "var(--text-caption1)",
+                    color: "var(--text-tertiary)",
+                    display: "flex",
+                    gap: "var(--space-3)",
+                  }}
+                >
+                  <span>{s.source}</span>
+                  <span>{s.employee || "Jimmy"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Time */}
+            <span
+              style={{
+                fontSize: "var(--text-caption2)",
+                color: "var(--text-quaternary)",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
+              }}
+            >
+              {relativeTime(s.lastActivity)}
+            </span>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

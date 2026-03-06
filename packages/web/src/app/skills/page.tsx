@@ -1,6 +1,21 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { renderMarkdown } from "@/lib/sanitize";
+import { PageLayout } from "@/components/page-layout";
+import {
+  Card,
+  CardContent,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Zap } from "lucide-react";
 
 interface Skill {
   name: string;
@@ -16,6 +31,7 @@ export default function SkillsPage() {
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [skillContent, setSkillContent] = useState<string | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
     api
@@ -27,120 +43,248 @@ export default function SkillsPage() {
 
   function openSkill(skill: Skill) {
     setSelectedSkill(skill);
+    setDialogOpen(true);
     setContentLoading(true);
     api
       .getSkill(skill.name)
       .then((data) => {
         const d = data as Record<string, unknown>;
         setSkillContent(
-          (d.content as string) || (d.skillMd as string) || JSON.stringify(d, null, 2)
+          (d.content as string) ||
+            (d.skillMd as string) ||
+            JSON.stringify(d, null, 2),
         );
       })
       .catch(() => setSkillContent("Failed to load skill content"))
       .finally(() => setContentLoading(false));
   }
 
-  function closeModal() {
+  function closeDialog() {
+    setDialogOpen(false);
     setSelectedSkill(null);
     setSkillContent(null);
   }
 
-  if (loading) {
-    return (
-      <div>
-        <div className="mb-8">
-          <h2 className="text-2xl font-semibold tracking-tight">Skills</h2>
-          <p className="text-sm text-neutral-500 mt-1">Capabilities and learned behaviors</p>
-        </div>
-        <p className="text-sm text-neutral-400">Loading...</p>
-      </div>
-    );
-  }
-
   return (
-    <div>
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Skills</h2>
-          <p className="text-sm text-neutral-500 mt-1">
-            Capabilities and learned behaviors
-          </p>
-        </div>
-        <button
-          onClick={() =>
-            alert("To create a new skill, chat with Jimmy and ask to learn something new.")
-          }
-          className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-        >
-          + Create Skill
-        </button>
-      </div>
-
-      {error && (
-        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          Failed to load skills: {error}
-        </div>
-      )}
-
-      {skills.length === 0 && !error ? (
-        <div className="rounded-xl border border-neutral-200 bg-white px-6 py-12 text-center">
-          <p className="text-sm text-neutral-400">No skills yet</p>
-          <p className="text-xs text-neutral-300 mt-1">
-            Chat with Jimmy to teach new skills
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {skills.map((skill) => (
-            <button
-              key={skill.name}
-              onClick={() => openSkill(skill)}
-              className="text-left rounded-xl border border-neutral-200 bg-white p-5 hover:border-blue-200 hover:bg-blue-50/30 transition-colors"
-            >
-              <h3 className="text-sm font-medium text-neutral-800 mb-1">
-                {skill.name}
-              </h3>
-              <p className="text-xs text-neutral-400 line-clamp-2">
-                {skill.description || "No description"}
-              </p>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Modal */}
-      {selectedSkill && (
+    <PageLayout>
+      <div
+        style={{
+          height: "100%",
+          overflowY: "auto",
+          padding: "var(--space-6)",
+        }}
+      >
+        {/* Header */}
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={closeModal}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "var(--space-6)",
+          }}
         >
-          <div
-            className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200">
-              <h3 className="text-lg font-semibold text-neutral-800">
-                {selectedSkill.name}
-              </h3>
-              <button
-                onClick={closeModal}
-                className="text-neutral-400 hover:text-neutral-600 text-lg"
-              >
-                x
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-              {contentLoading ? (
-                <p className="text-sm text-neutral-400">Loading...</p>
-              ) : (
-                <pre className="text-sm text-neutral-700 whitespace-pre-wrap font-mono leading-relaxed">
-                  {skillContent}
-                </pre>
-              )}
-            </div>
+          <div>
+            <h2
+              style={{
+                fontSize: "var(--text-title2)",
+                fontWeight: "var(--weight-bold)",
+                color: "var(--text-primary)",
+                marginBottom: "var(--space-1)",
+              }}
+            >
+              Skills
+            </h2>
+            <p
+              style={{
+                fontSize: "var(--text-body)",
+                color: "var(--text-tertiary)",
+              }}
+            >
+              Capabilities and learned behaviors
+            </p>
           </div>
+          <button
+            onClick={() =>
+              alert(
+                "To create a new skill, chat with Jimmy and ask to learn something new.",
+              )
+            }
+            style={{
+              padding: "var(--space-2) var(--space-4)",
+              borderRadius: "var(--radius-md, 12px)",
+              background:
+                "color-mix(in srgb, var(--accent) 12%, transparent)",
+              color: "var(--accent)",
+              border: "none",
+              cursor: "pointer",
+              fontSize: "var(--text-body)",
+              fontWeight: "var(--weight-medium)",
+            }}
+          >
+            + Create Skill
+          </button>
         </div>
-      )}
-    </div>
+
+        {error && (
+          <div
+            style={{
+              marginBottom: "var(--space-4)",
+              borderRadius: "var(--radius-md, 12px)",
+              background:
+                "color-mix(in srgb, var(--system-red) 10%, transparent)",
+              border:
+                "1px solid color-mix(in srgb, var(--system-red) 30%, transparent)",
+              padding: "var(--space-3) var(--space-4)",
+              fontSize: "var(--text-body)",
+              color: "var(--system-red)",
+            }}
+          >
+            Failed to load skills: {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div
+            style={{
+              textAlign: "center",
+              padding: "var(--space-8)",
+              color: "var(--text-tertiary)",
+              fontSize: "var(--text-body)",
+            }}
+          >
+            Loading...
+          </div>
+        ) : skills.length === 0 && !error ? (
+          <Card>
+            <CardContent>
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "var(--space-6)",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: "var(--text-body)",
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  No skills yet
+                </p>
+                <p
+                  style={{
+                    fontSize: "var(--text-caption1)",
+                    color: "var(--text-quaternary)",
+                    marginTop: "var(--space-1)",
+                  }}
+                >
+                  Chat with Jimmy to teach new skills
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+              gap: "var(--space-4)",
+            }}
+          >
+            {skills.map((skill) => (
+              <Card
+                key={skill.name}
+                className="py-4 cursor-pointer transition-colors hover:border-[var(--accent)]"
+                onClick={() => openSkill(skill)}
+                style={{ cursor: "pointer" }}
+              >
+                <CardContent className="flex flex-col gap-3">
+                  <div
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: "var(--radius-md, 12px)",
+                      background:
+                        "color-mix(in srgb, var(--system-yellow) 12%, transparent)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "var(--system-yellow)",
+                    }}
+                  >
+                    <Zap size={20} />
+                  </div>
+                  <div>
+                    <p
+                      style={{
+                        fontSize: "var(--text-body)",
+                        fontWeight: "var(--weight-semibold)",
+                        color: "var(--text-primary)",
+                        marginBottom: 2,
+                      }}
+                    >
+                      {skill.name}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "var(--text-caption1)",
+                        color: "var(--text-tertiary)",
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {skill.description || "No description"}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* Skill detail dialog */}
+        <Dialog open={dialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+          <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle>{selectedSkill?.name ?? "Skill"}</DialogTitle>
+              <DialogDescription>
+                {selectedSkill?.description || "Skill details"}
+              </DialogDescription>
+            </DialogHeader>
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "var(--space-2) 0",
+              }}
+            >
+              {contentLoading ? (
+                <p
+                  style={{
+                    fontSize: "var(--text-body)",
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  Loading...
+                </p>
+              ) : skillContent ? (
+                <div
+                  style={{
+                    fontSize: "var(--text-body)",
+                    lineHeight: 1.7,
+                    color: "var(--text-secondary)",
+                  }}
+                  dangerouslySetInnerHTML={{
+                    __html: renderMarkdown(skillContent),
+                  }}
+                />
+              ) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </PageLayout>
   );
 }

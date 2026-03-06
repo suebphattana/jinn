@@ -44,6 +44,13 @@ export default function DashboardPage() {
   const { events, connected } = useGateway();
 
   useEffect(() => {
+    // Check if onboarding is needed — redirect to chat if first visit
+    api.getOnboarding().then((data) => {
+      if (data.needed) {
+        window.location.href = "/chat?onboarding=1";
+      }
+    }).catch(() => {});
+
     api
       .getStatus()
       .then((data) => setStatus(data as StatusData))

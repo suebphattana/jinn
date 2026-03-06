@@ -142,12 +142,24 @@ export async function startGateway(
 
   const startTime = Date.now();
 
+  // Broadcast function (defined early so apiContext can reference it)
+  const wsClients = new Set<import("ws").WebSocket>();
+  const emit = (event: string, payload: unknown): void => {
+    const message = JSON.stringify({ event, payload, ts: Date.now() });
+    for (const client of wsClients) {
+      if (client.readyState === 1) {
+        client.send(message);
+      }
+    }
+  };
+
   // API context
   const apiContext: ApiContext = {
     config: currentConfig,
     sessionManager,
     startTime,
     getConfig: () => currentConfig,
+    emit,
   };
 
   // Resolve web UI directory — bundled into dist/web/ by postbuild script
@@ -189,20 +201,19 @@ export async function startGateway(
 
   // WebSocket server
   const wss = new WebSocketServer({ noServer: true });
-  const clients = new Set<WebSocket>();
 
   wss.on("connection", (ws) => {
-    clients.add(ws);
-    logger.info(`WebSocket client connected (${clients.size} total)`);
+    wsClients.add(ws);
+    logger.info(`WebSocket client connected (${wsClients.size} total)`);
 
     ws.on("close", () => {
-      clients.delete(ws);
-      logger.info(`WebSocket client disconnected (${clients.size} total)`);
+      wsClients.delete(ws);
+      logger.info(`WebSocket client disconnected (${wsClients.size} total)`);
     });
 
     ws.on("error", (err) => {
       logger.error(`WebSocket error: ${err.message}`);
-      clients.delete(ws);
+      wsClients.delete(ws);
     });
   });
 
@@ -216,16 +227,6 @@ export async function startGateway(
     }
   });
 
-  // Broadcast function
-  const emit = (event: string, payload: unknown): void => {
-    const message = JSON.stringify({ event, payload, ts: Date.now() });
-    for (const client of clients) {
-      if (client.readyState === 1) {
-        // WebSocket.OPEN
-        client.send(message);
-      }
-    }
-  };
 
   // Start file watchers
   startWatchers({
@@ -285,10 +286,10 @@ export async function startGateway(
     await stopWatchers();
 
     // Close WebSocket connections
-    for (const client of clients) {
+    for (const client of wsClients) {
       client.close(1001, "Server shutting down");
     }
-    clients.clear();
+    wsClients.clear();
 
     // Close WebSocket server
     await new Promise<void>((resolve) => wss.close(() => resolve()));

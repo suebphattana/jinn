@@ -25,6 +25,7 @@ export interface ApiContext {
   sessionManager: SessionManager;
   startTime: number;
   getConfig: () => JimmyConfig;
+  emit: (event: string, payload: unknown) => void;
 }
 
 function readBody(req: HttpRequest): Promise<string> {
@@ -117,18 +118,27 @@ export async function handleApiRequest(
     // POST /api/sessions
     if (method === "POST" && pathname === "/api/sessions") {
       const body = JSON.parse(await readBody(req));
-      if (!body.prompt) return badRequest(res, "prompt is required");
+      const prompt = body.prompt || body.message;
+      if (!prompt) return badRequest(res, "prompt or message is required");
       const config = context.getConfig();
-      const engine = body.engine || config.engines.default;
+      const engineName = body.engine || config.engines.default;
       const session = createSession({
-        engine,
+        engine: engineName,
         source: "web",
         sourceRef: `web:${Date.now()}`,
         employee: body.employee,
       });
-      // TODO: actually run the session via the session manager
-      // For now just create and return it
       logger.info(`Web session created: ${session.id}`);
+
+      // Run engine asynchronously — respond immediately, push result via WebSocket
+      const engine = context.sessionManager.getEngine(engineName);
+      if (engine) {
+        context.emit("session:started", { sessionId: session.id });
+        runWebSession(session, prompt, engine, config, context).catch((err) => {
+          logger.error(`Web session ${session.id} error: ${err}`);
+        });
+      }
+
       return json(res, session, 201);
     }
 
@@ -138,13 +148,19 @@ export async function handleApiRequest(
       const session = getSession(params.id);
       if (!session) return notFound(res);
       const body = JSON.parse(await readBody(req));
-      if (!body.message) return badRequest(res, "message is required");
-      updateSession(params.id, {
-        lastActivity: new Date().toISOString(),
+      const prompt = body.message || body.prompt;
+      if (!prompt) return badRequest(res, "message is required");
+
+      const config = context.getConfig();
+      const engine = context.sessionManager.getEngine(session.engine);
+      if (!engine) return serverError(res, `Engine "${session.engine}" not available`);
+
+      context.emit("session:started", { sessionId: session.id });
+      runWebSession(session, prompt, engine, config, context).catch((err) => {
+        logger.error(`Web session ${session.id} error: ${err}`);
       });
-      // TODO: route message through session manager
-      logger.info(`Message sent to session ${params.id}`);
-      return json(res, { status: "queued", sessionId: params.id });
+
+      return json(res, { status: "queued", sessionId: session.id });
     }
 
     // GET /api/cron
@@ -284,10 +300,100 @@ export async function handleApiRequest(
       return json(res, { lines });
     }
 
+    // GET /api/onboarding — check if onboarding is needed
+    if (method === "GET" && pathname === "/api/onboarding") {
+      const sessions = listSessions();
+      const hasEmployees = fs.existsSync(ORG_DIR) &&
+        fs.readdirSync(ORG_DIR, { recursive: true }).some(
+          (f) => String(f).endsWith(".yaml") && !String(f).endsWith("department.yaml")
+        );
+      return json(res, {
+        needed: sessions.length === 0 && !hasEmployees,
+        sessionsCount: sessions.length,
+        hasEmployees,
+      });
+    }
+
     return notFound(res);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error(`API error: ${msg}`);
     return serverError(res, msg);
+  }
+}
+
+/**
+ * Run an engine for a web session and emit results via WebSocket.
+ */
+import { buildContext } from "../sessions/context.js";
+import { JIMMY_HOME } from "../shared/paths.js";
+import type { Engine, Session } from "../shared/types.js";
+
+async function runWebSession(
+  session: Session,
+  prompt: string,
+  engine: Engine,
+  config: JimmyConfig,
+  context: ApiContext,
+): Promise<void> {
+  updateSession(session.id, {
+    status: "running",
+    lastActivity: new Date().toISOString(),
+  });
+
+  try {
+    const systemPrompt = buildContext({
+      source: "web",
+      channel: session.sourceRef,
+      user: "web-user",
+      // employee could be looked up here if session.employee is set
+    });
+
+    const engineConfig = session.engine === "codex"
+      ? config.engines.codex
+      : config.engines.claude;
+
+    const result = await engine.run({
+      prompt,
+      resumeSessionId: session.engineSessionId ?? undefined,
+      systemPrompt,
+      cwd: JIMMY_HOME,
+      bin: engineConfig.bin,
+      model: session.model ?? engineConfig.model,
+    });
+
+    updateSession(session.id, {
+      engineSessionId: result.sessionId,
+      status: "idle",
+      lastActivity: new Date().toISOString(),
+      lastError: result.error ?? null,
+    });
+
+    context.emit("session:completed", {
+      sessionId: session.id,
+      result: result.result,
+      error: result.error || null,
+      cost: result.cost,
+      durationMs: result.durationMs,
+    });
+
+    logger.info(
+      `Web session ${session.id} completed` +
+      (result.durationMs ? ` in ${result.durationMs}ms` : "") +
+      (result.cost ? ` ($${result.cost.toFixed(4)})` : ""),
+    );
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    updateSession(session.id, {
+      status: "error",
+      lastActivity: new Date().toISOString(),
+      lastError: errMsg,
+    });
+    context.emit("session:completed", {
+      sessionId: session.id,
+      result: null,
+      error: errMsg,
+    });
+    logger.error(`Web session ${session.id} error: ${errMsg}`);
   }
 }

@@ -10,7 +10,7 @@ This skill activates on Jimmy's first run, or when the user explicitly asks to g
 
 Greet the user warmly. Introduce Jimmy as their AI-powered team management system. Keep it brief and friendly.
 
-Example: "Welcome to Jimmy! I'm here to help you build and manage your AI-powered team. Let's get you set up."
+Example: "Welcome! I'm Jimmy, here to help you build and manage your AI-powered team. Let's get you set up."
 
 ### 2. Learn About Their Projects
 

@@ -52,4 +52,6 @@ export const api = {
     put<Record<string, unknown>>("/api/config", data),
   getLogs: (lines?: number) =>
     get<Record<string, unknown>>(`/api/logs${lines ? `?lines=${lines}` : ""}`),
+  getOnboarding: () =>
+    get<{ needed: boolean; sessionsCount: number; hasEmployees: boolean }>("/api/onboarding"),
 };

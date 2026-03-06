@@ -32,6 +32,13 @@ export class SessionManager {
   }
 
   /**
+   * Get an engine by name.
+   */
+  getEngine(name: string): Engine | undefined {
+    return this.engines.get(name);
+  }
+
+  /**
    * Main entry point: route an incoming message to the right session.
    */
   async route(msg: IncomingMessage, connector: Connector, employee?: Employee): Promise<void> {

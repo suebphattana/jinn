@@ -1,5 +1,6 @@
 "use client";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useGateway } from "@/hooks/use-gateway";
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
@@ -13,23 +14,101 @@ interface Message {
   model?: string;
 }
 
-export default function ChatPage() {
+const ONBOARDING_PROMPT = `This is your first time being activated. The user just set up Jimmy and opened the web dashboard for the first time.
+
+Read your CLAUDE.md instructions and the onboarding skill at ~/.jimmy/skills/onboarding/SKILL.md, then follow the onboarding flow:
+- Greet the user warmly and introduce yourself as Jimmy
+- Briefly explain what you can do (manage cron jobs, hire AI employees, connect to Slack, etc.)
+- Check if ~/.openclaw/ exists and mention migration if so
+- Ask the user what they'd like to set up first`;
+
+export default function ChatPageWrapper() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen text-neutral-400">Loading...</div>}>
+      <ChatPage />
+    </Suspense>
+  );
+}
+
+function ChatPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const { events } = useGateway();
+  const searchParams = useSearchParams();
+  const onboardingTriggered = useRef(false);
+
+  // Auto-trigger onboarding on first visit
+  useEffect(() => {
+    if (onboardingTriggered.current) return;
+
+    const shouldOnboard = searchParams.get("onboarding") === "1";
+
+    if (shouldOnboard) {
+      onboardingTriggered.current = true;
+      triggerOnboarding();
+    } else {
+      // Also check via API in case user navigated directly to /chat
+      api.getOnboarding().then((data) => {
+        if (data.needed && !onboardingTriggered.current) {
+          onboardingTriggered.current = true;
+          triggerOnboarding();
+        }
+      }).catch(() => {});
+    }
+  }, [searchParams]);
+
+  function triggerOnboarding() {
+    setMessages([{
+      role: "assistant",
+      content: "Starting up for the first time...",
+    }]);
+    setLoading(true);
+
+    api.createSession({
+      source: "web",
+      prompt: ONBOARDING_PROMPT,
+    }).then((session) => {
+      const id = String((session as Record<string, unknown>).id);
+      setSelectedId(id);
+      setRefreshKey((k) => k + 1);
+      // Result will come via WebSocket session:completed event
+    }).catch((err) => {
+      setLoading(false);
+      setMessages([{
+        role: "assistant",
+        content: `Failed to start onboarding: ${err instanceof Error ? err.message : "Unknown error"}`,
+      }]);
+    });
+  }
 
   // Listen for session:completed events to update
   useEffect(() => {
-    if (events.length === 0 || !selectedId) return;
+    if (events.length === 0) return;
     const latest = events[events.length - 1];
     if (latest.event === "session:completed") {
       const payload = latest.payload as Record<string, unknown>;
-      if (payload.sessionId === selectedId) {
+      // Match by selectedId or pick up the session if we're waiting for onboarding
+      const matchesSession = selectedId && payload.sessionId === selectedId;
+      const isOnboarding = !selectedId && onboardingTriggered.current;
+      if (matchesSession || isOnboarding) {
+        if (isOnboarding && payload.sessionId) {
+          setSelectedId(String(payload.sessionId));
+        }
         setLoading(false);
-        // Refresh the session to get updated messages
-        loadSession(selectedId);
+        if (payload.result) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant" as const, content: String(payload.result) },
+          ]);
+        }
+        if (payload.error && !payload.result) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant" as const, content: `Error: ${payload.error}` },
+          ]);
+        }
         setRefreshKey((k) => k + 1);
       }
     }
@@ -76,73 +155,32 @@ export default function ChatPage() {
 
   const handleSend = useCallback(
     async (message: string) => {
-      // Add user message to UI immediately
-      const userMsg: Message = { role: "user", content: message };
-      setMessages((prev) => [...prev, userMsg]);
+      // Don't show the raw onboarding prompt as a user message
+      const isOnboardingMsg = message === ONBOARDING_PROMPT;
+      if (!isOnboardingMsg) {
+        const userMsg: Message = { role: "user", content: message };
+        setMessages((prev) => [...prev, userMsg]);
+      }
       setLoading(true);
 
       try {
         let sessionId = selectedId;
 
         if (!sessionId) {
-          // Create a new session
+          // Create a new session — API returns immediately, result comes via WebSocket
           const session = (await api.createSession({
             source: "web",
-            message,
+            prompt: message,
           })) as Record<string, unknown>;
           sessionId = String(session.id);
           setSelectedId(sessionId);
           setRefreshKey((k) => k + 1);
-
-          // Check response for assistant message
-          const result = session.result || session.response;
-          if (result) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant" as const,
-                content: String(
-                  typeof result === "object"
-                    ? (result as Record<string, unknown>).content ||
-                        (result as Record<string, unknown>).text ||
-                        JSON.stringify(result)
-                    : result
-                ),
-                engine: session.engine ? String(session.engine) : undefined,
-                model: session.model ? String(session.model) : undefined,
-              },
-            ]);
-            setLoading(false);
-          }
-          // If no result yet, WebSocket will notify when done
+          // Wait for session:completed WebSocket event (handled in useEffect above)
         } else {
-          // Send message to existing session
-          const response = (await api.sendMessage(sessionId, {
-            message,
-          })) as Record<string, unknown>;
-
-          const result = response.result || response.response;
-          if (result) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant" as const,
-                content: String(
-                  typeof result === "object"
-                    ? (result as Record<string, unknown>).content ||
-                        (result as Record<string, unknown>).text ||
-                        JSON.stringify(result)
-                    : result
-                ),
-                engine: response.engine
-                  ? String(response.engine)
-                  : undefined,
-                model: response.model ? String(response.model) : undefined,
-              },
-            ]);
-            setLoading(false);
-          }
+          // Send message to existing session — result comes via WebSocket
+          await api.sendMessage(sessionId, { message });
           setRefreshKey((k) => k + 1);
+          // Wait for session:completed WebSocket event
         }
       } catch (err) {
         setLoading(false);

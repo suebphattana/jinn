@@ -12,6 +12,8 @@ import { ClaudeEngine } from "../engines/claude.js";
 import { CodexEngine } from "../engines/codex.js";
 import { handleApiRequest, type ApiContext } from "./api.js";
 import { startWatchers, stopWatchers } from "./watcher.js";
+import type { Connector } from "../shared/types.js";
+import { SlackConnector } from "../connectors/slack/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -88,6 +90,27 @@ export async function startGateway(
 
   // Session manager
   const sessionManager = new SessionManager(config, engines);
+
+  // Start connectors
+  const connectors: Connector[] = [];
+
+  if (config.connectors?.slack?.appToken && config.connectors?.slack?.botToken) {
+    try {
+      const slack = new SlackConnector({
+        appToken: config.connectors.slack.appToken,
+        botToken: config.connectors.slack.botToken,
+      });
+      slack.onMessage((msg) => {
+        sessionManager.route(msg, slack).catch((err) => {
+          logger.error(`Slack route error: ${err instanceof Error ? err.message : err}`);
+        });
+      });
+      await slack.start();
+      connectors.push(slack);
+    } catch (err) {
+      logger.error(`Failed to start Slack connector: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   // Mutable config reference for hot-reload
   let currentConfig = config;
@@ -213,6 +236,15 @@ export async function startGateway(
   // Return cleanup function
   return async () => {
     logger.info("Gateway cleanup starting...");
+
+    // Stop connectors
+    for (const connector of connectors) {
+      try {
+        await connector.stop();
+      } catch (err) {
+        logger.error(`Failed to stop ${connector.name} connector: ${err instanceof Error ? err.message : err}`);
+      }
+    }
 
     // Stop watchers
     await stopWatchers();

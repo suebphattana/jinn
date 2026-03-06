@@ -34,7 +34,7 @@ export class SessionManager {
   /**
    * Main entry point: route an incoming message to the right session.
    */
-  async route(msg: IncomingMessage, connector: Connector): Promise<void> {
+  async route(msg: IncomingMessage, connector: Connector, employee?: Employee): Promise<void> {
     // Check for commands first
     if (await this.handleCommand(msg, connector)) return;
 
@@ -43,11 +43,13 @@ export class SessionManager {
 
     if (!session) {
       session = createSession({
-        engine: this.config.engines.default,
+        engine: employee?.engine ?? this.config.engines.default,
         source: msg.source,
         sourceRef,
+        employee: employee?.name ?? undefined,
+        model: employee?.model ?? undefined,
       });
-      logger.info(`Created new session ${session.id} for ${sourceRef}`);
+      logger.info(`Created new session ${session.id} for ${sourceRef}${employee ? ` (employee: ${employee.name})` : ""}`);
     }
 
     const target: Target = {
@@ -60,7 +62,7 @@ export class SessionManager {
       .filter((p): p is string => !!p);
 
     await this.queue.enqueue(sourceRef, () =>
-      this.runSession(session, msg.text, msg.user, attachmentPaths, connector, target),
+      this.runSession(session, msg.text, msg.user, attachmentPaths, connector, target, employee),
     );
   }
 
@@ -74,6 +76,7 @@ export class SessionManager {
     attachments: string[],
     connector: Connector,
     target: Target,
+    employee?: Employee,
   ): Promise<void> {
     const engine = this.engines.get(session.engine);
     if (!engine) {
@@ -95,6 +98,7 @@ export class SessionManager {
         channel: target.channel,
         thread: target.thread,
         user,
+        employee,
       });
 
       const engineConfig = session.engine === "codex"

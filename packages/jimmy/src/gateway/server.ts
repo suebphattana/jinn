@@ -14,6 +14,10 @@ import { handleApiRequest, type ApiContext } from "./api.js";
 import { startWatchers, stopWatchers } from "./watcher.js";
 import type { Connector } from "../shared/types.js";
 import { SlackConnector } from "../connectors/slack/index.js";
+import { loadJobs } from "../cron/jobs.js";
+import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
+import { scanOrg, extractMention } from "./org.js";
+import type { Employee } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,8 +95,13 @@ export async function startGateway(
   // Session manager
   const sessionManager = new SessionManager(config, engines);
 
+  // Build employee registry
+  let employeeRegistry = scanOrg();
+  logger.info(`Loaded ${employeeRegistry.size} employee(s) from org directory`);
+
   // Start connectors
   const connectors: Connector[] = [];
+  const connectorMap = new Map<string, Connector>();
 
   if (config.connectors?.slack?.appToken && config.connectors?.slack?.botToken) {
     try {
@@ -107,10 +116,16 @@ export async function startGateway(
       });
       await slack.start();
       connectors.push(slack);
+      connectorMap.set("slack", slack);
     } catch (err) {
       logger.error(`Failed to start Slack connector: ${err instanceof Error ? err.message : err}`);
     }
   }
+
+  // Start cron scheduler
+  const cronJobs = loadJobs();
+  startScheduler(cronJobs, engines, config, connectorMap);
+  logger.info(`Loaded ${cronJobs.length} cron job(s)`);
 
   // Mutable config reference for hot-reload
   let currentConfig = config;
@@ -211,9 +226,10 @@ export async function startGateway(
       }
     },
     onCronReload: () => {
-      logger.info("Cron jobs reloaded");
+      const updatedJobs = loadJobs();
+      reloadScheduler(updatedJobs);
+      logger.info(`Cron jobs reloaded (${updatedJobs.length} job(s))`);
       emit("cron:reloaded", {});
-      // TODO: integrate with cron scheduler in Task 6.1
     },
     onOrgChange: () => {
       logger.info("Org directory changed");
@@ -236,6 +252,9 @@ export async function startGateway(
   // Return cleanup function
   return async () => {
     logger.info("Gateway cleanup starting...");
+
+    // Stop cron scheduler
+    stopScheduler();
 
     // Stop connectors
     for (const connector of connectors) {

@@ -60,7 +60,7 @@ export class SessionManager {
       .filter((p): p is string => !!p);
 
     await this.queue.enqueue(sourceRef, () =>
-      this.runSession(session, msg.text, attachmentPaths, connector, target),
+      this.runSession(session, msg.text, msg.user, attachmentPaths, connector, target),
     );
   }
 
@@ -70,6 +70,7 @@ export class SessionManager {
   private async runSession(
     session: Session,
     prompt: string,
+    user: string,
     attachments: string[],
     connector: Connector,
     target: Target,
@@ -93,7 +94,7 @@ export class SessionManager {
         source: session.source,
         channel: target.channel,
         thread: target.thread,
-        user: prompt, // user text as context
+        user,
       });
 
       const engineConfig = session.engine === "codex"

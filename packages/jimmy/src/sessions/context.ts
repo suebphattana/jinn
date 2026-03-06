@@ -13,7 +13,9 @@ export function buildContext(opts: {
   ctx += `\nUser: ${opts.user}\n`;
 
   if (opts.employee) {
-    ctx = opts.employee.persona + `\n\nSession source: ${opts.source}, channel: ${opts.channel}\nUser: ${opts.user}\n`;
+    ctx = opts.employee.persona + `\n\nSession source: ${opts.source}, channel: ${opts.channel}`;
+    if (opts.thread) ctx += `, thread: ${opts.thread}`;
+    ctx += `\nUser: ${opts.user}\n`;
   }
 
   return ctx;

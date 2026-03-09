@@ -11,14 +11,15 @@ import type { Message, MediaAttachment } from '@/lib/conversations'
 import { saveIntermediateMessages, loadIntermediateMessages, clearIntermediateMessages } from '@/lib/conversations'
 import { useSettings } from '@/app/settings-provider'
 
-function getOnboardingPrompt(portalName: string) {
+function getOnboardingPrompt(portalName: string, userMessage: string) {
   return `This is your first time being activated. The user just set up ${portalName} and opened the web dashboard for the first time.
 
-Read your CLAUDE.md instructions and the onboarding skill at ~/.jimmy/skills/onboarding/SKILL.md, then follow the onboarding flow:
+Read your CLAUDE.md instructions and the onboarding skill at ~/.jinn/skills/onboarding/SKILL.md, then follow the onboarding flow:
 - Greet the user warmly and introduce yourself as ${portalName}
 - Briefly explain what you can do (manage cron jobs, hire AI employees, connect to Slack, etc.)
-- Check if ~/.openclaw/ exists and mention migration if so
-- Ask the user what they'd like to set up first`
+- Ask the user what they'd like to set up first
+
+The user said: "${userMessage}"`
 }
 
 export default function ChatPageWrapper() {
@@ -57,6 +58,8 @@ function ChatPage() {
   const { events, connectionSeq } = useGateway()
   const searchParams = useSearchParams()
   const onboardingTriggered = useRef(false)
+  // When set, the current session is a stub awaiting the user's first message
+  const stubSessionRef = useRef(false)
 
   // Close more menu on outside click
   useEffect(() => {
@@ -97,29 +100,18 @@ function ChatPage() {
   }, [searchParams])
 
   function triggerOnboarding() {
-    setMessages([{
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: 'Starting up for the first time...',
-      timestamp: Date.now(),
-    }])
-    setLoading(true)
-
-    api.createSession({
-      source: 'web',
-      prompt: getOnboardingPrompt(portalName),
+    // Create a stub session with a greeting — engine does NOT run yet.
+    // The real onboarding prompt fires when the user sends their first message.
+    api.createStubSession({
+      greeting: `Hey! 👋 Say hi when you're ready to get started.`,
+      title: 'Welcome',
     }).then((session) => {
       const id = String((session as Record<string, unknown>).id)
+      stubSessionRef.current = true
       setSelectedId(id)
       setRefreshKey((k) => k + 1)
-    }).catch((err) => {
-      setLoading(false)
-      setMessages([{
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: `Failed to start onboarding: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        timestamp: Date.now(),
-      }])
+    }).catch(() => {
+      // Silently fail — user can still start a normal chat
     })
   }
 
@@ -141,8 +133,7 @@ function ChatPage() {
     const payload = latest.payload as Record<string, unknown>
 
     const matchesSession = selectedId && payload.sessionId === selectedId
-    const isOnboarding = !selectedId && onboardingTriggered.current
-    if (!matchesSession && !isOnboarding) return
+    if (!matchesSession) return
 
     if (latest.event === 'session:delta') {
       const deltaType = String(payload.type || 'text')
@@ -213,10 +204,6 @@ function ChatPage() {
     }
 
     if (latest.event === 'session:completed') {
-      if (isOnboarding && payload.sessionId) {
-        setSelectedId(String(payload.sessionId))
-      }
-
       // Clear streaming state
       streamingTextRef.current = ''
       setStreamingText('')
@@ -376,26 +363,30 @@ function ChatPage() {
 
   const handleSend = useCallback(
     async (message: string, media?: MediaAttachment[], interrupt?: boolean) => {
-      const isOnboardingMsg = message === getOnboardingPrompt(portalName)
-      if (!isOnboardingMsg) {
-        const userMsg: Message = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: message,
-          timestamp: Date.now(),
-          media,
-        }
-        setMessages((prev) => {
-          intermediateStartRef.current = prev.length + 1 // after the user message
-          return [...prev, userMsg]
-        })
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: message,
+        timestamp: Date.now(),
+        media,
       }
+      setMessages((prev) => {
+        intermediateStartRef.current = prev.length + 1 // after the user message
+        return [...prev, userMsg]
+      })
       setLoading(true)
 
       try {
         let sessionId = selectedId
 
-        if (!sessionId) {
+        // If this is a stub session (lazy onboarding), the first user message
+        // triggers the real onboarding prompt sent to the engine.
+        if (sessionId && stubSessionRef.current) {
+          stubSessionRef.current = false
+          const onboardingPrompt = getOnboardingPrompt(portalName, message)
+          await api.sendMessage(sessionId, { message: onboardingPrompt })
+          setRefreshKey((k) => k + 1)
+        } else if (!sessionId) {
           const session = (await api.createSession({
             source: 'web',
             prompt: message,
@@ -420,7 +411,7 @@ function ChatPage() {
         ])
       }
     },
-    [selectedId]
+    [selectedId, portalName]
   )
 
   const handleDeleteSession = useCallback(async (id: string) => {

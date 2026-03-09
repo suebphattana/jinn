@@ -200,6 +200,25 @@ export async function handleApiRequest(
       return json(res, children);
     }
 
+    // POST /api/sessions/stub — create a session with a pre-populated assistant
+    // message but do NOT run the engine. Used for lazy onboarding.
+    if (method === "POST" && pathname === "/api/sessions/stub") {
+      const body = JSON.parse(await readBody(req));
+      const greeting = body.greeting || "Hey! Say hi when you're ready to get started.";
+      const config = context.getConfig();
+      const engineName = body.engine || config.engines.default;
+      const session = createSession({
+        engine: engineName,
+        source: "web",
+        sourceRef: `web:${Date.now()}`,
+        employee: body.employee,
+        title: body.title,
+      });
+      insertMessage(session.id, "assistant", greeting);
+      logger.info(`Stub session created: ${session.id}`);
+      return json(res, session, 201);
+    }
+
     // POST /api/sessions
     if (method === "POST" && pathname === "/api/sessions") {
       const body = JSON.parse(await readBody(req));
@@ -386,6 +405,72 @@ export async function handleApiRequest(
       return json(res, { status: "ok" });
     }
 
+    // GET /api/skills/search?q=<query> — search the skills.sh registry
+    if (method === "GET" && pathname === "/api/skills/search") {
+      const query = url.searchParams.get("q") || "";
+      if (!query) return badRequest(res, "q parameter is required");
+      try {
+        const { execSync } = await import("node:child_process");
+        const output = execSync(`npx skills find ${JSON.stringify(query)}`, {
+          encoding: "utf-8",
+          timeout: 30000,
+        });
+        const results = parseSkillsSearchOutput(output);
+        return json(res, results);
+      } catch (err) {
+        const msg = err instanceof Error ? (err as any).stderr || err.message : String(err);
+        return json(res, { results: [], error: msg });
+      }
+    }
+
+    // GET /api/skills/manifest — return skills.json contents
+    if (method === "GET" && pathname === "/api/skills/manifest") {
+      const { readManifest } = await import("../cli/skills.js");
+      return json(res, readManifest());
+    }
+
+    // POST /api/skills/install — install a skill from skills.sh
+    if (method === "POST" && pathname === "/api/skills/install") {
+      const body = JSON.parse(await readBody(req));
+      const source = body.source;
+      if (!source) return badRequest(res, "source is required");
+      try {
+        const {
+          snapshotDirs, diffSnapshots, copySkillToInstance,
+          upsertManifest, extractSkillName, findExistingSkill,
+        } = await import("../cli/skills.js");
+        const { execSync } = await import("node:child_process");
+
+        const before = snapshotDirs();
+        execSync(`npx skills add ${JSON.stringify(source)} -g -y`, {
+          encoding: "utf-8",
+          timeout: 60000,
+        });
+        const after = snapshotDirs();
+        const newDirs = diffSnapshots(before, after);
+
+        let skillName: string;
+        if (newDirs.length > 0) {
+          const installed = newDirs[0];
+          skillName = installed.name;
+          copySkillToInstance(installed.name, path.join(installed.dir, installed.name));
+        } else {
+          skillName = extractSkillName(source);
+          const existing = findExistingSkill(skillName);
+          if (existing) {
+            copySkillToInstance(existing.name, existing.dir);
+          } else {
+            return serverError(res, "Skill installed globally but could not locate the directory");
+          }
+        }
+        upsertManifest(skillName, source);
+        return json(res, { status: "installed", name: skillName });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return serverError(res, msg);
+      }
+    }
+
     // GET /api/skills
     if (method === "GET" && pathname === "/api/skills") {
       if (!fs.existsSync(SKILLS_DIR)) return json(res, []);
@@ -423,6 +508,17 @@ export async function handleApiRequest(
       if (!fs.existsSync(skillMd)) return notFound(res);
       const content = fs.readFileSync(skillMd, "utf-8");
       return json(res, { name: params.name, content });
+    }
+
+    // DELETE /api/skills/:name — remove a skill
+    if (method === "DELETE" && params) {
+      const skillDir = path.join(SKILLS_DIR, params.name);
+      if (!fs.existsSync(skillDir)) return notFound(res);
+      fs.rmSync(skillDir, { recursive: true, force: true });
+      const { removeFromManifest } = await import("../cli/skills.js");
+      removeFromManifest(params.name);
+      logger.info(`Skill removed via API: ${params.name}`);
+      return json(res, { status: "removed", name: params.name });
     }
 
     // GET /api/config
@@ -587,6 +683,52 @@ export async function handleApiRequest(
     logger.error(`API error: ${msg}`);
     return serverError(res, msg);
   }
+}
+
+/**
+ * Parse the output of `npx skills find <query>` into structured results.
+ *
+ * Format:
+ * ```
+ * owner/repo@skill-name  <N> installs
+ * └ https://skills.sh/owner/repo/skill-name
+ * ```
+ */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function parseSkillsSearchOutput(
+  output: string,
+): Array<{ name: string; source: string; url: string; installs: number }> {
+  const results: Array<{ name: string; source: string; url: string; installs: number }> = [];
+  const lines = output.trim().split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const headerLine = stripAnsi(lines[i]).trim();
+    // Match "owner/repo@skill-name  <N> installs"
+    const headerMatch = headerLine.match(/^(\S+)\s+(\d+)\s+installs?$/);
+    if (!headerMatch) continue;
+
+    const source = headerMatch[1];
+    const installs = parseInt(headerMatch[2], 10);
+    const atIdx = source.lastIndexOf("@");
+    const name = atIdx > 0 ? source.slice(atIdx + 1) : source;
+
+    // Next line should be the URL
+    let url = "";
+    if (i + 1 < lines.length) {
+      const urlLine = stripAnsi(lines[i + 1]).trim();
+      const urlMatch = urlLine.match(/[└]\s*(https?:\/\/\S+)/);
+      if (urlMatch) {
+        url = urlMatch[1];
+        i++; // consume the URL line
+      }
+    }
+
+    results.push({ name, source, url, installs });
+  }
+  return results;
 }
 
 /**

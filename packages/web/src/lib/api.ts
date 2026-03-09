@@ -59,6 +59,8 @@ export const api = {
   deleteSession: (id: string) => del<Record<string, unknown>>(`/api/sessions/${id}`),
   createSession: (data: Record<string, unknown>) =>
     post<Record<string, unknown>>("/api/sessions", data),
+  createStubSession: (data: Record<string, unknown>) =>
+    post<Record<string, unknown>>("/api/sessions/stub", data),
   sendMessage: (id: string, data: Record<string, unknown>) =>
     post<Record<string, unknown>>(`/api/sessions/${id}/message`, data),
   getCronJobs: () => get<Record<string, unknown>[]>("/api/cron"),

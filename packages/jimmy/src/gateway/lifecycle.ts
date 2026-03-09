@@ -2,7 +2,7 @@ import { fork } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PID_FILE } from "../shared/paths.js";
+import { PID_FILE, JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
 import type { JinnConfig } from "../shared/types.js";
 import { startGateway } from "./server.js";
@@ -50,7 +50,7 @@ export function startDaemon(config: JinnConfig): void {
   const child = fork(entryScript, [], {
     detached: true,
     stdio: "ignore",
-    env: { ...process.env },
+    env: { ...process.env, JINN_HOME },
   });
 
   if (child.pid) {

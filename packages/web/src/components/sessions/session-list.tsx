@@ -13,20 +13,26 @@ interface Session {
   id: string;
   engine: string;
   source: string;
+  connector: string | null;
+  sessionKey: string;
   employee: string | null;
   title: string | null;
   status: "idle" | "running" | "error";
+  transportState?: "idle" | "queued" | "running" | "error";
+  queueDepth?: number;
   lastActivity: string;
 }
 
 const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   idle: "secondary",
+  queued: "outline",
   running: "default",
   error: "destructive",
 };
 
 const statusLabel: Record<string, string> = {
   idle: "Idle",
+  queued: "Queued",
   running: "Running",
   error: "Error",
 };
@@ -179,7 +185,7 @@ export function SessionList({
                       {s.title || s.employee || portalName}
                     </span>
                     <Badge variant={statusVariant[s.status] ?? "secondary"}>
-                      {statusLabel[s.status] || s.status}
+                      {statusLabel[s.transportState || s.status] || s.transportState || s.status}
                     </Badge>
                   </div>
                   <div
@@ -190,8 +196,9 @@ export function SessionList({
                       gap: "var(--space-3)",
                     }}
                   >
-                    <span>{s.source}</span>
+                    <span>{s.connector || s.source}</span>
                     <span>{s.employee || portalName}</span>
+                    {typeof s.queueDepth === "number" && s.queueDepth > 0 ? <span>Queue {s.queueDepth}</span> : null}
                   </div>
                 </div>
               </div>

@@ -40,7 +40,13 @@ interface Config {
     codex?: { bin?: string; model?: string; effortLevel?: string }
   }
   connectors?: {
-    slack?: { appToken?: string; botToken?: string }
+    slack?: {
+      appToken?: string
+      botToken?: string
+      shareSessionInChannel?: boolean
+      allowFrom?: string | string[]
+      ignoreOldMessagesOnBoot?: boolean
+    }
     web?: Record<string, never>
   }
   logging?: {
@@ -964,6 +970,36 @@ export default function SettingsPage() {
                       updateConfig(["connectors", "slack", "botToken"], v)
                     }
                     placeholder="xoxb-..."
+                  />
+                </FieldRow>
+                <FieldRow label="Share Session in Channel">
+                  <ToggleSwitch
+                    checked={config.connectors?.slack?.shareSessionInChannel ?? false}
+                    onChange={(v) =>
+                      updateConfig(["connectors", "slack", "shareSessionInChannel"], v)
+                    }
+                  />
+                </FieldRow>
+                <FieldRow label="Allowed Users">
+                  <SettingsInput
+                    value={Array.isArray(config.connectors?.slack?.allowFrom)
+                      ? config.connectors?.slack?.allowFrom?.join(", ")
+                      : config.connectors?.slack?.allowFrom ?? ""}
+                    onChange={(v) =>
+                      updateConfig(
+                        ["connectors", "slack", "allowFrom"],
+                        v.trim() ? v.split(",").map((entry) => entry.trim()).filter(Boolean) : undefined,
+                      )
+                    }
+                    placeholder="U123, U456"
+                  />
+                </FieldRow>
+                <FieldRow label="Ignore Old Messages on Boot">
+                  <ToggleSwitch
+                    checked={config.connectors?.slack?.ignoreOldMessagesOnBoot ?? true}
+                    onChange={(v) =>
+                      updateConfig(["connectors", "slack", "ignoreOldMessagesOnBoot"], v)
+                    }
                   />
                 </FieldRow>
 

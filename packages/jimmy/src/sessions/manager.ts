@@ -1,29 +1,39 @@
 import type {
-  Engine,
   Connector,
-  IncomingMessage,
-  Session,
-  JinnConfig,
   Employee,
+  Engine,
+  IncomingMessage,
+  JinnConfig,
+  Session,
   Target,
 } from "../shared/types.js";
 import {
   createSession,
-  getSessionBySourceRef,
-  updateSession,
   deleteSession,
+  getSessionBySessionKey,
   insertMessage,
+  updateSession,
 } from "./registry.js";
 import { buildContext } from "./context.js";
 import { SessionQueue } from "./queue.js";
 import { JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
+import { loadJobs } from "../cron/jobs.js";
+import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
+
+export interface RouteOptions {
+  employee?: Employee;
+  engine?: string;
+  model?: string;
+  title?: string;
+}
 
 export class SessionManager {
   private config: JinnConfig;
   private engines: Map<string, Engine>;
   private connectorNames: string[];
   private queue = new SessionQueue();
+  private connectorProvider: () => Map<string, Connector> = () => new Map();
 
   constructor(
     config: JinnConfig,
@@ -35,69 +45,70 @@ export class SessionManager {
     this.connectorNames = connectorNames;
   }
 
-  /**
-   * Get an engine by name.
-   */
+  setConnectorProvider(provider: () => Map<string, Connector>): void {
+    this.connectorProvider = provider;
+  }
+
   getEngine(name: string): Engine | undefined {
     return this.engines.get(name);
   }
 
-  /**
-   * Get the session queue (used by api.ts for mid-turn handling).
-   */
   getQueue(): SessionQueue {
     return this.queue;
   }
 
-  /**
-   * Main entry point: route an incoming message to the right session.
-   */
-  async route(msg: IncomingMessage, connector: Connector, employee?: Employee): Promise<void> {
-    // Check for commands first
+  async route(msg: IncomingMessage, connector: Connector, opts: RouteOptions = {}): Promise<void> {
     if (await this.handleCommand(msg, connector)) return;
 
-    const sourceRef = this.buildSourceRef(msg);
-    let session = getSessionBySourceRef(sourceRef);
-
+    let session = getSessionBySessionKey(msg.sessionKey);
     if (!session) {
       session = createSession({
-        engine: employee?.engine ?? this.config.engines.default,
+        engine: opts.engine ?? opts.employee?.engine ?? this.config.engines.default,
         source: msg.source,
-        sourceRef,
-        employee: employee?.name ?? undefined,
-        model: employee?.model ?? undefined,
+        sourceRef: msg.sessionKey,
+        connector: msg.connector,
+        sessionKey: msg.sessionKey,
+        replyContext: msg.replyContext,
+        messageId: msg.messageId,
+        transportMeta: msg.transportMeta,
+        employee: opts.employee?.name ?? undefined,
+        model: opts.model ?? opts.employee?.model ?? undefined,
+        title: opts.title,
+        prompt: msg.text,
         portalName: this.config.portal?.portalName,
       });
-      logger.info(`Created new session ${session.id} for ${sourceRef}${employee ? ` (employee: ${employee.name})` : ""}`);
+      logger.info(
+        `Created new session ${session.id} for ${msg.sessionKey}` +
+        (opts.employee ? ` (employee: ${opts.employee.name})` : ""),
+      );
+    } else {
+      session = updateSession(session.id, {
+        replyContext: msg.replyContext,
+        messageId: msg.messageId ?? null,
+        transportMeta: msg.transportMeta ?? null,
+        ...(opts.model ? { model: opts.model } : {}),
+      }) ?? session;
     }
 
-    const target: Target = {
-      channel: msg.channel,
-      thread: msg.thread,
-      messageTs: msg.raw?.ts,
-    };
+    const target = connector.reconstructTarget(msg.replyContext);
+    target.messageTs ??= msg.messageId;
 
     const attachmentPaths = msg.attachments
-      .map((a) => a.localPath)
-      .filter((p): p is string => !!p);
+      .map((attachment) => attachment.localPath)
+      .filter((filePath): filePath is string => !!filePath);
 
-    // If a turn is already running, queue the next one and serialize by source.
-    if (session.status === "running" && this.queue.isRunning(sourceRef)) {
+    if (session.status === "running" && this.queue.isRunning(msg.sessionKey) && connector.getCapabilities().reactions) {
       await connector.addReaction(target, "clock1").catch(() => {});
     }
 
-    await this.queue.enqueue(sourceRef, () =>
-      this.runSession(session, msg.text, msg.user, attachmentPaths, connector, target, employee),
+    await this.queue.enqueue(msg.sessionKey, () =>
+      this.runSession(session!, msg, attachmentPaths, connector, target, opts.employee),
     );
   }
 
-  /**
-   * Run engine for a session, handling reactions and status updates.
-   */
   private async runSession(
     session: Session,
-    prompt: string,
-    user: string,
+    msg: IncomingMessage,
     attachments: string[],
     connector: Connector,
     target: Target,
@@ -106,33 +117,39 @@ export class SessionManager {
     const engine = this.engines.get(session.engine);
     if (!engine) {
       logger.error(`Engine "${session.engine}" not found for session ${session.id}`);
-      await connector.sendMessage(target, `Error: engine "${session.engine}" not available.`);
+      await connector.replyMessage(target, `Error: engine "${session.engine}" not available.`);
       return;
     }
 
-    // Persist user message
-    insertMessage(session.id, "user", prompt);
+    insertMessage(session.id, "user", msg.text);
 
-    // Add eyes reaction to the user's message
-    await connector.addReaction(target, "eyes").catch(() => {});
+    const capabilities = connector.getCapabilities();
+    const decorateMessages = session.source !== "cron";
 
-    // Post a "thinking" placeholder message
-    const thinkingTs = await connector.sendMessage(
-      { channel: target.channel, thread: target.thread || target.messageTs },
-      "_Thinking..._",
-    ).catch(() => undefined);
+    if (decorateMessages && capabilities.reactions) {
+      await connector.addReaction(target, "eyes").catch(() => {});
+    }
+
+    let thinkingTs: string | undefined;
+    if (decorateMessages) {
+      const placeholderResult = await connector.replyMessage(target, "_Thinking..._").catch(() => undefined);
+      thinkingTs = typeof placeholderResult === "string" ? placeholderResult : undefined;
+    }
 
     updateSession(session.id, {
       status: "running",
+      replyContext: msg.replyContext,
+      messageId: msg.messageId ?? null,
+      transportMeta: msg.transportMeta ?? null,
       lastActivity: new Date().toISOString(),
     });
 
     try {
       const systemPrompt = buildContext({
         source: session.source,
-        channel: target.channel,
-        thread: target.thread,
-        user,
+        channel: msg.channel,
+        thread: msg.thread,
+        user: msg.user,
         employee,
         connectors: this.connectorNames,
         config: this.config,
@@ -144,50 +161,45 @@ export class SessionManager {
         : this.config.engines.claude;
 
       const result = await engine.run({
-        prompt,
+        prompt: msg.text,
         resumeSessionId: session.engineSessionId ?? undefined,
         systemPrompt,
         cwd: JINN_HOME,
         bin: engineConfig.bin,
         model: session.model ?? engineConfig.model,
-        effortLevel: (engineConfig as { effortLevel?: string }).effortLevel,
+        effortLevel: engineConfig.effortLevel,
         cliFlags: employee?.cliFlags,
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
       });
 
-      // Edit the thinking message with the actual response, or send new if edit fails
       const responseText = result.result?.trim()
         ? result.result
         : result.error || "(No response from engine)";
 
-      // Persist assistant response
       insertMessage(session.id, "assistant", responseText);
 
-      if (thinkingTs) {
+      if (thinkingTs && capabilities.messageEdits) {
         await connector.editMessage(
-          { channel: target.channel, thread: target.thread || target.messageTs, messageTs: thinkingTs },
+          { ...target, messageTs: thinkingTs },
           responseText,
         ).catch(async () => {
-          await connector.sendMessage(
-            { channel: target.channel, thread: target.thread || target.messageTs },
-            responseText,
-          );
+          await connector.replyMessage(target, responseText);
         });
       } else {
-        await connector.sendMessage(
-          { channel: target.channel, thread: target.thread || target.messageTs },
-          responseText,
-        );
+        await connector.replyMessage(target, responseText);
       }
 
-      // Remove eyes reaction
-      await connector.removeReaction(target, "eyes").catch(() => {});
+      if (decorateMessages && capabilities.reactions) {
+        await connector.removeReaction(target, "eyes").catch(() => {});
+      }
 
-      // Update session with engine session id for resume
       updateSession(session.id, {
         engineSessionId: result.sessionId,
-        status: "idle",
+        status: result.error ? "error" : "idle",
+        replyContext: msg.replyContext,
+        messageId: msg.messageId ?? null,
+        transportMeta: msg.transportMeta ?? null,
         lastActivity: new Date().toISOString(),
         lastError: result.error ?? null,
       });
@@ -206,75 +218,160 @@ export class SessionManager {
         lastError: errMsg,
       });
 
-      // Edit thinking message with error, or send new
-      if (thinkingTs) {
+      if (thinkingTs && capabilities.messageEdits) {
         await connector.editMessage(
-          { channel: target.channel, thread: target.thread || target.messageTs, messageTs: thinkingTs },
+          { ...target, messageTs: thinkingTs },
           `Error: ${errMsg}`,
         ).catch(() => {});
       } else {
-        await connector.sendMessage(target, `Error: ${errMsg}`).catch(() => {});
+        await connector.replyMessage(target, `Error: ${errMsg}`).catch(() => {});
       }
-      await connector.removeReaction(target, "eyes").catch(() => {});
+
+      if (decorateMessages && capabilities.reactions) {
+        await connector.removeReaction(target, "eyes").catch(() => {});
+      }
     }
   }
 
-  /**
-   * Handle slash commands. Returns true if a command was handled.
-   */
   async handleCommand(msg: IncomingMessage, connector: Connector): Promise<boolean> {
     const text = msg.text.trim();
-    const target: Target = { channel: msg.channel, thread: msg.thread };
+    const target = connector.reconstructTarget(msg.replyContext);
+    target.messageTs ??= msg.messageId;
 
     if (text === "/new" || text.startsWith("/new ")) {
-      const sourceRef = this.buildSourceRef(msg);
-      this.resetSession(sourceRef);
-      await connector.sendMessage(target, "Session reset. Starting fresh.");
-      logger.info(`Session reset for ${sourceRef}`);
+      this.resetSession(msg.sessionKey);
+      await connector.replyMessage(target, "Session reset. Starting fresh.");
+      logger.info(`Session reset for ${msg.sessionKey}`);
       return true;
     }
 
     if (text === "/status" || text.startsWith("/status ")) {
-      const sourceRef = this.buildSourceRef(msg);
-      const session = getSessionBySourceRef(sourceRef);
-      if (session) {
-        const info = [
-          `Session: ${session.id}`,
-          `Engine: ${session.engine}`,
-          `Status: ${session.status}`,
-          `Created: ${session.createdAt}`,
-          `Last activity: ${session.lastActivity}`,
-          session.lastError ? `Last error: ${session.lastError}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n");
-        await connector.sendMessage(target, info);
-      } else {
-        await connector.sendMessage(target, "No active session for this conversation.");
+      const session = getSessionBySessionKey(msg.sessionKey);
+      if (!session) {
+        await connector.replyMessage(target, "No active session for this conversation.");
+        return true;
       }
+
+      const queueDepth = this.queue.getPendingCount(session.sessionKey);
+      const transportState = this.queue.getTransportState(session.sessionKey, session.status);
+      const info = [
+        `Session: ${session.id}`,
+        `Engine: ${session.engine}`,
+        `Connector: ${session.connector || session.source}`,
+        `Model: ${session.model || this.config.engines[session.engine as "claude" | "codex"]?.model || "default"}`,
+        `State: ${transportState}`,
+        `Queue depth: ${queueDepth}`,
+        `Created: ${session.createdAt}`,
+        `Last activity: ${session.lastActivity}`,
+        session.lastError ? `Last error: ${session.lastError}` : null,
+      ].filter(Boolean).join("\n");
+
+      await connector.replyMessage(target, info);
       return true;
+    }
+
+    if (text.startsWith("/model")) {
+      const nextModel = text.slice("/model".length).trim();
+      if (!nextModel) {
+        await connector.replyMessage(target, "Usage: /model <model-name>");
+        return true;
+      }
+
+      const session = getSessionBySessionKey(msg.sessionKey);
+      if (!session) {
+        await connector.replyMessage(target, "No active session for this conversation.");
+        return true;
+      }
+
+      updateSession(session.id, {
+        model: nextModel,
+        lastActivity: new Date().toISOString(),
+      });
+      await connector.replyMessage(target, `Model updated to \`${nextModel}\` for this session.`);
+      return true;
+    }
+
+    if (text === "/doctor" || text.startsWith("/doctor ")) {
+      const connectors = Array.from(this.connectorProvider().values());
+      const connectorLines = connectors.length > 0
+        ? connectors.map((candidate) => {
+            const health = candidate.getHealth();
+            return `- ${candidate.name}: ${health.status}${health.detail ? ` (${health.detail})` : ""}`;
+          })
+        : ["- none"];
+      const info = [
+        `Default engine: ${this.config.engines.default}`,
+        `Claude: ${this.config.engines.claude.model}`,
+        `Codex: ${this.config.engines.codex.model}`,
+        "Connectors:",
+        ...connectorLines,
+      ].join("\n");
+      await connector.replyMessage(target, info);
+      return true;
+    }
+
+    if (text.startsWith("/cron")) {
+      return this.handleCronCommand(text, connector, target);
     }
 
     return false;
   }
 
-  /**
-   * Delete existing session for a source ref.
-   */
-  resetSession(sourceRef: string): void {
-    const session = getSessionBySourceRef(sourceRef);
+  resetSession(sessionKey: string): void {
+    const session = getSessionBySessionKey(sessionKey);
     if (session) {
       deleteSession(session.id);
       logger.info(`Deleted session ${session.id}`);
     }
   }
 
-  /**
-   * Build a source ref string from a message.
-   */
-  private buildSourceRef(msg: IncomingMessage): string {
-    let ref = `${msg.source}:${msg.channel}`;
-    if (msg.thread) ref += `:${msg.thread}`;
-    return ref;
+  private async handleCronCommand(text: string, connector: Connector, target: Target): Promise<boolean> {
+    const [_, subcommand = "", ...rest] = text.split(/\s+/);
+    const arg = rest.join(" ").trim();
+
+    if (!subcommand || subcommand === "list") {
+      const jobs = loadJobs();
+      if (jobs.length === 0) {
+        await connector.replyMessage(target, "No cron jobs configured.");
+        return true;
+      }
+
+      const lines = jobs.map((job) =>
+        `- ${job.name} (${job.id}) — ${job.enabled ? "enabled" : "disabled"} — ${job.schedule}`,
+      );
+      await connector.replyMessage(target, ["Cron jobs:", ...lines].join("\n"));
+      return true;
+    }
+
+    if (subcommand === "run") {
+      if (!arg) {
+        await connector.replyMessage(target, "Usage: /cron run <job-id-or-name>");
+        return true;
+      }
+      const job = await triggerCronJob(arg);
+      await connector.replyMessage(
+        target,
+        job ? `Triggered cron job "${job.name}".` : `Cron job "${arg}" not found.`,
+      );
+      return true;
+    }
+
+    if (subcommand === "enable" || subcommand === "disable") {
+      if (!arg) {
+        await connector.replyMessage(target, `Usage: /cron ${subcommand} <job-id-or-name>`);
+        return true;
+      }
+      const job = setCronJobEnabled(arg, subcommand === "enable");
+      await connector.replyMessage(
+        target,
+        job
+          ? `Cron job "${job.name}" ${job.enabled ? "enabled" : "disabled"}.`
+          : `Cron job "${arg}" not found.`,
+      );
+      return true;
+    }
+
+    await connector.replyMessage(target, "Usage: /cron [list|run|enable|disable] <job-id-or-name>");
+    return true;
   }
 }

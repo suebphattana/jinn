@@ -50,11 +50,36 @@ export interface EngineResult {
   error?: string;
 }
 
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+
+export interface ConnectorCapabilities {
+  threading: boolean;
+  messageEdits: boolean;
+  reactions: boolean;
+  attachments: boolean;
+}
+
+export interface ConnectorHealth {
+  status: "running" | "stopped" | "error";
+  detail?: string;
+  capabilities: ConnectorCapabilities;
+}
+
+export type ReplyContext = JsonObject;
+
 export interface Connector {
   name: string;
   start(): Promise<void>;
   stop(): Promise<void>;
+  getCapabilities(): ConnectorCapabilities;
+  getHealth(): ConnectorHealth;
+  reconstructTarget(replyContext: ReplyContext): Target;
   sendMessage(target: Target, text: string): Promise<string | void>;
+  replyMessage(target: Target, text: string): Promise<string | void>;
   addReaction(target: Target, emoji: string): Promise<void>;
   removeReaction(target: Target, emoji: string): Promise<void>;
   editMessage(target: Target, text: string): Promise<void>;
@@ -62,14 +87,19 @@ export interface Connector {
 }
 
 export interface IncomingMessage {
+  connector: string;
   source: string;
+  sessionKey: string;
+  replyContext: ReplyContext;
+  messageId?: string;
   channel: string;
   thread?: string;
   user: string;
   userId: string;
   text: string;
   attachments: Attachment[];
-  raw: any;
+  raw: unknown;
+  transportMeta?: JsonObject;
 }
 
 export interface Attachment {
@@ -83,6 +113,7 @@ export interface Target {
   channel: string;
   thread?: string;
   messageTs?: string;
+  replyContext?: ReplyContext;
 }
 
 export interface Session {
@@ -91,11 +122,18 @@ export interface Session {
   engineSessionId: string | null;
   source: string;
   sourceRef: string;
+  connector: string | null;
+  sessionKey: string;
+  replyContext: ReplyContext | null;
+  messageId: string | null;
+  transportMeta: JsonObject | null;
   employee: string | null;
   model: string | null;
   title: string | null;
   parentSessionId: string | null;
   status: "idle" | "running" | "error";
+  queueDepth?: number;
+  transportState?: "idle" | "queued" | "running" | "error";
   createdAt: string;
   lastActivity: string;
   lastError: string | null;
@@ -141,6 +179,14 @@ export interface Department {
 
 export interface WebConnectorConfig {}
 
+export interface SlackConnectorConfig {
+  appToken: string;
+  botToken: string;
+  shareSessionInChannel?: boolean;
+  allowFrom?: string | string[];
+  ignoreOldMessagesOnBoot?: boolean;
+}
+
 export interface PortalConfig {
   portalName?: string;
   operatorName?: string;
@@ -155,7 +201,10 @@ export interface JinnConfig {
     claude: { bin: string; model: string; effortLevel?: string };
     codex: { bin: string; model: string; effortLevel?: string };
   };
-  connectors: Record<string, any> & { web?: WebConnectorConfig };
+  connectors: Record<string, any> & {
+    web?: WebConnectorConfig;
+    slack?: SlackConnectorConfig;
+  };
   logging: { file: boolean; stdout: boolean; level: string };
   cron?: { defaultDelivery?: CronDelivery };
   portal?: PortalConfig;

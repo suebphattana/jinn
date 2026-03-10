@@ -16,7 +16,7 @@ import { startWatchers, stopWatchers, syncSkillSymlinks } from "./watcher.js";
 import { SlackConnector } from "../connectors/slack/index.js";
 import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
-import { scanOrg, extractMentions } from "./org.js";
+import { scanOrg } from "./org.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -135,10 +135,11 @@ export async function startGateway(
       const slack = new SlackConnector({
         appToken: config.connectors.slack.appToken,
         botToken: config.connectors.slack.botToken,
+        shareSessionInChannel: config.connectors.slack.shareSessionInChannel,
+        allowFrom: config.connectors.slack.allowFrom,
+        ignoreOldMessagesOnBoot: config.connectors.slack.ignoreOldMessagesOnBoot,
       });
       slack.onMessage((msg) => {
-        // Always route to COO. Employee mentions are detected by the COO
-        // in the message text and delegated via child sessions.
         sessionManager.route(msg, slack).catch((err) => {
           logger.error(`Slack route error: ${err instanceof Error ? err.message : err}`);
         });
@@ -151,9 +152,11 @@ export async function startGateway(
     }
   }
 
+  sessionManager.setConnectorProvider(() => connectorMap);
+
   // Start cron scheduler
   const cronJobs = loadJobs();
-  startScheduler(cronJobs, engines, config, connectorMap);
+  startScheduler(cronJobs, sessionManager, config, connectorMap);
   logger.info(`Loaded ${cronJobs.length} cron job(s)`);
 
   // Mutable config reference for hot-reload

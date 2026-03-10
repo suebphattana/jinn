@@ -25,6 +25,8 @@ import {
 } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
 import { JINN_HOME } from "../shared/paths.js";
+import { loadJobs, saveJobs } from "../cron/jobs.js";
+import { reloadScheduler } from "../cron/scheduler.js";
 
 export interface ApiContext {
   config: JinnConfig;
@@ -44,7 +46,7 @@ function dispatchWebSessionRun(
   opts?: { delayMs?: number },
 ): void {
   const run = async () => {
-    await context.sessionManager.getQueue().enqueue(session.sourceRef, async () => {
+    await context.sessionManager.getQueue().enqueue(session.sessionKey || session.sourceRef, async () => {
       context.emit("session:started", { sessionId: session.id });
       await runWebSession(session, prompt, engine, config, context);
     });
@@ -119,6 +121,17 @@ function matchRoute(
   return params;
 }
 
+function serializeSession(session: Session, context: ApiContext): Session {
+  const queue = context.sessionManager.getQueue();
+  const queueDepth = queue.getPendingCount(session.sessionKey || session.sourceRef);
+  const transportState = queue.getTransportState(session.sessionKey || session.sourceRef, session.status);
+  return {
+    ...session,
+    queueDepth,
+    transportState,
+  };
+}
+
 export async function handleApiRequest(
   req: HttpRequest,
   res: ServerResponse,
@@ -134,6 +147,9 @@ export async function handleApiRequest(
       const config = context.getConfig();
       const sessions = listSessions();
       const running = sessions.filter((s) => s.status === "running").length;
+      const connectors = Object.fromEntries(
+        Array.from(context.connectors.values()).map((connector) => [connector.name, connector.getHealth()]),
+      );
       return json(res, {
         status: "ok",
         uptime: Math.floor((Date.now() - context.startTime) / 1000),
@@ -144,13 +160,14 @@ export async function handleApiRequest(
           codex: { model: config.engines.codex.model, available: true },
         },
         sessions: { total: sessions.length, running, active: running },
+        connectors,
       });
     }
 
     // GET /api/sessions
     if (method === "GET" && pathname === "/api/sessions") {
       const sessions = listSessions();
-      return json(res, sessions);
+      return json(res, sessions.map((session) => serializeSession(session, context)));
     }
 
     // GET /api/sessions/:id
@@ -171,7 +188,7 @@ export async function handleApiRequest(
         }
       }
 
-      return json(res, { ...session, messages });
+      return json(res, { ...serializeSession(session, context), messages });
     }
 
     // DELETE /api/sessions/:id
@@ -197,7 +214,7 @@ export async function handleApiRequest(
     params = matchRoute("/api/sessions/:id/children", pathname);
     if (method === "GET" && params) {
       const children = listSessions().filter((s) => s.parentSessionId === params!.id);
-      return json(res, children);
+      return json(res, children.map((child) => serializeSession(child, context)));
     }
 
     // POST /api/sessions/stub — create a session with a pre-populated assistant
@@ -207,17 +224,21 @@ export async function handleApiRequest(
       const greeting = body.greeting || "Hey! Say hi when you're ready to get started.";
       const config = context.getConfig();
       const engineName = body.engine || config.engines.default;
+      const sessionKey = `web:${Date.now()}`;
       const session = createSession({
         engine: engineName,
         source: "web",
-        sourceRef: `web:${Date.now()}`,
+        sourceRef: sessionKey,
+        connector: "web",
+        sessionKey,
+        replyContext: { source: "web" },
         employee: body.employee,
         title: body.title,
         portalName: config.portal?.portalName,
       });
       insertMessage(session.id, "assistant", greeting);
       logger.info(`Stub session created: ${session.id}`);
-      return json(res, session, 201);
+      return json(res, serializeSession(session, context), 201);
     }
 
     // POST /api/sessions
@@ -227,10 +248,14 @@ export async function handleApiRequest(
       if (!prompt) return badRequest(res, "prompt or message is required");
       const config = context.getConfig();
       const engineName = body.engine || config.engines.default;
+      const sessionKey = `web:${Date.now()}`;
       const session = createSession({
         engine: engineName,
         source: "web",
-        sourceRef: `web:${Date.now()}`,
+        sourceRef: sessionKey,
+        connector: "web",
+        sessionKey,
+        replyContext: { source: "web" },
         employee: body.employee,
         parentSessionId: body.parentSessionId,
         prompt,
@@ -246,7 +271,7 @@ export async function handleApiRequest(
           status: "error",
           lastError: `Engine "${engineName}" not available`,
         });
-        return json(res, { ...session, status: "error", lastError: `Engine "${engineName}" not available` }, 201);
+        return json(res, { ...serializeSession({ ...session, status: "error", lastError: `Engine "${engineName}" not available` }, context) }, 201);
       }
 
       // Set status to "running" synchronously BEFORE returning the response.
@@ -260,7 +285,7 @@ export async function handleApiRequest(
 
       dispatchWebSessionRun(session, prompt, engine, config, context);
 
-      return json(res, session, 201);
+      return json(res, serializeSession(session, context), 201);
     }
 
     // POST /api/sessions/:id/message
@@ -291,8 +316,7 @@ export async function handleApiRequest(
 
     // GET /api/cron
     if (method === "GET" && pathname === "/api/cron") {
-      if (!fs.existsSync(CRON_JOBS)) return json(res, []);
-      const jobs = JSON.parse(fs.readFileSync(CRON_JOBS, "utf-8"));
+      const jobs = loadJobs();
       return json(res, jobs);
     }
 
@@ -313,16 +337,13 @@ export async function handleApiRequest(
     // PUT /api/cron/:id
     params = matchRoute("/api/cron/:id", pathname);
     if (method === "PUT" && params) {
-      if (!fs.existsSync(CRON_JOBS)) return notFound(res);
-      const jobs = JSON.parse(fs.readFileSync(CRON_JOBS, "utf-8")) as Array<{
-        id: string;
-        [key: string]: unknown;
-      }>;
+      const jobs = loadJobs();
       const idx = jobs.findIndex((j) => j.id === params!.id);
       if (idx === -1) return notFound(res);
       const body = JSON.parse(await readBody(req));
       jobs[idx] = { ...jobs[idx], ...body, id: params.id };
-      fs.writeFileSync(CRON_JOBS, JSON.stringify(jobs, null, 2));
+      saveJobs(jobs);
+      reloadScheduler(jobs);
       return json(res, jobs[idx]);
     }
 
@@ -542,7 +563,13 @@ export async function handleApiRequest(
         connectors: Object.fromEntries(
           Object.entries(config.connectors || {}).map(([k, v]) => [
             k,
-            { ...v, token: v?.token ? "***" : undefined, signingSecret: v?.signingSecret ? "***" : undefined },
+            {
+              ...v,
+              token: v?.token ? "***" : undefined,
+              signingSecret: v?.signingSecret ? "***" : undefined,
+              botToken: v?.botToken ? "***" : undefined,
+              appToken: v?.appToken ? "***" : undefined,
+            },
           ]),
         ),
       };
@@ -585,8 +612,11 @@ export async function handleApiRequest(
 
     // GET /api/connectors — list available connectors
     if (method === "GET" && pathname === "/api/connectors") {
-      const names = Array.from(context.connectors.keys());
-      return json(res, names);
+      const connectors = Array.from(context.connectors.values()).map((connector) => ({
+        name: connector.name,
+        ...connector.getHealth(),
+      }));
+      return json(res, connectors);
     }
 
     // GET /api/activity — recent activity derived from sessions
@@ -595,12 +625,15 @@ export async function handleApiRequest(
       const events: Array<{ event: string; payload: unknown; ts: number }> = [];
       for (const s of sessions) {
         const ts = new Date(s.lastActivity || s.createdAt).getTime();
-        if (s.status === "running") {
-          events.push({ event: "session:started", payload: { sessionId: s.id, employee: s.employee, engine: s.engine }, ts });
-        } else if (s.status === "idle") {
-          events.push({ event: "session:completed", payload: { sessionId: s.id, employee: s.employee, engine: s.engine }, ts });
-        } else if (s.status === "error") {
-          events.push({ event: "session:error", payload: { sessionId: s.id, employee: s.employee, error: s.lastError }, ts });
+        const transportState = context.sessionManager.getQueue().getTransportState(s.sessionKey || s.sourceRef, s.status);
+        if (transportState === "running") {
+          events.push({ event: "session:started", payload: { sessionId: s.id, employee: s.employee, engine: s.engine, connector: s.connector }, ts });
+        } else if (transportState === "queued") {
+          events.push({ event: "session:queued", payload: { sessionId: s.id, employee: s.employee, engine: s.engine, connector: s.connector }, ts });
+        } else if (transportState === "idle") {
+          events.push({ event: "session:completed", payload: { sessionId: s.id, employee: s.employee, engine: s.engine, connector: s.connector }, ts });
+        } else if (transportState === "error") {
+          events.push({ event: "session:error", payload: { sessionId: s.id, employee: s.employee, error: s.lastError, connector: s.connector }, ts });
         }
       }
       events.sort((a, b) => b.ts - a.ts);

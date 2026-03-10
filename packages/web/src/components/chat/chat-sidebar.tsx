@@ -5,11 +5,15 @@ import { useSettings } from '@/app/settings-provider'
 
 interface Session {
   id: string
+  connector?: string | null
   employee?: string
   title?: string
   status?: string
   source?: string
   sourceRef?: string
+  sessionKey?: string
+  transportState?: string
+  queueDepth?: number
   lastActivity?: string
   createdAt?: string
   [key: string]: unknown

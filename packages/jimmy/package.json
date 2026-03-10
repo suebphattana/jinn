@@ -17,6 +17,7 @@
     "build": "tsc && rm -rf dist/web && cp -r ../web/out dist/web 2>/dev/null || true",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
+    "test": "pnpm run build && node --test dist/src",
     "clean": "rm -rf dist"
   },
   "dependencies": {

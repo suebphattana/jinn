@@ -17,11 +17,17 @@ interface Session {
   engineSessionId: string | null;
   source: string;
   sourceRef: string;
+  connector: string | null;
+  sessionKey: string;
+  replyContext: Record<string, unknown> | null;
+  messageId: string | null;
   employee: string | null;
   model: string | null;
   title: string | null;
   parentSessionId: string | null;
   status: "idle" | "running" | "error";
+  transportState?: "idle" | "queued" | "running" | "error";
+  queueDepth?: number;
   createdAt: string;
   lastActivity: string;
   lastError: string | null;
@@ -29,6 +35,7 @@ interface Session {
 
 const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   idle: "secondary",
+  queued: "outline",
   running: "default",
   error: "destructive",
 };
@@ -137,17 +144,21 @@ export function SessionDetail({
               </span>
             }
           />
+          <Field label="Connector" value={session.connector || session.source} />
+          <Field label="Session Key" value={session.sessionKey} />
           <Field label="Source" value={session.source} />
           <Field label="Employee" value={session.employee || portalName} />
           <Field
             label="Status"
             value={
-              <Badge variant={statusVariant[session.status] ?? "secondary"}>
-                {session.status.charAt(0).toUpperCase() +
-                  session.status.slice(1)}
+              <Badge variant={statusVariant[session.transportState || session.status] ?? "secondary"}>
+                {(session.transportState || session.status).charAt(0).toUpperCase() +
+                  (session.transportState || session.status).slice(1)}
               </Badge>
             }
           />
+          <Field label="Queue Depth" value={typeof session.queueDepth === "number" ? String(session.queueDepth) : "--"} />
+          <Field label="Message ID" value={session.messageId || "--"} />
           <Field label="Created" value={formatDate(session.createdAt)} />
           <Field
             label="Last Activity"

@@ -15,11 +15,17 @@ interface Session {
   engineSessionId: string | null;
   source: string;
   sourceRef: string;
+  connector: string | null;
+  sessionKey: string;
+  replyContext: Record<string, unknown> | null;
+  messageId: string | null;
   employee: string | null;
   model: string | null;
   title: string | null;
   parentSessionId: string | null;
   status: "idle" | "running" | "error";
+  transportState?: "idle" | "queued" | "running" | "error";
+  queueDepth?: number;
   createdAt: string;
   lastActivity: string;
   lastError: string | null;

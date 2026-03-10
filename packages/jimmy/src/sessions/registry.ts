@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { SESSIONS_DB } from '../shared/paths.js';
-import type { Session } from '../shared/types.js';
+import type { JsonObject, ReplyContext, Session } from '../shared/types.js';
 
 let db: Database.Database;
 
@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   engine_session_id TEXT,
   source TEXT NOT NULL,
   source_ref TEXT NOT NULL,
+  connector TEXT,
+  session_key TEXT,
+  reply_context TEXT,
+  message_id TEXT,
+  transport_meta TEXT,
   employee TEXT,
   model TEXT,
   title TEXT,
@@ -37,13 +42,36 @@ const CREATE_MESSAGES_INDEX = `
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id, timestamp)
 `;
 
+const CREATE_SESSION_KEY_INDEX = `
+CREATE INDEX IF NOT EXISTS idx_sessions_session_key ON sessions (session_key, last_activity)
+`;
+
+function parseJsonObject(value: unknown): JsonObject | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as JsonObject;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function rowToSession(row: Record<string, unknown>): Session {
+  const replyContext = parseJsonObject(row.reply_context);
+  const transportMeta = parseJsonObject(row.transport_meta);
+  const sessionKey = ((row.session_key as string) || (row.source_ref as string));
+  const connector = (row.connector as string) ?? (row.source as string) ?? null;
   return {
     id: row.id as string,
     engine: row.engine as string,
     engineSessionId: (row.engine_session_id as string) ?? null,
     source: row.source as string,
     sourceRef: row.source_ref as string,
+    connector,
+    sessionKey,
+    replyContext: replyContext as ReplyContext | null,
+    messageId: (row.message_id as string) ?? null,
+    transportMeta,
     employee: (row.employee as string) ?? null,
     model: (row.model as string) ?? null,
     title: (row.title as string) ?? null,
@@ -63,24 +91,50 @@ export function initDb(): Database.Database {
   db.exec(CREATE_TABLE);
   db.exec(CREATE_MESSAGES_TABLE);
   db.exec(CREATE_MESSAGES_INDEX);
-
-  // Migrate: add title column if missing
-  const cols = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
-  const colNames = new Set(cols.map((c) => c.name));
-  if (!colNames.has('title')) {
-    db.exec('ALTER TABLE sessions ADD COLUMN title TEXT');
-  }
-  if (!colNames.has('parent_session_id')) {
-    db.exec('ALTER TABLE sessions ADD COLUMN parent_session_id TEXT');
-  }
+  migrateSessionsSchema(db);
+  db.exec(CREATE_SESSION_KEY_INDEX);
 
   return db;
+}
+
+export function migrateSessionsSchema(database: Database.Database): void {
+  const cols = database.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+  const colNames = new Set(cols.map((c) => c.name));
+  const missingColumns: Array<[string, string]> = [
+    ['title', 'TEXT'],
+    ['parent_session_id', 'TEXT'],
+    ['connector', 'TEXT'],
+    ['session_key', 'TEXT'],
+    ['reply_context', 'TEXT'],
+    ['message_id', 'TEXT'],
+    ['transport_meta', 'TEXT'],
+  ];
+
+  for (const [name, type] of missingColumns) {
+    if (!colNames.has(name)) {
+      database.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${type}`);
+    }
+  }
+
+  const refreshedCols = database.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+  const refreshedNames = new Set(refreshedCols.map((c) => c.name));
+  if (refreshedNames.has('session_key')) {
+    database.exec(`UPDATE sessions SET session_key = COALESCE(session_key, source_ref) WHERE session_key IS NULL OR session_key = ''`);
+  }
+  if (refreshedNames.has('connector')) {
+    database.exec(`UPDATE sessions SET connector = COALESCE(connector, source) WHERE connector IS NULL OR connector = ''`);
+  }
 }
 
 export interface CreateSessionOpts {
   engine: string;
   source: string;
   sourceRef: string;
+  connector?: string | null;
+  sessionKey?: string;
+  replyContext?: ReplyContext | null;
+  messageId?: string;
+  transportMeta?: JsonObject | null;
   employee?: string;
   model?: string;
   title?: string;
@@ -107,12 +161,35 @@ export function createSession(opts: CreateSessionOpts & { prompt?: string; porta
   const now = new Date().toISOString();
   const id = uuidv4();
   const title = opts.title ?? generateTitle(opts.prompt);
+  const sessionKey = opts.sessionKey ?? opts.sourceRef;
+  const connector = opts.connector ?? opts.source;
+  const replyContext = opts.replyContext ? JSON.stringify(opts.replyContext) : null;
+  const transportMeta = opts.transportMeta ? JSON.stringify(opts.transportMeta) : null;
 
   const stmt = db.prepare(`
-    INSERT INTO sessions (id, engine, source, source_ref, employee, model, title, parent_session_id, status, created_at, last_activity)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?)
+    INSERT INTO sessions (
+      id, engine, source, source_ref, connector, session_key, reply_context, message_id, transport_meta,
+      employee, model, title, parent_session_id, status, created_at, last_activity
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?)
   `);
-  stmt.run(id, opts.engine, opts.source, opts.sourceRef, opts.employee ?? null, opts.model ?? null, title, opts.parentSessionId ?? null, now, now);
+  stmt.run(
+    id,
+    opts.engine,
+    opts.source,
+    opts.sourceRef,
+    connector,
+    sessionKey,
+    replyContext,
+    opts.messageId ?? null,
+    transportMeta,
+    opts.employee ?? null,
+    opts.model ?? null,
+    title,
+    opts.parentSessionId ?? null,
+    now,
+    now,
+  );
 
   return {
     id,
@@ -120,6 +197,11 @@ export function createSession(opts: CreateSessionOpts & { prompt?: string; porta
     engineSessionId: null,
     source: opts.source,
     sourceRef: opts.sourceRef,
+    connector,
+    sessionKey,
+    replyContext: opts.replyContext ?? null,
+    messageId: opts.messageId ?? null,
+    transportMeta: opts.transportMeta ?? null,
     employee: opts.employee ?? null,
     model: opts.model ?? null,
     title,
@@ -138,14 +220,22 @@ export function getSession(id: string): Session | undefined {
 }
 
 export function getSessionBySourceRef(sourceRef: string): Session | undefined {
+  return getSessionBySessionKey(sourceRef);
+}
+
+export function getSessionBySessionKey(sessionKey: string): Session | undefined {
   const db = initDb();
-  const row = db.prepare('SELECT * FROM sessions WHERE source_ref = ? ORDER BY last_activity DESC LIMIT 1').get(sourceRef) as Record<string, unknown> | undefined;
+  const row = db.prepare('SELECT * FROM sessions WHERE session_key = ? ORDER BY last_activity DESC LIMIT 1').get(sessionKey) as Record<string, unknown> | undefined;
   return row ? rowToSession(row) : undefined;
 }
 
 export interface UpdateSessionFields {
   engineSessionId?: string;
   status?: Session['status'];
+  model?: string | null;
+  replyContext?: ReplyContext | null;
+  messageId?: string | null;
+  transportMeta?: JsonObject | null;
   lastActivity?: string;
   lastError?: string | null;
 }
@@ -162,6 +252,22 @@ export function updateSession(id: string, updates: UpdateSessionFields): Session
   if (updates.status !== undefined) {
     sets.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.model !== undefined) {
+    sets.push('model = ?');
+    values.push(updates.model);
+  }
+  if (updates.replyContext !== undefined) {
+    sets.push('reply_context = ?');
+    values.push(updates.replyContext ? JSON.stringify(updates.replyContext) : null);
+  }
+  if (updates.messageId !== undefined) {
+    sets.push('message_id = ?');
+    values.push(updates.messageId);
+  }
+  if (updates.transportMeta !== undefined) {
+    sets.push('transport_meta = ?');
+    values.push(updates.transportMeta ? JSON.stringify(updates.transportMeta) : null);
   }
   if (updates.lastActivity !== undefined) {
     sets.push('last_activity = ?');

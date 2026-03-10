@@ -16,7 +16,10 @@ engines:
     model: gpt-5.4
     effortLevel: high
 
-connectors: {}
+connectors:
+  slack:
+    shareSessionInChannel: false
+    ignoreOldMessagesOnBoot: true
 
 portal:
   language: English

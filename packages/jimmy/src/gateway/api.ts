@@ -28,6 +28,7 @@ import { logger } from "../shared/logger.js";
 import { JINN_HOME } from "../shared/paths.js";
 import { loadJobs, saveJobs } from "../cron/jobs.js";
 import { reloadScheduler } from "../cron/scheduler.js";
+import { runCronJob } from "../cron/runner.js";
 
 export interface ApiContext {
   config: JinnConfig;
@@ -392,6 +393,29 @@ export async function handleApiRequest(
       saveJobs(jobs);
       reloadScheduler(jobs);
       return json(res, { deleted: removed.id, name: removed.name });
+    }
+
+    // POST /api/cron/:id/trigger — manually run a cron job now
+    params = matchRoute("/api/cron/:id/trigger", pathname);
+    if (method === "POST" && params) {
+      const jobs = loadJobs();
+      const job = jobs.find((j) => j.id === params!.id);
+      if (!job) return notFound(res);
+
+      logger.info(`Manual trigger for cron job "${job.name}" (${job.id})`);
+
+      // Fire and forget — respond immediately, run in background
+      runCronJob(job, context.sessionManager, context.getConfig(), context.connectors).catch(
+        (err) => logger.error(`Manual cron trigger failed for "${job.name}": ${err}`)
+      );
+
+      return json(res, {
+        triggered: true,
+        jobId: job.id,
+        name: job.name,
+        employee: job.employee,
+        message: `Cron job "${job.name}" triggered manually`,
+      });
     }
 
     // GET /api/org

@@ -90,5 +90,20 @@ export async function runCronJob(
       resultPreview: null,
     });
     logger.error(`Cron job "${job.name}" failed: ${message}`);
+
+    // Send alert if configured
+    const alertConnector = config.cron?.alertConnector;
+    const alertChannel = config.cron?.alertChannel;
+    if (alertConnector && alertChannel) {
+      const alertTarget = connectors.get(alertConnector);
+      if (alertTarget) {
+        await alertTarget.sendMessage(
+          { channel: alertChannel },
+          `⚠️ Cron job "${job.name}" failed:\n${message.slice(0, 500)}`,
+        ).catch((alertErr) => {
+          logger.error(`Failed to send cron alert: ${alertErr instanceof Error ? alertErr.message : alertErr}`);
+        });
+      }
+    }
   }
 }

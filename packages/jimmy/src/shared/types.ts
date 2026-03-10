@@ -36,6 +36,8 @@ export interface EngineRunOpts {
   attachments?: string[];
   /** Extra CLI flags to pass to the engine binary (e.g. ["--chrome"]) */
   cliFlags?: string[];
+  /** Path to MCP config JSON file (passed as --mcp-config to Claude Code) */
+  mcpConfigPath?: string;
   onStream?: (delta: StreamDelta) => void;
   /** Unique Jinn session ID for tracking the spawned process. */
   sessionId?: string;
@@ -132,6 +134,8 @@ export interface Session {
   title: string | null;
   parentSessionId: string | null;
   status: "idle" | "running" | "error";
+  totalCost: number;
+  totalTurns: number;
   queueDepth?: number;
   transportState?: "idle" | "queued" | "running" | "error";
   createdAt: string;
@@ -169,12 +173,45 @@ export interface Employee {
   emoji?: string;
   /** Extra CLI flags passed to the engine (e.g. ["--chrome"]) */
   cliFlags?: string[];
+  /** MCP servers this employee needs. true = all global, false = none, string[] = specific servers */
+  mcp?: boolean | string[];
+  /** Max cost in USD for a single session. Overrides global config. */
+  maxCostUsd?: number;
 }
 
 export interface Department {
   name: string;
   displayName: string;
   description: string;
+}
+
+export interface McpServerConfig {
+  /** Shell command to start the MCP server */
+  command: string;
+  /** Arguments to pass to the command */
+  args?: string[];
+  /** Environment variables for the MCP server process */
+  env?: Record<string, string>;
+}
+
+export interface McpGlobalConfig {
+  browser?: {
+    enabled: boolean;
+    provider?: "playwright" | "puppeteer";
+  };
+  search?: {
+    enabled: boolean;
+    provider?: "brave";
+    apiKey?: string;
+  };
+  fetch?: {
+    enabled: boolean;
+  };
+  gateway?: {
+    enabled: boolean;
+  };
+  /** Custom MCP servers defined by the user */
+  custom?: Record<string, McpServerConfig & { enabled?: boolean }>;
 }
 
 export interface WebConnectorConfig {}
@@ -206,6 +243,15 @@ export interface JinnConfig {
     slack?: SlackConnectorConfig;
   };
   logging: { file: boolean; stdout: boolean; level: string };
-  cron?: { defaultDelivery?: CronDelivery };
+  mcp?: McpGlobalConfig;
+  sessions?: {
+    maxDurationMinutes?: number;
+    maxCostUsd?: number;
+  };
+  cron?: {
+    defaultDelivery?: CronDelivery;
+    alertChannel?: string;
+    alertConnector?: string;
+  };
   portal?: PortalConfig;
 }

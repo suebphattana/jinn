@@ -17,6 +17,7 @@ import { SlackConnector } from "../connectors/slack/index.js";
 import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
 import { scanOrg } from "./org.js";
+import { enforceSessionLimits } from "../sessions/limits.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -256,6 +257,15 @@ export async function startGateway(
   });
 
 
+  // Session limit enforcement — check every 30 seconds
+  const limitsInterval = setInterval(() => {
+    try {
+      enforceSessionLimits(currentConfig, engines, employeeRegistry);
+    } catch (err) {
+      logger.error(`Session limits check failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }, 30_000);
+
   // Sync skill symlinks to .claude/skills/ and .agents/skills/
   syncSkillSymlinks();
 
@@ -315,6 +325,9 @@ export async function startGateway(
   // Return cleanup function
   return async () => {
     logger.info("Gateway cleanup starting...");
+
+    // Stop session limit enforcement
+    clearInterval(limitsInterval);
 
     // Terminate live engine subprocesses before tearing down the gateway.
     claudeEngine.killAll();

@@ -77,6 +77,8 @@ function rowToSession(row: Record<string, unknown>): Session {
     title: (row.title as string) ?? null,
     parentSessionId: (row.parent_session_id as string) ?? null,
     status: row.status as Session['status'],
+    totalCost: (row.total_cost as number) ?? 0,
+    totalTurns: (row.total_turns as number) ?? 0,
     createdAt: row.created_at as string,
     lastActivity: row.last_activity as string,
     lastError: (row.last_error as string) ?? null,
@@ -100,7 +102,7 @@ export function initDb(): Database.Database {
 export function migrateSessionsSchema(database: Database.Database): void {
   const cols = database.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
   const colNames = new Set(cols.map((c) => c.name));
-  const missingColumns: Array<[string, string]> = [
+  const missingColumns: Array<[string, string, string?]> = [
     ['title', 'TEXT'],
     ['parent_session_id', 'TEXT'],
     ['connector', 'TEXT'],
@@ -108,11 +110,14 @@ export function migrateSessionsSchema(database: Database.Database): void {
     ['reply_context', 'TEXT'],
     ['message_id', 'TEXT'],
     ['transport_meta', 'TEXT'],
+    ['total_cost', 'REAL', '0'],
+    ['total_turns', 'INTEGER', '0'],
   ];
 
-  for (const [name, type] of missingColumns) {
+  for (const [name, type, defaultVal] of missingColumns) {
     if (!colNames.has(name)) {
-      database.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${type}`);
+      const defaultClause = defaultVal !== undefined ? ` DEFAULT ${defaultVal}` : '';
+      database.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${type}${defaultClause}`);
     }
   }
 
@@ -207,6 +212,8 @@ export function createSession(opts: CreateSessionOpts & { prompt?: string; porta
     title,
     parentSessionId: opts.parentSessionId ?? null,
     status: 'idle',
+    totalCost: 0,
+    totalTurns: 0,
     createdAt: now,
     lastActivity: now,
     lastError: null,
@@ -325,6 +332,16 @@ export function recoverStaleSessions(): number {
     "UPDATE sessions SET status = 'error', last_activity = ?, last_error = 'Interrupted: gateway restarted while session was running' WHERE status = 'running'",
   ).run(now);
   return result.changes;
+}
+
+/**
+ * Accumulate cost and turns for a session (called after each engine run).
+ */
+export function accumulateSessionCost(id: string, cost: number, turns: number): void {
+  const db = initDb();
+  db.prepare(
+    'UPDATE sessions SET total_cost = total_cost + ?, total_turns = total_turns + ? WHERE id = ?',
+  ).run(cost, turns, id);
 }
 
 export function deleteSession(id: string): boolean {

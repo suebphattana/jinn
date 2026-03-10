@@ -45,6 +45,7 @@ export class ClaudeEngine implements InterruptibleEngine {
     if (opts.model) args.push("--model", opts.model);
     if (opts.effortLevel && opts.effortLevel !== "default") args.push("--effort", opts.effortLevel);
     if (opts.systemPrompt) args.push("--append-system-prompt", opts.systemPrompt);
+    if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath);
     if (opts.cliFlags?.length) args.push(...opts.cliFlags);
 
     let prompt = opts.prompt;

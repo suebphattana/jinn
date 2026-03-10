@@ -8,6 +8,7 @@ import type {
   Target,
 } from "../shared/types.js";
 import {
+  accumulateSessionCost,
   createSession,
   deleteSession,
   getSessionBySessionKey,
@@ -20,6 +21,7 @@ import { JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
 import { loadJobs } from "../cron/jobs.js";
 import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
+import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 
 export interface RouteOptions {
   employee?: Employee;
@@ -144,6 +146,9 @@ export class SessionManager {
       lastActivity: new Date().toISOString(),
     });
 
+    // Resolve MCP config before try block so it's accessible in catch for cleanup
+    let mcpConfigPath: string | undefined;
+
     try {
       const systemPrompt = buildContext({
         source: session.source,
@@ -159,6 +164,12 @@ export class SessionManager {
       const engineConfig = session.engine === "codex"
         ? this.config.engines.codex
         : this.config.engines.claude;
+      if (session.engine === "claude") {
+        const mcpConfig = resolveMcpServers(this.config.mcp, employee);
+        if (Object.keys(mcpConfig.mcpServers).length > 0) {
+          mcpConfigPath = writeMcpConfigFile(mcpConfig, session.id);
+        }
+      }
 
       const result = await engine.run({
         prompt: msg.text,
@@ -169,6 +180,7 @@ export class SessionManager {
         model: session.model ?? engineConfig.model,
         effortLevel: engineConfig.effortLevel,
         cliFlags: employee?.cliFlags,
+        mcpConfigPath,
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
       });
@@ -178,6 +190,14 @@ export class SessionManager {
         : result.error || "(No response from engine)";
 
       insertMessage(session.id, "assistant", responseText);
+
+      // Clean up temp MCP config
+      if (mcpConfigPath) cleanupMcpConfigFile(session.id);
+
+      // Track cost
+      if (result.cost || result.numTurns) {
+        accumulateSessionCost(session.id, result.cost ?? 0, result.numTurns ?? 1);
+      }
 
       if (thinkingTs && capabilities.messageEdits) {
         await connector.editMessage(
@@ -211,6 +231,9 @@ export class SessionManager {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       logger.error(`Session ${session.id} error: ${errMsg}`);
+
+      // Clean up temp MCP config on error
+      if (mcpConfigPath) cleanupMcpConfigFile(session.id);
 
       updateSession(session.id, {
         status: "error",

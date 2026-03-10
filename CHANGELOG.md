@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.0] - 2026-03-10
+
+### 🔧 Improvements
+- Codex engine now runs with `--dangerously-bypass-approvals-and-sandbox` — prevents Jimmy-managed Codex sessions from being constrained by CLI sandbox/approval defaults
+
 ## [0.2.0] - 2026-03-10
 
 ### ✨ Features

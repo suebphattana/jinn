@@ -202,7 +202,7 @@ export class CodexEngine implements InterruptibleEngine {
     const args = ["exec"];
     if (opts.model) args.push("--model", opts.model);
     if (opts.effortLevel && opts.effortLevel !== "default") args.push("-c", `model_reasoning_effort="${opts.effortLevel}"`);
-    args.push("--json", "--color", "never", "--full-auto", "--skip-git-repo-check");
+    args.push("--json", "--color", "never", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
     if (opts.cwd) args.push("-C", opts.cwd);
     if (opts.cliFlags?.length) args.push(...opts.cliFlags);
     args.push(prompt);
@@ -213,7 +213,7 @@ export class CodexEngine implements InterruptibleEngine {
     const args = ["exec", "resume"];
     if (opts.model) args.push("--model", opts.model);
     if (opts.effortLevel && opts.effortLevel !== "default") args.push("-c", `model_reasoning_effort="${opts.effortLevel}"`);
-    args.push("--json", "--full-auto", "--skip-git-repo-check");
+    args.push("--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
     if (opts.cliFlags?.length) args.push(...opts.cliFlags);
     args.push(opts.resumeSessionId!);
     args.push(prompt);

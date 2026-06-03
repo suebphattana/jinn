@@ -7,7 +7,7 @@ import { writeSessionSettings } from "../shared/claude-settings.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
 import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-view-engine.js";
 import type { HookRegistry, HookPayload } from "../gateway/hook-registry.js";
-import { SsePtyProxy, type SseDataEvent, type StreamCtx } from "./sse-pty-proxy.js";
+import { SsePtyProxy, type SseDataEvent } from "./sse-pty-proxy.js";
 import { neutralizeForPaste } from "../shared/skill-commands.js";
 
 export type { PtyControlEvent } from "./pty-view-engine.js";
@@ -439,12 +439,12 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
   /** Translate parsed SSE events from a PTY's proxy into StreamDeltas and route
    *  them to the active turn's onStream. A PTY outlives its turn, so we look up
    *  the live active entry here rather than capturing onStream at spawn. */
-  private handleSseEvent(jinnSessionId: string, e: SseDataEvent, ctx: StreamCtx): void {
+  private handleSseEvent(jinnSessionId: string, e: SseDataEvent): void {
     const onStream = this.active.get(jinnSessionId)?.onStream;
     if (!onStream) return; // idle PTY / no turn in flight — nothing to stream
-    // Tag sub-agent deltas so the chat pane routes them into a collapsible card
-    // instead of the main transcript; main-agent deltas pass through untagged.
-    for (const d of sseEventToDeltas(e)) onStream(ctx.subAgent ? { ...d, subAgent: ctx.subAgent } : d);
+    // Only the main agent's events reach here (the proxy suppresses sub-agent and
+    // auxiliary streams), so deltas go straight to the transcript.
+    for (const d of sseEventToDeltas(e)) onStream(d);
   }
 
   /** Allocate + start a per-PTY SSE forward proxy. Returns the proxy and its port,
@@ -452,7 +452,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  ANTHROPIC_BASE_URL (direct to Anthropic): the turn still works, only live
    *  word-by-word streaming degrades. */
   private async startProxy(jinnSessionId: string): Promise<{ proxy: SsePtyProxy; port: number }> {
-    const proxy = new SsePtyProxy(jinnSessionId, (e, ctx) => this.handleSseEvent(jinnSessionId, e, ctx));
+    const proxy = new SsePtyProxy(jinnSessionId, (e) => this.handleSseEvent(jinnSessionId, e));
     try {
       const port = await proxy.start();
       return { proxy, port };

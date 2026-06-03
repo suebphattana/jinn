@@ -2077,9 +2077,9 @@ async function runWebSession(
         // (once per assistant message — infrequent). Persist it immediately so the
         // meter ticks during the turn, not just at completion. The delta also flows
         // to the FE below for an instant in-pane update.
-        if (delta.type === "context" && !delta.subAgent) {
-          // Only the MAIN agent's usage drives the session meter; a sub-agent's
-          // message_start.usage must not overwrite the main session's context count.
+        if (delta.type === "context") {
+          // Only the MAIN agent's stream reaches here (the proxy suppresses
+          // sub-agent/auxiliary streams), so its usage drives the session meter.
           const ctx = Number(delta.content);
           if (Number.isFinite(ctx) && ctx > 0) {
             updateSession(currentSession.id, { lastContextTokens: ctx });
@@ -2100,7 +2100,6 @@ async function runWebSession(
             content: delta.content,
             toolName: delta.toolName,
             toolId: delta.toolId,
-            subAgent: delta.subAgent,
           });
         } catch (err) {
           logger.warn(`Failed to emit stream delta for session ${currentSession.id}: ${err instanceof Error ? err.message : err}`);

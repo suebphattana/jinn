@@ -3,7 +3,6 @@ import type { Message } from '@/lib/conversations'
 import { parseMedia, stripAttachedFilesBlock } from '@/lib/conversations'
 import { MessageMedia } from './message-media'
 import { useOpenFile } from '@/components/chat/file-open-context'
-import { SubAgentStack, type SubAgentState } from '@/components/chat/sub-agent-card'
 
 /* ── Tool grouping ──────────────────────────────────────── */
 
@@ -528,10 +527,9 @@ interface ChatMessagesProps {
   messages: Message[]
   loading: boolean
   streamingText?: string
-  subAgents?: SubAgentState[]
 }
 
-export function ChatMessages({ messages, loading, streamingText, subAgents }: ChatMessagesProps) {
+export function ChatMessages({ messages, loading, streamingText }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -675,10 +673,6 @@ export function ChatMessages({ messages, loading, streamingText, subAgents }: Ch
           <MessageRow key={msg.id || i} msg={msg} index={i} messages={messages} />
         )
       })}
-
-      {/* Live sub-agent cards (Task sub-agents) — collapsible, between the
-          transcript and the streaming bubble where the work is happening. */}
-      {subAgents && subAgents.length > 0 && <SubAgentStack agents={subAgents} />}
 
       {/* Streaming message — shows text as it arrives, always re-renders */}
       {streamingText && <StreamingBubble streamingText={streamingText} />}

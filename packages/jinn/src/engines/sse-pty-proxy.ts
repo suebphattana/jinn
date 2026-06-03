@@ -1,6 +1,5 @@
 import http from "node:http";
 import https from "node:https";
-import { createHash } from "node:crypto";
 import { logger } from "../shared/logger.js";
 
 /** Shared keep-alive agent so concurrent turns (and sub-agent fan-out) reuse a
@@ -18,25 +17,6 @@ const UPSTREAM_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 export interface SseDataEvent {
   type?: string;
   [k: string]: unknown;
-}
-
-/** A per-agent-identity signature for the request's `system`, using ONLY the first
- *  system content block (the static role/instruction prompt). Claude Code appends a
- *  DYNAMIC env/date block to `system` (and injects per-request `<system-reminder>`
- *  blocks) — hashing the whole thing would drift the fingerprint every request. The
- *  first block is byte-stable across an agent's turns and distinct per agent type,
- *  which is exactly what we need to tell the main agent apart from sub-agents.
- *  Fail-open: unknown shape → stringify the whole value. */
-function stableSystemSignature(system: unknown): string {
-  if (typeof system === "string") return system;
-  if (Array.isArray(system)) {
-    const first = system.find(
-      (b): b is { type?: string; text?: string } =>
-        !!b && typeof b === "object" && (b as { type?: string }).type === "text" && typeof (b as { text?: string }).text === "string",
-    );
-    if (first?.text) return first.text;
-  }
-  return JSON.stringify(system);
 }
 
 /** Signature of `https.request`/`http.request` — the seam we inject in tests so
@@ -80,27 +60,23 @@ function isRetriableUpstreamError(err: NodeJS.ErrnoException): boolean {
  * SSE `data:` event to `onEvent` — this is the live streaming source for the web
  * chat pane (word-by-word text, tool markers in true order, live context tokens).
  *
- * Main-only streaming: Claude Code runs Task sub-agents IN-PROCESS and also fires
- * auxiliary requests (haiku topic/title detection, quota checks) — ALL of which
- * inherit ANTHROPIC_BASE_URL and flow through this same proxy. We tee ONLY the main
- * agent's events to `onEvent`; sub-agent and auxiliary streams are forwarded upstream
- * (so the CLI keeps working) but suppressed from the UI. The main agent's own
- * `Task`/`Agent` tool-call markers + their results already appear in its stream, so
- * sub-agents stay visible as normal tool calls — no fragile per-sub-agent
- * classification needed. We identify the main agent as the first TOOL-BEARING
- * request's system fingerprint (Claude Code keeps it byte-stable across the session
- * for prompt-cache hits; sub-agents carry a distinct system; auxiliary requests have
- * no tools). Fail-safe: a request we can't positively identify as main is suppressed
- * (the main agent's turns are always parseable, tool-bearing, and fingerprint-stable).
+ * Auxiliary-suppression: besides the real conversation turn, Claude Code fires
+ * extra requests through this same proxy — haiku topic/title detection and quota
+ * checks (NO tools), plus a smaller pre-flight conversation request before the full
+ * turn. We tee to `onEvent` every request that carries a non-empty `tools` array
+ * (the genuine agent turns) and suppress only the no-tools auxiliary calls (whose
+ * output, e.g. a title-gen `{"title":...}`, must never leak into the transcript).
+ *
+ * We deliberately do NOT try to fingerprint "main vs sub-agent": empirically the
+ * main agent's own requests do not share a stable signature (tool set and system
+ * drift across a turn as MCP tools/instructions load and per-request reminders are
+ * injected), so any such heuristic suppressed legitimate turns and broke streaming.
+ * Sub-agents therefore stream inline like any other tool work — there are no cards.
  */
 export class SsePtyProxy {
   private server: http.Server;
   /** Resolved listening port (0 until start() completes). */
   port = 0;
-  /** Fingerprint of the top-level (main) agent's system prompt, captured from the
-   *  first tool-bearing request. Streams whose system prompt differs (sub-agents) or
-   *  that have no tools (auxiliary calls) are suppressed from the UI. */
-  private mainSystemFp: string | null = null;
 
   private readonly requestFn: UpstreamRequestFn;
   private readonly upstreamHost: string;
@@ -163,16 +139,16 @@ export class SsePtyProxy {
     });
     req.on("end", () => {
       const body = Buffer.concat(chunks);
-      // Decide once per request whether this is the MAIN agent's stream. Only the
-      // main stream is teed to the UI; sub-agent and auxiliary streams are still
+      // Decide once per request whether to tee its events to the UI. Tool-bearing
+      // requests (real agent turns) are teed; no-tools auxiliary calls are still
       // forwarded upstream but suppressed from the chat pane.
-      const isMain = this.isMainAgentStream(body);
+      const tee = this.shouldTeeToUi(body);
       const headers: Record<string, unknown> = { ...req.headers, host: this.upstreamHost };
       // Plaintext SSE so we can parse it; we then forward the (uncompressed)
       // upstream response headers as-is, so the client sees consistent framing.
       delete headers["accept-encoding"];
 
-      this.sendUpstream(req, res, body, isMain, headers, inflight, 0);
+      this.sendUpstream(req, res, body, tee, headers, inflight, 0);
     });
   }
 
@@ -186,7 +162,7 @@ export class SsePtyProxy {
     req: http.IncomingMessage,
     res: http.ServerResponse,
     body: Buffer,
-    isMain: boolean,
+    tee: boolean,
     headers: Record<string, unknown>,
     inflight: { current?: http.ClientRequest },
     attempt: number,
@@ -210,7 +186,7 @@ export class SsePtyProxy {
         uRes.on("data", (chunk: Buffer) => {
           // Forward UNCHANGED to the client first (never let parsing affect the stream).
           try { res.write(chunk); } catch { /* client gone */ }
-          if (isSSE && isMain) sseBuf = this.parseSse(sseBuf + chunk.toString("utf-8"));
+          if (isSSE && tee) sseBuf = this.parseSse(sseBuf + chunk.toString("utf-8"));
         });
         uRes.on("end", () => { try { res.end(); } catch { /* already ended */ } });
         uRes.on("error", () => { try { res.end(); } catch { /* ignore */ } });
@@ -222,7 +198,7 @@ export class SsePtyProxy {
       // only once — a fresh socket can't fix a genuinely-down upstream.
       if (attempt === 0 && !res.headersSent && isRetriableUpstreamError(err)) {
         logger.warn(`SsePtyProxy[${this.label}] upstream ${err.message} — retrying on fresh socket`);
-        this.sendUpstream(req, res, body, isMain, headers, inflight, attempt + 1);
+        this.sendUpstream(req, res, body, tee, headers, inflight, attempt + 1);
         return;
       }
       logger.warn(`SsePtyProxy[${this.label}] upstream error: ${err.message}`);
@@ -242,15 +218,11 @@ export class SsePtyProxy {
    *  quota check); a different fingerprint => a Task sub-agent. Both are suppressed.
    *  Fail-SAFE to suppression: the main agent's turns are always parseable, tool-
    *  bearing, and fingerprint-stable. */
-  private isMainAgentStream(body: Buffer): boolean {
-    let json: { system?: unknown; tools?: unknown } | null = null;
-    try { json = JSON.parse(body.toString("utf-8")) as { system?: unknown; tools?: unknown }; }
-    catch { return false; }
-    if (!json || json.system == null) return false;
-    if (!Array.isArray(json.tools) || json.tools.length === 0) return false; // auxiliary call
-    const fp = createHash("sha1").update(stableSystemSignature(json.system)).digest("hex");
-    if (this.mainSystemFp == null) { this.mainSystemFp = fp; return true; } // first tool turn = main
-    return fp === this.mainSystemFp;                                        // else sub-agent suppressed
+  private shouldTeeToUi(body: Buffer): boolean {
+    let json: { tools?: unknown } | null = null;
+    try { json = JSON.parse(body.toString("utf-8")) as { tools?: unknown }; }
+    catch { return false; }                                          // non-JSON (e.g. count_tokens) — never a turn
+    return Array.isArray(json?.tools) && json.tools.length > 0;      // tool-bearing = a real agent turn
   }
 
   /** Consume complete SSE frames (separated by a blank line) from `buf`, JSON.parse

@@ -12,15 +12,15 @@ Jinn is a lightweight, open-source AI gateway daemon that orchestrates Claude Co
 
 ### Core Principles
 
-1. **Zero opinions on AI** — Jinn never touches the agentic loop. No ReAct implementation, no tool execution, no context management, no memory system. Claude Code and Codex handle all intelligence. Jinn is a bus, not a brain.
+1. **Zero opinions on AI** - Jinn never touches the agentic loop. No ReAct implementation, no tool execution, no context management, no memory system. Claude Code and Codex handle all intelligence. Jinn is a bus, not a brain.
 
-2. **Files are the interface** — Everything is files on disk. Employees are persona YAML files. Boards are JSON files. Skills are directories with SKILL.md. Config is YAML. The engines read and write these files natively. The gateway watches for changes and reacts.
+2. **Files are the interface** - Everything is files on disk. Employees are persona YAML files. Boards are JSON files. Skills are directories with SKILL.md. Config is YAML. The engines read and write these files natively. The gateway watches for changes and reacts.
 
-3. **Organic growth** — No predefined structure. Jinn bootstraps an organization based on the user's actual needs. Departments, employees, ranks, boards — all created on demand by Jinn's management skill, not hardcoded.
+3. **Organic growth** - No predefined structure. Jinn bootstraps an organization based on the user's actual needs. Departments, employees, ranks, boards - all created on demand by Jinn's management skill, not hardcoded.
 
 ### Mental Model
 
-You are the CEO. Jinn is your COO. He hires, manages, and orchestrates a team of AI employees — each backed by Claude Code or Codex — to handle your work across projects, platforms, and domains.
+You are the CEO. Jinn is your COO. He hires, manages, and orchestrates a team of AI employees - each backed by Claude Code or Codex - to handle your work across projects, platforms, and domains.
 
 ### Tech Stack
 
@@ -210,7 +210,7 @@ const result = await thread.run(prompt);
 
 ### Adding New Engines
 
-One new file implementing the `Engine` interface. The gateway is engine-agnostic. Any engine can be Jinn's default brain — configurable in `config.yaml`.
+One new file implementing the `Engine` interface. The gateway is engine-agnostic. Any engine can be Jinn's default brain - configurable in `config.yaml`.
 
 ### Available Models
 
@@ -305,7 +305,7 @@ Connector intercepts `/new` and `/status` before routing to session manager. Han
 
 ### Future Connectors
 
-Discord, iMessage, etc. implement the same `Connector` interface. The gateway works with `IncomingMessage` everywhere — platform-agnostic.
+Discord, iMessage, etc. implement the same `Connector` interface. The gateway works with `IncomingMessage` everywhere - platform-agnostic.
 
 ---
 
@@ -351,7 +351,7 @@ Discord, iMessage, etc. implement the same `Connector` interface. The gateway wo
 ### Execution
 
 1. node-cron fires at scheduled time
-2. Creates a fresh session (never resumed — isolated per run)
+2. Creates a fresh session (never resumed - isolated per run)
 3. Spawns engine with employee persona (if set)
 4. Engine runs, returns result
 5. If delivery configured, posts result to connector channel
@@ -460,7 +460,7 @@ Enforcement is via persona instructions (honor system). The AI follows rank cons
 - On startup + file watch: scans `~/.jinn/org/`, builds in-memory map of `employee name -> { persona, engine, model, department }`
 - Connector uses this map for `@employee-name` mention routing
 - Web UI API reads this for org chart rendering
-- All creation/management is done by the management skill — the gateway only reads
+- All creation/management is done by the management skill - the gateway only reads
 
 ---
 
@@ -490,7 +490,7 @@ Skills are directories with a SKILL.md file. No runtime, no registration, no loa
 |-------|---------|
 | `management` | Hire/fire employees, create departments, promote ranks, delegate tasks, restructure org |
 | `cron-manager` | Create/edit/delete cron jobs. Always asks user about delivery if not specified |
-| `skill-creator` | Thin wrapper — defers to Claude Code's native skill creation or Codex's native capabilities. Ensures output lands in `~/.jinn/skills/` and follows conventions |
+| `skill-creator` | Thin wrapper - defers to Claude Code's native skill creation or Codex's native capabilities. Ensures output lands in `~/.jinn/skills/` and follows conventions |
 | `self-heal` | Diagnose and fix Jinn issues. Read logs, check config, fix broken state |
 | `onboarding` | First-run setup. Detect OpenClaw, analyze and propose migration, scaffold org |
 
@@ -610,21 +610,21 @@ Next.js 15 + Tailwind CSS. Static export bundled with npm package. Served by gat
 
 ### Pages
 
-**Dashboard (`/`)** — At-a-glance overview: gateway status, active sessions, next cron fire, recent activity feed, quick "New Session" button.
+**Dashboard (`/`)** - At-a-glance overview: gateway status, active sessions, next cron fire, recent activity feed, quick "New Session" button.
 
-**Chat (`/chat`)** — Primary interaction surface. Sidebar with conversation list (Jinn + employees). Full chat interface. Supports `@employee` mentions, `/new`, `/status`. Input box with engine/model indicator. Onboarding flow lives here on first run.
+**Chat (`/chat`)** - Primary interaction surface. Sidebar with conversation list (Jinn + employees). Full chat interface. Supports `@employee` mentions, `/new`, `/status`. Input box with engine/model indicator. Onboarding flow lives here on first run.
 
-**Sessions (`/sessions`)** — List all sessions with status. Click for detail view with chat history, metadata, follow-up input.
+**Sessions (`/sessions`)** - List all sessions with status. Click for detail view with chat history, metadata, follow-up input.
 
-**Organization (`/org`)** — Interactive tree: Jinn -> departments -> employees with rank badges. Click employee for detail panel (persona, tasks, sessions, engine config). Click department for board view (kanban/list of tasks).
+**Organization (`/org`)** - Interactive tree: Jinn -> departments -> employees with rank badges. Click employee for detail panel (persona, tasks, sessions, engine config). Click department for board view (kanban/list of tasks).
 
-**Cron (`/cron`)** — Job list with enable/disable toggle, schedule, status, history. Click for run history and config editing.
+**Cron (`/cron`)** - Job list with enable/disable toggle, schedule, status, history. Click for run history and config editing.
 
-**Skills (`/skills`)** — Grid of skill cards. Click for SKILL.md content. "Create Skill" button triggers chat with Jinn.
+**Skills (`/skills`)** - Grid of skill cards. Click for SKILL.md content. "Create Skill" button triggers chat with Jinn.
 
-**Logs (`/logs`)** — Live tail of gateway.log. Filter by level and subsystem.
+**Logs (`/logs`)** - Live tail of gateway.log. Filter by level and subsystem.
 
-**Settings (`/settings`)** — Visual config.yaml editor. Save writes to file, gateway hot-reloads.
+**Settings (`/settings`)** - Visual config.yaml editor. Save writes to file, gateway hot-reloads.
 
 ### API Endpoints
 
@@ -695,7 +695,7 @@ Next.js 15 + Tailwind CSS. Static export bundled with npm package. Served by gat
 4. If `~/.openclaw/` detected: "I found your OpenClaw installation. Want me to analyze it?"
 5. Full analysis: skills, cron jobs, knowledge files, memory, config, session history
 6. Jinn presents migration proposal with recommended org structure
-7. User approves/tweaks what to migrate (skills, cron, knowledge — each opt-in)
+7. User approves/tweaks what to migrate (skills, cron, knowledge - each opt-in)
 8. Jinn scaffolds the org and migrates selected items
 9. Transitions to dashboard
 
@@ -828,7 +828,7 @@ const proc = spawn("claude", args, {
 
 ### Multi-User in Shared Channels
 
-Channel sessions are shared — all users in a channel talk to the same session. The engine sees all users' messages in one conversation.
+Channel sessions are shared - all users in a channel talk to the same session. The engine sees all users' messages in one conversation.
 
 ### Attachments
 

@@ -119,7 +119,7 @@ test("isOldSlackMessage compares against boot time", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests — verify new tests fail**
+- [ ] **Step 2: Run tests - verify new tests fail**
 
 Run: `cd /Users/jimmyenglish/Projects/jinn && npx tsx --test packages/jinn/src/connectors/slack/threads.test.ts`
 Expected: Several test failures (root key format, buildReplyContext for roots)
@@ -143,12 +143,12 @@ export function deriveSessionKey(event: SlackMessageEventLike): string {
     return `slack:dm:${event.user || "unknown"}`;
   }
 
-  // Thread reply — use thread_ts (which is the root message's ts)
+  // Thread reply - use thread_ts (which is the root message's ts)
   if (event.thread_ts && event.thread_ts !== event.ts) {
     return `slack:${event.channel}:${event.thread_ts}`;
   }
 
-  // Root channel message — use ts so thread replies will match
+  // Root channel message - use ts so thread replies will match
   return `slack:${event.channel}:${event.ts}`;
 }
 
@@ -186,7 +186,7 @@ export function isOldSlackMessage(ts: string | undefined, bootTimeMs: number): b
 
 Note: Removed `SlackThreadOptions` interface and `shareSessionInChannel` parameter entirely.
 
-- [ ] **Step 4: Run tests — verify all pass**
+- [ ] **Step 4: Run tests - verify all pass**
 
 Run: `cd /Users/jimmyenglish/Projects/jinn && npx tsx --test packages/jinn/src/connectors/slack/threads.test.ts`
 Expected: All 8 tests pass
@@ -217,7 +217,7 @@ git commit -m "fix: per-message session keys for Slack thread continuity
 
 Each root channel message now gets its own session key (slack:{channel}:{ts})
 instead of sharing one per channel. Thread replies match via thread_ts.
-Removes shareSessionInChannel option — no longer needed.
+Removes shareSessionInChannel option - no longer needed.
 Root messages now set thread in replyContext so bot replies create threads."
 ```
 

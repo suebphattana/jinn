@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build Jinn — a lightweight AI gateway daemon that orchestrates Claude Code CLI and Codex SDK as an autonomous, self-organizing AI workforce.
+**Goal:** Build Jinn - a lightweight AI gateway daemon that orchestrates Claude Code CLI and Codex SDK as an autonomous, self-organizing AI workforce.
 
 **Architecture:** Monorepo with two packages (`jinn-cli` core + `@jinn/web` dashboard). Single Node.js process gateway that spawns engine child processes, routes messages from connectors, runs cron jobs, and serves a static Next.js web UI. All state lives in `~/.jinn/` as YAML, JSON, and SQLite files.
 
@@ -355,13 +355,13 @@ Build the core: SQLite session registry and both engine wrappers.
 **Step 1: Write registry module**
 
 Implements:
-- `initDb()` — creates SQLite database at `~/.jinn/sessions/registry.db`, runs CREATE TABLE IF NOT EXISTS
-- `createSession(opts)` — inserts new session, returns Session
-- `getSession(id)` — get by Jinn session ID
-- `getSessionBySourceRef(sourceRef)` — look up by source_ref (for routing)
-- `updateSession(id, updates)` — update fields (engine_session_id, status, last_activity, last_error)
-- `listSessions(filter?)` — list all, optionally filter by status/source/engine
-- `deleteSession(id)` — for /new command (soft: just removes from registry)
+- `initDb()` - creates SQLite database at `~/.jinn/sessions/registry.db`, runs CREATE TABLE IF NOT EXISTS
+- `createSession(opts)` - inserts new session, returns Session
+- `getSession(id)` - get by Jinn session ID
+- `getSessionBySourceRef(sourceRef)` - look up by source_ref (for routing)
+- `updateSession(id, updates)` - update fields (engine_session_id, status, last_activity, last_error)
+- `listSessions(filter?)` - list all, optionally filter by status/source/engine
+- `deleteSession(id)` - for /new command (soft: just removes from registry)
 
 Uses `better-sqlite3` (synchronous API, simple).
 
@@ -517,7 +517,7 @@ export class CodexEngine implements Engine {
 }
 ```
 
-Note: The exact Codex SDK API may differ slightly — adapt to actual SDK types at implementation time. The key contract is the `Engine` interface.
+Note: The exact Codex SDK API may differ slightly - adapt to actual SDK types at implementation time. The key contract is the `Engine` interface.
 
 **Step 2: Build and verify**
 
@@ -585,10 +585,10 @@ export class SessionQueue {
 **Step 3: Write session manager (`manager.ts`)**
 
 Orchestrates everything:
-- `route(msg: IncomingMessage)` — determines source_ref, looks up/creates session, enqueues engine run
-- `runSession(session, prompt, attachments, employee?)` — picks engine, builds context, spawns, handles result
-- `handleCommand(msg, connector)` — handles /new, /status
-- `resetSession(sourceRef)` — for /new command
+- `route(msg: IncomingMessage)` - determines source_ref, looks up/creates session, enqueues engine run
+- `runSession(session, prompt, attachments, employee?)` - picks engine, builds context, spawns, handles result
+- `handleCommand(msg, connector)` - handles /new, /status
+- `resetSession(sourceRef)` - for /new command
 
 Depends on: registry, engines, context builder, queue.
 
@@ -630,39 +630,39 @@ Uses Node.js `http.createServer` + `ws` WebSocket server on same port:
 **Step 2: Write REST API (`api.ts`)**
 
 Implements all endpoints from design doc section 10. Simple request handler function that parses URL, method, body and routes to the right handler. Returns JSON responses. Endpoints:
-- `GET /api/status` — gateway uptime, engine availability, session counts
-- `GET /api/sessions` — list from registry
-- `GET /api/sessions/:id` — single session detail
-- `POST /api/sessions` — create session from web UI (accepts `{ prompt, engine?, employee? }`)
-- `POST /api/sessions/:id/message` — send follow-up
-- `GET /api/cron` — read jobs.json
-- `GET /api/cron/:id/runs` — read from runs/*.jsonl
-- `PUT /api/cron/:id` — update job in jobs.json
-- `GET /api/org` — scan org directory, return tree
-- `GET /api/org/employees/:name` — read employee YAML
-- `GET /api/org/departments/:name/board` — read board.json
-- `GET /api/skills` — list skill directories
-- `GET /api/skills/:name` — read SKILL.md content
-- `GET /api/config` — read config.yaml
-- `PUT /api/config` — write config.yaml
-- `GET /api/logs` — tail last N lines of gateway.log
+- `GET /api/status` - gateway uptime, engine availability, session counts
+- `GET /api/sessions` - list from registry
+- `GET /api/sessions/:id` - single session detail
+- `POST /api/sessions` - create session from web UI (accepts `{ prompt, engine?, employee? }`)
+- `POST /api/sessions/:id/message` - send follow-up
+- `GET /api/cron` - read jobs.json
+- `GET /api/cron/:id/runs` - read from runs/*.jsonl
+- `PUT /api/cron/:id` - update job in jobs.json
+- `GET /api/org` - scan org directory, return tree
+- `GET /api/org/employees/:name` - read employee YAML
+- `GET /api/org/departments/:name/board` - read board.json
+- `GET /api/skills` - list skill directories
+- `GET /api/skills/:name` - read SKILL.md content
+- `GET /api/config` - read config.yaml
+- `PUT /api/config` - write config.yaml
+- `GET /api/logs` - tail last N lines of gateway.log
 
 **Step 3: Write file watcher (`watcher.ts`)**
 
 Uses chokidar to watch:
-- `config.yaml` — on change, reload config, emit `config:reloaded`
-- `cron/jobs.json` — on change, reload cron scheduler, emit `cron:reloaded`
-- `org/` — on change, rebuild employee registry, emit `org:changed`
+- `config.yaml` - on change, reload config, emit `config:reloaded`
+- `cron/jobs.json` - on change, reload cron scheduler, emit `cron:reloaded`
+- `org/` - on change, rebuild employee registry, emit `org:changed`
 
 Debounce all watchers (500ms) to avoid rapid-fire reloads.
 
 **Step 4: Write lifecycle manager (`lifecycle.ts`)**
 
 Handles:
-- `startForeground()` — start server, register SIGINT/SIGTERM handlers for graceful shutdown
-- `startDaemon()` — fork child process, write PID to `~/.jinn/gateway.pid`, parent exits
-- `stop()` — read PID file, send SIGTERM, remove PID file
-- `getStatus()` — check if PID file exists and process is alive
+- `startForeground()` - start server, register SIGINT/SIGTERM handlers for graceful shutdown
+- `startDaemon()` - fork child process, write PID to `~/.jinn/gateway.pid`, parent exits
+- `stop()` - read PID file, send SIGTERM, remove PID file
+- `getStatus()` - check if PID file exists and process is alive
 - Graceful shutdown: stop connectors, stop cron, close HTTP server, close DB
 
 **Step 5: Build and verify**
@@ -691,8 +691,8 @@ git commit -m "feat: add gateway server with API, file watcher, and lifecycle ma
 **Step 1: Write setup command (`cli/setup.ts`)**
 
 1. Check Node.js version (>= 22)
-2. Check for `claude` binary — if missing, prompt to install via `npm install -g @anthropic-ai/claude-code`
-3. Check for `codex` binary — if missing, prompt to install via `npm install -g @openai/codex`
+2. Check for `claude` binary - if missing, prompt to install via `npm install -g @anthropic-ai/claude-code`
+3. Check for `codex` binary - if missing, prompt to install via `npm install -g @openai/codex`
 4. Check auth: run `claude --version` and `codex --version` to verify
 5. Create `~/.jinn/` directory structure by copying from `template/`
 6. Initialize empty SQLite database with schema
@@ -743,7 +743,7 @@ git commit -m "feat: wire CLI commands (setup, start, stop, status)"
 
 ## Phase 4: Template Files (CLAUDE.md, AGENTS.md, Skills, Docs)
 
-Create the brain — the files that make engines understand Jinn.
+Create the brain - the files that make engines understand Jinn.
 
 ### Task 4.1: Write CLAUDE.md and AGENTS.md
 
@@ -760,7 +760,7 @@ This is the most important file in the project. It tells every Claude Code sessi
 - How to use skills (read SKILL.md from `~/.jinn/skills/`)
 - How the org system works (employees, departments, ranks, boards, personas)
 - How to create/manage cron jobs (edit `cron/jobs.json`, gateway auto-reloads)
-- How to self-modify (edit config, org files, create skills — gateway watches and reacts)
+- How to self-modify (edit config, org files, create skills - gateway watches and reacts)
 - Reference to `docs/` for deeper understanding
 - List of pre-packaged skills
 - Conventions: where to put knowledge, how to name files, YAML for personas, JSON for boards/cron
@@ -805,7 +805,7 @@ Instructions for: reading `logs/gateway.log` to diagnose issues, checking config
 
 **Step 5: Write onboarding skill**
 
-Instructions for first-run flow: greet user, ask about projects, ask about tools/engines, detect `~/.openclaw/`, analyze OpenClaw data (skills, cron, knowledge, memory, config — full D analysis), present migration proposal with recommendations, let user pick what to migrate, scaffold org structure. Include predefined option lists for common use cases.
+Instructions for first-run flow: greet user, ask about projects, ask about tools/engines, detect `~/.openclaw/`, analyze OpenClaw data (skills, cron, knowledge, memory, config - full D analysis), present migration proposal with recommendations, let user pick what to migrate, scaffold org structure. Include predefined option lists for common use cases.
 
 **Step 6: Commit**
 
@@ -830,13 +830,13 @@ git commit -m "feat: add pre-packaged skills (management, cron-manager, skill-cr
 **Step 1: Write each doc**
 
 These are for Jinn's self-awareness. Each doc should be concise and technical:
-- `overview.md` — what Jinn is, core principles, how it differs from OpenClaw
-- `architecture.md` — gateway, sessions, engines, connectors, cron, file watchers
-- `skills.md` — how skills work, conventions, how to create them
-- `cron.md` — job schema, scheduling, delivery, hot-reload
-- `connectors.md` — connector interface, Slack specifics, future platforms
-- `org.md` — employee personas, departments, ranks, boards, communication rules
-- `self-modification.md` — what Jinn can edit, how file watchers react, safety considerations
+- `overview.md` - what Jinn is, core principles, how it differs from OpenClaw
+- `architecture.md` - gateway, sessions, engines, connectors, cron, file watchers
+- `skills.md` - how skills work, conventions, how to create them
+- `cron.md` - job schema, scheduling, delivery, hot-reload
+- `connectors.md` - connector interface, Slack specifics, future platforms
+- `org.md` - employee personas, departments, ranks, boards, communication rules
+- `self-modification.md` - what Jinn can edit, how file watchers react, safety considerations
 
 **Step 2: Write default config.yaml template**
 
@@ -872,8 +872,8 @@ Logic: if `event.channel_type === "im"` -> DM. Else if `event.thread_ts && event
 **Step 2: Write message formatter (`format.ts`)**
 
 Functions:
-- `formatResponse(text)` — truncate if > 3000 chars (Slack limit), split into multiple messages if needed
-- `downloadAttachment(url, token, destDir)` — download Slack file to `~/.jinn/tmp/`, return local path
+- `formatResponse(text)` - truncate if > 3000 chars (Slack limit), split into multiple messages if needed
+- `downloadAttachment(url, token, destDir)` - download Slack file to `~/.jinn/tmp/`, return local path
 
 **Step 3: Write Slack connector (`index.ts`)**
 
@@ -953,9 +953,9 @@ git commit -m "feat: add Slack connector with thread mapping and reactions"
 **Step 1: Write job loader (`jobs.ts`)**
 
 Reads and writes `~/.jinn/cron/jobs.json`. Functions:
-- `loadJobs()` — parse JSON, return typed CronJob array
-- `saveJobs(jobs)` — write back to file
-- `appendRunLog(jobId, entry)` — append JSONL to `runs/<jobId>.jsonl`
+- `loadJobs()` - parse JSON, return typed CronJob array
+- `saveJobs(jobs)` - write back to file
+- `appendRunLog(jobId, entry)` - append JSONL to `runs/<jobId>.jsonl`
 
 **Step 2: Write cron runner (`runner.ts`)**
 
@@ -970,9 +970,9 @@ Executes a single cron job:
 **Step 3: Write scheduler (`scheduler.ts`)**
 
 Uses `node-cron`:
-- `start(jobs, runner)` — schedule all enabled jobs
-- `reload(jobs)` — stop all, reschedule with new jobs
-- `stopAll()` — stop all scheduled tasks
+- `start(jobs, runner)` - schedule all enabled jobs
+- `reload(jobs)` - stop all, reschedule with new jobs
+- `stopAll()` - stop all scheduled tasks
 
 **Step 4: Wire into gateway**
 
@@ -1006,9 +1006,9 @@ git commit -m "feat: add cron scheduler with job loader and runner"
 **Step 1: Write org scanner**
 
 Functions:
-- `scanOrg()` — recursively scan `~/.jinn/org/`, parse all `.yaml` files, return `Map<string, Employee>`
-- `findEmployee(name, registry)` — look up by name (exact match)
-- `extractMention(text, registry)` — scan message text for `@employee-name` patterns, return first match
+- `scanOrg()` - recursively scan `~/.jinn/org/`, parse all `.yaml` files, return `Map<string, Employee>`
+- `findEmployee(name, registry)` - look up by name (exact match)
+- `extractMention(text, registry)` - scan message text for `@employee-name` patterns, return first match
 
 Uses `js-yaml` to parse persona files. Gracefully handles malformed/missing files.
 

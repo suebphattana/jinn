@@ -1,4 +1,4 @@
-# `jinn restart` — detached, in-session-safe gateway restart
+# `jinn restart` - detached, in-session-safe gateway restart
 
 **Date:** 2026-06-04
 **Status:** Approved (design)
@@ -15,7 +15,7 @@ Restarting the gateway from *inside* a Jinn chat session (the normal workflow:
   session.
 - `jinn stop` sends `SIGTERM` to the daemon (`lifecycle.ts` `stop()`).
 - The daemon's shutdown calls `interactiveClaudeEngine.killAll()`
-  (`server.ts`), which kills **every** PTY — including the session running the
+  (`server.ts`), which kills **every** PTY - including the session running the
   command.
 - The session dies → the `&& jinn start` half never runs → the gateway stays
   down.
@@ -31,12 +31,12 @@ the gateway's `killAll()` cannot kill it.
 
 This reuses two patterns already in the codebase:
 - `startDaemon()`'s detached-fork pattern (`fork(entry, [], {detached:true,
-  stdio:"ignore"}); child.disconnect(); child.unref()`) — the helper is
+  stdio:"ignore"}); child.disconnect(); child.unref()`) - the helper is
   reparented to launchd and survives its parent's death.
 - The gateway's existing **interrupted-session resume** (sessions are marked
   `interrupted` on shutdown; the web client cold-respawns them with `--resume`
   when the gateway returns). This keeps the chat conversation intact across the
-  restart — a brief blip, full history preserved.
+  restart - a brief blip, full history preserved.
 
 **`stop` is unchanged.** `start` gets one added guard (see Component 5): if a
 gateway is already running, `start` routes to the same race-free restart path
@@ -50,7 +50,7 @@ Running `jinn start` while the gateway is already up is a race that can leave yo
 fully down:
 
 1. `startDaemon()` forks a new daemon and **immediately overwrites
-   `gateway.pid`** with the new PID — before it has proven it can boot.
+   `gateway.pid`** with the new PID - before it has proven it can boot.
 2. The new daemon's boot-time reap (`server.ts`) sends `SIGTERM` to the **old
    gateway and all its PTYs** (including the calling session).
 3. The new daemon then calls `server.listen(port)`. If the old gateway hasn't
@@ -59,32 +59,32 @@ fully down:
 
 Net: old gateway killed, new one possibly dead, `gateway.pid` stale. The fix
 (Component 5) adds an explicit **wait-for-port-free** gate, exactly as the
-detached helper does — eliminating the race for both orderings.
+detached helper does - eliminating the race for both orderings.
 
 ## Components
 
-### 1. `restart-entry.ts` (new) — `packages/jinn/src/gateway/restart-entry.ts`
+### 1. `restart-entry.ts` (new) - `packages/jinn/src/gateway/restart-entry.ts`
 
 The detached helper's entry point, modeled on `daemon-entry.ts`. Runs in its own
 reparented process:
 
 1. `uncaughtException` / `unhandledRejection` guards (same as `daemon-entry.ts`).
 2. `loadConfig()`.
-3. `stop()` — SIGTERM the running gateway (best-effort; no-op if already down).
-4. `await waitForPortFree(port)` — the shared helper (see Component 5).
-5. `startDaemon(config)` — bring up a fresh daemon.
+3. `stop()` - SIGTERM the running gateway (best-effort; no-op if already down).
+4. `await waitForPortFree(port)` - the shared helper (see Component 5).
+5. `startDaemon(config)` - bring up a fresh daemon.
 6. Exit 0.
 
 Compiled to `dist/src/gateway/restart-entry.js` (tsc picks it up automatically).
 
-### 2. `restartDetached()` (new) — in `packages/jinn/src/gateway/lifecycle.ts`
+### 2. `restartDetached()` (new) - in `packages/jinn/src/gateway/lifecycle.ts`
 
 Mirrors `startDaemon()`: resolves `restart-entry.js` via the same
 candidate-path lookup, forks it detached with `stdio:"ignore"`,
 `disconnect()` + `unref()`, passing `JINN_HOME` through the env. Returns
 immediately.
 
-### 3. `runRestart()` (new) — `packages/jinn/src/cli/restart.ts`
+### 3. `runRestart()` (new) - `packages/jinn/src/cli/restart.ts`
 
 ```
 export async function runRestart(opts: { port?: number }): Promise<void> {
@@ -94,14 +94,14 @@ export async function runRestart(opts: { port?: number }): Promise<void> {
 }
 ```
 
-### 4. Command registration — `packages/jinn/bin/jinn.ts`
+### 4. Command registration - `packages/jinn/bin/jinn.ts`
 
 Add alongside `start`/`stop`:
 
 ```
 program
   .command("restart")
-  .description("Restart the gateway (detached — safe to run from inside a session)")
+  .description("Restart the gateway (detached - safe to run from inside a session)")
   .option("-p, --port <port>", "Port to start on")
   .action(async (opts) => {
     const { runRestart } = await import("../src/cli/restart.js");
@@ -109,7 +109,7 @@ program
   });
 ```
 
-### 5. `start` already-running guard + `waitForPortFree()` — `lifecycle.ts` + `cli/start.ts`
+### 5. `start` already-running guard + `waitForPortFree()` - `lifecycle.ts` + `cli/start.ts`
 
 New shared helper in `lifecycle.ts`:
 
@@ -130,7 +130,7 @@ export async function waitForPortFree(port: number, timeoutMs = 10_000): Promise
 if (getStatus().running) {
   if (opts.daemon) {
     restartDetached(config);              // race-free detached restart
-    console.log("Gateway already running — restarting in background.");
+    console.log("Gateway already running - restarting in background.");
     return;
   }
   // foreground: stop the old one, wait for the port, then fall through to start
@@ -147,7 +147,7 @@ the racy double-boot. `stop` and `restart` both reuse `waitForPortFree`.
 1. Agent (inside a session) runs `jinn restart`.
 2. `runRestart` forks the detached helper and exits immediately (0).
 3. The gateway tears down sessions, killing the agent's PTY and the `jinn
-   restart` foreground process — **but the helper is already reparented and
+   restart` foreground process - **but the helper is already reparented and
    unref'd, so it keeps running.**
 4. Helper: `stop()` → wait for port free → `startDaemon()` → exit.
 5. New gateway boots, resumes interrupted sessions; the web client reconnects

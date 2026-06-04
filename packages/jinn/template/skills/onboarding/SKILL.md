@@ -20,10 +20,10 @@ Example: "Hey! I'm {{portalName}}, your AI assistant. Let me learn about you so 
 ### 2. Ask About the User
 
 Ask the following (all at once, not one by one):
-1. **Who are you?** — Name, role, business/company
-2. **What should {{portalName}} help with?** — Code reviews, deployments, monitoring, content, research, etc.
-3. **Communication style** — Do you prefer concise or detailed responses? Emoji or no emoji? What language?
-4. **Active projects** — What are you working on right now? Tech stacks, repos, status?
+1. **Who are you?** - Name, role, business/company
+2. **What should {{portalName}} help with?** - Code reviews, deployments, monitoring, content, research, etc.
+3. **Communication style** - Do you prefer concise or detailed responses? Emoji or no emoji? What language?
+4. **Active projects** - What are you working on right now? Tech stacks, repos, status?
 
 ### 3. Write Knowledge Files
 
@@ -102,5 +102,5 @@ Summarize what was set up and suggest next steps:
 ## Error Handling
 
 - If `~/.jinn/knowledge/` doesn't exist, create it
-- If the user seems overwhelmed, simplify — suggest one department and one employee
+- If the user seems overwhelmed, simplify - suggest one department and one employee
 - If the user wants to skip onboarding, respect that and exit gracefully

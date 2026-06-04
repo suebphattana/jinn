@@ -109,6 +109,6 @@ For understanding {{portalName}}'s architecture and component relationships, ref
 ## Error Handling
 
 - If log files do not exist, note that logging may not be configured and skip that check.
-- If config.yaml does not exist, this is likely a fresh install — suggest running the onboarding process instead.
+- If config.yaml does not exist, this is likely a fresh install - suggest running the onboarding process instead.
 - Always back up files before modifying them during repair.
 - Report all findings clearly to the user, even if no issues are found (a clean bill of health is useful information).

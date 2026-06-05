@@ -55,6 +55,13 @@ export function buildContext(opts: {
   language?: string;
   channelName?: string;
   hierarchy?: import("../shared/types.js").OrgHierarchy;
+  /**
+   * Extra ESSENTIAL persona injected for the hands-free voice orchestrator
+   * (source:"talk"). Layered on top of the base identity so the session keeps
+   * the gateway/delegation knowledge from CLAUDE.md while behaving as the thin
+   * voice layer above the COO. Empty/undefined for all normal sessions.
+   */
+  voicePersona?: string;
 }): string {
   const maxChars = opts.config?.context?.maxChars ?? DEFAULT_MAX_CONTEXT_CHARS;
   const sections: Section[] = [];
@@ -89,6 +96,19 @@ export function buildContext(opts: {
       marker: "# You are",
       content: buildIdentity(portalName, operatorName, language),
       summary: `# You are ${portalName}\nYour working directory is \`~/.jinn\` (${JINN_HOME}).`,
+    });
+  }
+
+  // ── ESSENTIAL: Voice orchestrator persona (source:"talk" only) ──
+  // Layered right after identity so the hands-free voice behaviour governs the
+  // turn, while the base identity + CLAUDE.md still supply gateway/delegation
+  // know-how. No trimming — this defines how a talk turn must behave.
+  if (opts.voicePersona && opts.voicePersona.trim()) {
+    sections.push({
+      tier: Tier.ESSENTIAL,
+      marker: "# Voice mode",
+      content: opts.voicePersona,
+      summary: "", // always included, never trimmed
     });
   }
 

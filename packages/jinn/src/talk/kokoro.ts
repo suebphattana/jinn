@@ -19,8 +19,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { JINN_HOME } from "../shared/paths.js"
 import { logger } from "../shared/logger.js"
-import { TALK_EVENTS, type Emit } from "./protocol.js"
-import type { Tts } from "./context.js"
+import { TALK_EVENTS, type Emit, type Tts } from "./protocol.js"
 
 /** Model / venv layout under JINN_HOME. */
 const KOKORO_DIR = path.join(JINN_HOME, "models", "kokoro")

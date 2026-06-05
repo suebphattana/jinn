@@ -61,6 +61,7 @@ export default function TalkPage() {
   const cards = demoMode ? demoCards : talk.cards
   const tasks = demoMode ? demoTasks : talk.tasks
   const level = demoMode ? undefined : talk.level
+  const focus = demoMode ? null : talk.focus
 
   // --- Mic (live loop) ------------------------------------------------------
   const onMic = useCallback(() => {
@@ -181,6 +182,25 @@ export default function TalkPage() {
       {/* The hero orb, dead center */}
       <div className="absolute inset-0 grid place-items-center">
         <AuraAvatar state={state} level={level} size={360} />
+      </div>
+
+      {/* Focus channel — which COO the orchestrator is delegating to / narrating.
+          Fades + lifts in when a channel takes focus (fluid state transition). */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-[34%] z-20 flex justify-center px-6">
+        <div
+          className={cn(
+            "inline-flex items-center gap-2 rounded-full border border-[var(--separator)] bg-[var(--material-regular)] px-4 py-1.5 text-footnote text-[var(--text-secondary)] backdrop-blur-md transition-all duration-500 ease-out",
+            focus ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+          )}
+        >
+          <span className="relative flex size-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--accent)] opacity-75" />
+            <span className="relative inline-flex size-2 rounded-full bg-[var(--accent)]" />
+          </span>
+          <span className="font-[family-name:var(--font-code)] uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
+            {focus?.label ?? ""}
+          </span>
+        </div>
       </div>
 
       {/* Composed content cards (lower third) */}

@@ -225,12 +225,13 @@ export const api = {
   },
   sttUpdateConfig: (languages: string[]) =>
     put<{ status: string; languages: string[] }>("/api/stt/config", { languages }),
-  /** Talk (Phase 2 real loop): submit a user turn — backend streams the reply over WS. */
-  talkTurn: (sessionId: string, text: string) =>
-    post<{ status: string }>("/api/talk/turn", { sessionId, text }),
-  /** Talk: pre-boot the agent session so the first real turn is warm (no cold-start). */
-  talkWarm: (sessionId: string) =>
-    post<{ ok: boolean }>("/api/talk/warm", { sessionId }),
+  /**
+   * Talk (Path 1): bootstrap (or reuse) the hands-free voice orchestrator —
+   * a real gateway session with source:"talk". Voice turns then go through the
+   * normal sendMessage(); the spoken reply streams back as talk:audio over WS.
+   */
+  talkCreateSession: (fresh = false) =>
+    post<{ sessionId: string; reused: boolean }>("/api/talk/session", { fresh }),
   /** Talk: TTS/loop readiness (whether the local voice model is installed + download state). */
   talkStatus: () =>
     get<{ available: boolean; ttsAvailable: boolean; ttsModel: string | null; downloading: boolean; progress: number }>("/api/talk/status"),

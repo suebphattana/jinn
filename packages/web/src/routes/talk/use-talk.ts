@@ -1,20 +1,21 @@
 /**
- * Jinn Talk — real voice-loop hook (Phase 2).
+ * Jinn Talk — real voice-loop hook (Path 1).
  *
- * Wires the live loop end to end:
- *   mic → useStt → POST /api/talk/turn → gateway streams talk:* over the WS →
- *   this hook maps events into avatar state, transcript, cards, the parallel-task
- *   tracker, and streamed TTS audio (TalkAudioPlayer drives the orb's level).
+ * The voice orchestrator is a REAL gateway session (source:"talk"), not an
+ * in-process Agent-SDK loop. So the loop is:
  *
- * It REUSES the existing infra rather than rebuilding it:
- *   - useGateway().subscribe — single shared WS; we filter talk:* by sessionId.
- *   - useStt — mic capture + backend STT (handleMicClick / stopRecording / analyser).
- *   - TalkAudioPlayer — sequential low-latency playback of streamed audio chunks.
+ *   mic → useStt → POST /api/sessions/{orchestratorId}/message
+ *        → the orchestrator session streams its reply as session:delta `text`
+ *          (live caption) and, at turn end, the gateway synthesizes the whole
+ *          reply with Kokoro and streams it back as talk:audio (drives the orb).
+ *        → when the orchestrator delegates to a COO child, the gateway emits
+ *          talk:focus so the UI can animate to that channel.
+ *        → when a COO child finishes, the gateway wakes the orchestrator with a
+ *          📩 notification; it narrates — which arrives as another session:delta
+ *          + talk:audio turn, fully hands-free.
  *
- * `level` semantics (fed to <AuraAvatar level=…>):
- *   - listening: RMS from the mic analyser (useStt.analyser)
- *   - speaking:  RMS from the audio player's output analyser
- *   - otherwise: undefined → the orb self-animates
+ * Reuses existing infra: useGateway().subscribe (shared WS), useStt (mic+STT),
+ * TalkAudioPlayer (ordered low-latency playback feeding the orb level).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useGateway } from "@/hooks/use-gateway"
@@ -23,28 +24,25 @@ import { api } from "@/lib/api"
 import { TalkAudioPlayer } from "./audio-player"
 import {
   TALK_EVENTS,
-  wireTaskToTracker,
   type TalkAudioEvent,
-  type TalkCardDismissEvent,
-  type TalkCardEvent,
-  type TalkCardUpdateEvent,
-  type TalkSayEvent,
-  type TalkStateEvent,
-  type TalkTaskEvent,
-  type TalkTranscriptEvent,
-  type TalkTurnDoneEvent,
+  type TalkFocusEvent,
+  type SessionDeltaEvent,
+  type SessionCompletedEvent,
 } from "./protocol"
 import type { TranscriptEntry } from "./transcript"
 import type { AvatarState, Card, TrackerTask } from "./types"
-
-/** Stable per-surface session id (one Talk view = one logical session). */
-export const TALK_SESSION_ID = "talk-main"
 
 export type TtsStatus =
   | { kind: "idle" }
   | { kind: "downloading"; progress: number }
   | { kind: "ready" }
   | { kind: "error"; message: string }
+
+/** The COO channel the orchestrator is currently delegating to / narrating. */
+export interface TalkFocus {
+  cooId: string
+  label: string
+}
 
 export interface UseTalkReturn {
   state: AvatarState
@@ -61,35 +59,49 @@ export interface UseTalkReturn {
   sttAvailable: boolean | null
   /** TTS model readiness / download progress (drives the page hint). */
   ttsStatus: TtsStatus
+  /** The COO channel currently in focus (null when none). */
+  focus: TalkFocus | null
   /** Start mic capture (also resumes the audio context for output playback). */
   startListening: () => void
   /** Stop everything: cancel mic, drain audio, settle to idle. */
   stop: () => void
 }
 
-export function useTalk(sessionId: string = TALK_SESSION_ID): UseTalkReturn {
+export function useTalk(): UseTalkReturn {
   const gateway = useGateway()
 
   const [state, setState] = useState<AvatarState>("idle")
   const [entries, setEntries] = useState<TranscriptEntry[]>([])
-  const [cards, setCards] = useState<Card[]>([])
-  const [tasks, setTasks] = useState<TrackerTask[]>([])
+  const [cards] = useState<Card[]>([]) // voice-first v1: cards land in a later pass
+  const [tasks] = useState<TrackerTask[]>([])
   const [level, setLevel] = useState<number | undefined>(undefined)
   const [ttsStatus, setTtsStatus] = useState<TtsStatus>({ kind: "idle" })
+  const [focus, setFocus] = useState<TalkFocus | null>(null)
+
+  // The real orchestrator session id (null until bootstrapped).
+  const [orchestratorId, setOrchestratorId] = useState<string | null>(null)
+  const orchestratorIdRef = useRef<string | null>(null)
+  orchestratorIdRef.current = orchestratorId
 
   // One audio player for the lifetime of the hook.
   const playerRef = useRef<TalkAudioPlayer | null>(null)
   if (!playerRef.current) playerRef.current = new TalkAudioPlayer()
 
-  // rAF handle for the level loop (mic OR output, whichever is active).
   const levelRafRef = useRef<number>(0)
-  // Which signal the level loop is currently reading (so repeated starts no-op).
   const levelModeRef = useRef<"mic" | "output" | null>(null)
-  // Monotonic counter so a freshly-started turn invalidates stale callbacks.
   const turnSeqRef = useRef(0)
 
-  // STT: feed transcript on auto-stop too (timeout path), but our primary path
-  // is the explicit startListening/stop below.
+  // Id of the in-progress assistant transcript entry (null between turns) and a
+  // monotonic counter so each turn (user-initiated OR callback narration) gets a
+  // fresh bubble.
+  const asstIdRef = useRef<string | null>(null)
+  const turnCounterRef = useRef(0)
+  // Safety timer: after a turn completes we wait briefly for talk:audio; if none
+  // arrives (TTS unavailable), settle to idle instead of hanging on "thinking".
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const ttsReadyRef = useRef(false)
+  ttsReadyRef.current = ttsStatus.kind === "ready"
+
   const stt = useStt()
   const sttRef = useRef(stt)
   sttRef.current = stt
@@ -104,9 +116,7 @@ export function useTalk(sessionId: string = TALK_SESSION_ID): UseTalkReturn {
     setLevel(undefined)
   }, [])
 
-  /** Drive `level` from the mic analyser (listening) or the player (speaking). */
   const startLevelLoop = useCallback((mode: "mic" | "output") => {
-    // Already reading this signal — keep the existing rAF running.
     if (levelRafRef.current && levelModeRef.current === mode) return
     if (levelRafRef.current) cancelAnimationFrame(levelRafRef.current)
     levelModeRef.current = mode
@@ -128,169 +138,139 @@ export function useTalk(sessionId: string = TALK_SESSION_ID): UseTalkReturn {
         }
       } else {
         const player = playerRef.current
-        if (player && player.playing) {
-          setLevel(player.level)
-        } else {
-          setLevel(undefined)
-        }
+        if (player && player.playing) setLevel(player.level)
+        else setLevel(undefined)
       }
       levelRafRef.current = requestAnimationFrame(tick)
     }
     levelRafRef.current = requestAnimationFrame(tick)
   }, [])
 
-  // ---- WS subscription: map talk:* → UI state ------------------------------
+  // ---- Append a streamed assistant text fragment ---------------------------
+  const appendAssistantText = useCallback((fragment: string) => {
+    setEntries((prev) => {
+      // Start a fresh assistant bubble at the first fragment of a turn.
+      if (!asstIdRef.current) {
+        turnCounterRef.current += 1
+        asstIdRef.current = `a${turnCounterRef.current}`
+      }
+      const id = asstIdRef.current
+      const existing = prev.find((e) => e.id === id)
+      const merged = existing ? existing.text + fragment : fragment
+      const without = prev.filter((e) => e.id !== id)
+      return [...without, { id, role: "assistant", text: merged, partial: true }]
+    })
+  }, [])
+
+  // ---- WS subscription -----------------------------------------------------
   useEffect(() => {
     const player = playerRef.current!
-    // When the audio queue drains, settle the level loop (turn:done sets idle).
     player.onIdle(() => {
+      setState((s) => (s === "speaking" ? "idle" : s))
       stopLevelLoop()
     })
 
-    const isOurs = (p: unknown): p is { sessionId: string } =>
-      typeof p === "object" && p !== null && (p as { sessionId?: string }).sessionId === sessionId
+    const ours = (p: unknown): boolean =>
+      typeof p === "object" && p !== null &&
+      (p as { sessionId?: string }).sessionId === orchestratorIdRef.current
 
-    // TTS model download is a global, sessionless concern (like stt:download:*),
-    // so those frames bypass the per-session filter.
-    const GLOBAL_EVENTS = new Set<string>([
+    const GLOBAL_TTS = new Set<string>([
       TALK_EVENTS.ttsDownloadProgress,
       TALK_EVENTS.ttsDownloadComplete,
       TALK_EVENTS.ttsDownloadError,
     ])
 
+    const clearSettle = () => {
+      if (settleTimerRef.current) {
+        clearTimeout(settleTimerRef.current)
+        settleTimerRef.current = null
+      }
+    }
+
     const unsub = gateway.subscribe((event: string, payload: unknown) => {
-      if (!event.startsWith("talk:")) return
-      if (!GLOBAL_EVENTS.has(event) && !isOurs(payload)) return
+      // Global TTS-download frames are sessionless.
+      if (GLOBAL_TTS.has(event)) {
+        if (event === TALK_EVENTS.ttsDownloadProgress) {
+          setTtsStatus({ kind: "downloading", progress: (payload as { progress?: number }).progress ?? 0 })
+        } else if (event === TALK_EVENTS.ttsDownloadComplete) {
+          setTtsStatus({ kind: "ready" })
+        } else {
+          setTtsStatus({ kind: "error", message: (payload as { error?: string }).error ?? "TTS download failed" })
+        }
+        return
+      }
+
+      // talk:focus is keyed by parentId (the orchestrator), not sessionId.
+      if (event === TALK_EVENTS.focus) {
+        const ev = payload as TalkFocusEvent
+        if (ev.parentId === orchestratorIdRef.current) setFocus({ cooId: ev.cooId, label: ev.label })
+        return
+      }
+
+      // Everything else must belong to the orchestrator session.
+      if (!ours(payload)) return
 
       switch (event) {
-        case TALK_EVENTS.state: {
-          setState((payload as TalkStateEvent).state)
-          break
-        }
-        case TALK_EVENTS.transcript: {
-          // User caption — replace any in-flight user entry for this turn.
-          const text = (payload as TalkTranscriptEvent).text
-          setEntries((prev) => {
-            const next = prev.filter((e) => e.id !== "user")
-            return [{ id: "user", role: "user", text }, ...next]
-          })
-          break
-        }
-        case TALK_EVENTS.say: {
-          // Assistant reply text — append/extend the single assistant entry so
-          // the transcript shows exactly what's being spoken.
-          const ev = payload as TalkSayEvent
-          setEntries((prev) => {
-            const existing = prev.find((e) => e.id === "assistant")
-            // Each say chunk is a sentence; join with a space when the previous
-            // chunk didn't already end in whitespace so words don't run together.
-            const sep = existing && !/\s$/.test(existing.text) ? " " : ""
-            const merged = existing ? existing.text + sep + ev.text : ev.text
-            const without = prev.filter((e) => e.id !== "assistant")
-            return [
-              ...without,
-              { id: "assistant", role: "assistant", text: merged, partial: !ev.final },
-            ]
-          })
+        case "session:delta": {
+          const ev = payload as SessionDeltaEvent
+          if (ev.type === "text" && typeof ev.content === "string" && ev.content) {
+            appendAssistantText(ev.content)
+            // Reply is forming — show "thinking" until audio starts speaking.
+            setState((s) => (s === "speaking" ? s : "thinking"))
+          }
           break
         }
         case TALK_EVENTS.audio: {
           const ev = payload as TalkAudioEvent
+          clearSettle()
           player.enqueue(ev.seq, ev.mime, ev.dataBase64)
-          // First audio → ensure we're showing the speaking visual and reading
-          // the output analyser for the orb level.
-          setState((s) => (s === "speaking" ? s : "speaking"))
+          setState("speaking")
           startLevelLoop("output")
           break
         }
-        case TALK_EVENTS.card: {
-          const card = (payload as TalkCardEvent).card
-          setCards((prev) => {
-            const without = prev.filter((c) => c.id !== card.id)
-            return [...without, card]
-          })
-          break
-        }
-        case TALK_EVENTS.cardUpdate: {
-          const ev = payload as TalkCardUpdateEvent
-          setCards((prev) =>
-            prev.map((c) => (c.id === ev.cardId ? ({ ...c, ...ev.patch } as Card) : c)),
-          )
-          break
-        }
-        case TALK_EVENTS.cardDismiss: {
-          const ev = payload as TalkCardDismissEvent
-          setCards((prev) => prev.filter((c) => c.id !== ev.cardId))
-          break
-        }
-        case TALK_EVENTS.cardClear: {
-          setCards([])
-          break
-        }
-        case TALK_EVENTS.task: {
-          const task = wireTaskToTracker((payload as TalkTaskEvent).task)
-          setTasks((prev) => {
-            const idx = prev.findIndex((t) => t.id === task.id)
-            if (idx === -1) return [...prev, task]
-            const next = prev.slice()
-            next[idx] = task
-            return next
-          })
-          break
-        }
-        case TALK_EVENTS.turnDone: {
-          // turn:done carries { ok, error? } — we settle the same way either
-          // way (the transcript already shows whatever the backend streamed).
-          void (payload as TalkTurnDoneEvent)
-          // Mark the assistant entry final (no streaming cursor).
+        case "session:completed": {
+          void (payload as SessionCompletedEvent)
+          // Finalize the assistant bubble for this turn.
           setEntries((prev) =>
-            prev.map((e) => (e.id === "assistant" ? { ...e, partial: false } : e)),
+            prev.map((e) => (e.id === asstIdRef.current ? { ...e, partial: false } : e)),
           )
-          // If audio is still draining, the player's onIdle will settle level;
-          // otherwise settle now.
-          if (!player.playing) {
+          asstIdRef.current = null
+          // Audio (Kokoro) is synthesized AFTER completion and arrives as
+          // talk:audio shortly after. Wait briefly for it; if TTS isn't ready or
+          // nothing comes, settle to idle.
+          clearSettle()
+          if (player.playing) {
+            setState("speaking")
+          } else if (ttsReadyRef.current) {
+            setState("thinking")
+            settleTimerRef.current = setTimeout(() => {
+              if (!playerRef.current?.playing) {
+                setState("idle")
+                stopLevelLoop()
+              }
+            }, 3500)
+          } else {
             setState("idle")
             stopLevelLoop()
-          } else {
-            setState("speaking")
           }
-          break
-        }
-        case TALK_EVENTS.ttsDownloadProgress: {
-          const p = (payload as { progress?: number }).progress ?? 0
-          setTtsStatus({ kind: "downloading", progress: p })
-          break
-        }
-        case TALK_EVENTS.ttsDownloadComplete: {
-          setTtsStatus({ kind: "ready" })
-          break
-        }
-        case TALK_EVENTS.ttsDownloadError: {
-          const msg = (payload as { error?: string }).error ?? "TTS download failed"
-          setTtsStatus({ kind: "error", message: msg })
           break
         }
       }
     })
 
     return () => {
+      clearSettle()
       unsub()
     }
-  }, [gateway, sessionId, startLevelLoop, stopLevelLoop])
+  }, [gateway, appendAssistantText, startLevelLoop, stopLevelLoop])
 
-  // ---- Pre-warm the agent session -----------------------------------------
-  // Boot the persistent Agent-SDK session (and its CLI subprocess) on mount so
-  // the user's FIRST utterance is warm (~1.5s) instead of paying the ~9s cold
-  // boot. Fire-and-forget; harmless if it races with the first real turn.
-  useEffect(() => {
-    api.talkWarm(sessionId).catch(() => {
-      /* warm is best-effort — the first turn will just boot lazily */
-    })
-  }, [sessionId])
-
-  // ---- Initial TTS status probe -------------------------------------------
+  // ---- Bootstrap the orchestrator session + probe TTS ----------------------
   useEffect(() => {
     let alive = true
+    api
+      .talkCreateSession()
+      .then((r) => { if (alive) setOrchestratorId(r.sessionId) })
+      .catch(() => { /* surfaced via connection hint */ })
     api
       .talkStatus()
       .then((s) => {
@@ -299,21 +279,14 @@ export function useTalk(sessionId: string = TALK_SESSION_ID): UseTalkReturn {
         else if (s.ttsAvailable) setTtsStatus({ kind: "ready" })
         else setTtsStatus({ kind: "idle" })
       })
-      .catch(() => {
-        /* status endpoint optional — leave idle */
-      })
-    return () => {
-      alive = false
-    }
+      .catch(() => { /* status endpoint optional — leave idle */ })
+    return () => { alive = false }
   }, [])
 
   // ---- Mic control ---------------------------------------------------------
   const startListening = useCallback(() => {
-    const player = playerRef.current
-    // First user gesture: unlock/resume the output AudioContext for playback.
-    player?.resume()
+    playerRef.current?.resume()
     setState("listening")
-    setEntries([]) // fresh exchange
     startLevelLoop("mic")
     void sttRef.current.handleMicClick()
   }, [startLevelLoop])
@@ -326,11 +299,13 @@ export function useTalk(sessionId: string = TALK_SESSION_ID): UseTalkReturn {
       setState("thinking")
       const text = await s.stopRecording()
       if (turnSeqRef.current !== seq) return // superseded by a newer turn
-      if (text && text.trim()) {
-        setEntries([{ id: "user", role: "user", text }])
+      const orch = orchestratorIdRef.current
+      if (text && text.trim() && orch) {
+        const uid = `u${Date.now()}`
+        setEntries((prev) => [...prev, { id: uid, role: "user", text }])
         try {
-          await api.talkTurn(sessionId, text)
-          // From here the gateway streams talk:* — handled by the subscription.
+          await api.sendMessage(orch, { message: text })
+          // From here the orchestrator session streams session:delta + talk:audio.
         } catch {
           setState("idle")
           stopLevelLoop()
@@ -340,18 +315,18 @@ export function useTalk(sessionId: string = TALK_SESSION_ID): UseTalkReturn {
         stopLevelLoop()
       }
     } else {
-      // Not recording — just settle and drain any audio.
       s.cancelRecording()
       playerRef.current?.reset()
       setState("idle")
       stopLevelLoop()
     }
-  }, [sessionId, stopLevelLoop])
+  }, [stopLevelLoop])
 
   // ---- Cleanup -------------------------------------------------------------
   useEffect(() => {
     return () => {
       if (levelRafRef.current) cancelAnimationFrame(levelRafRef.current)
+      if (settleTimerRef.current) clearTimeout(settleTimerRef.current)
       playerRef.current?.dispose()
       playerRef.current = null
     }
@@ -361,30 +336,13 @@ export function useTalk(sessionId: string = TALK_SESSION_ID): UseTalkReturn {
 
   return useMemo(
     () => ({
-      state,
-      entries,
-      cards,
-      tasks,
-      level,
+      state, entries, cards, tasks, level,
       connected: gateway.connected,
       listening,
       sttAvailable: stt.available,
-      ttsStatus,
-      startListening,
-      stop,
+      ttsStatus, focus,
+      startListening, stop,
     }),
-    [
-      state,
-      entries,
-      cards,
-      tasks,
-      level,
-      gateway.connected,
-      listening,
-      stt.available,
-      ttsStatus,
-      startListening,
-      stop,
-    ],
+    [state, entries, cards, tasks, level, gateway.connected, listening, stt.available, ttsStatus, focus, startListening, stop],
   )
 }

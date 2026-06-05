@@ -21,6 +21,7 @@ export const TALK_EVENTS = {
   cardDismiss: "talk:card:dismiss",
   cardClear: "talk:card:clear",
   task: "talk:task",
+  focus: "talk:focus",
   turnDone: "talk:turn:done",
   ttsDownloadProgress: "talk:tts:download:progress",
   ttsDownloadComplete: "talk:tts:download:complete",
@@ -52,3 +53,20 @@ export interface TalkCardDismissEvent { sessionId: string; cardId: string }
 export interface TalkCardClearEvent { sessionId: string }
 export interface TalkTaskEvent { sessionId: string; task: WireTask }
 export interface TalkTurnDoneEvent { sessionId: string; ok: boolean; error?: string }
+/** Which COO child the orchestrator is delegating to / narrating (Path 1). */
+export interface TalkFocusEvent { cooId: string; label: string; parentId: string }
+
+/**
+ * Core gateway stream events the Talk loop also consumes (Path 1). The voice
+ * orchestrator is a normal gateway session, so its reply arrives as session:delta
+ * `text` chunks and the turn ends with session:completed — both keyed by the
+ * orchestrator's sessionId.
+ */
+export interface SessionDeltaEvent {
+  sessionId: string
+  type: "text" | "text_snapshot" | "tool_use" | "tool_result" | "context"
+  content?: string | number
+  toolName?: string
+  toolId?: string
+}
+export interface SessionCompletedEvent { sessionId: string; result?: string | null; error?: string | null }

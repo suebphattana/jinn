@@ -63,6 +63,8 @@ import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyD
 import { loadInstances } from "../cli/instances.js";
 import { handleHookPost, LOOPBACK as HOOK_LOOPBACK } from "./hook-endpoint.js";
 import { handleTalkApi } from "../talk/routes.js";
+import { ORCHESTRATOR_PERSONA } from "../talk/orchestrator-persona.js";
+import { feedTalkText, flushTalkSpeech, discardTalkSpeech } from "../talk/tts-stream.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -818,6 +820,16 @@ export async function handleApiRequest(
         portalName: config.portal?.portalName,
       });
       logger.info(`Web session created: ${session.id} (model=${body.model || "default"})`);
+      // Voice mode: when the hands-free orchestrator (source:"talk") spawns a COO
+      // child, tell the Talk UI which channel to animate to. Auto-derived here so
+      // the orchestrator persona carries zero focus-signalling burden.
+      if (session.parentSessionId) {
+        const talkParent = getSession(session.parentSessionId);
+        if (talkParent?.source === "talk") {
+          const label = String(body.employee || prompt || "task").replace(/\s+/g, " ").trim().slice(0, 48);
+          context.emit("talk:focus", { cooId: session.id, label, parentId: talkParent.id });
+        }
+      }
       // First-message attachments were uploaded before the session existed (FILES_DIR).
       // Re-home them under uploads/<date>/<sessionId>/ now that we have an id, then persist
       // the media on the user message so the bubble renders chips/thumbnails on reload.
@@ -2035,7 +2047,7 @@ async function runWebSession(
   try {
 
     const systemPrompt = buildContext({
-      source: "web",
+      source: currentSession.source,
       channel: currentSession.sourceRef,
       user: "web-user",
       employee,
@@ -2043,6 +2055,9 @@ async function runWebSession(
       config,
       sessionId: currentSession.id,
       hierarchy: orgHierarchy,
+      // Hands-free voice orchestrator: layer the AURA persona on top of the
+      // base identity so it behaves as the thin voice layer above the COO.
+      voicePersona: currentSession.source === "talk" ? ORCHESTRATOR_PERSONA : undefined,
     });
 
     // Per-engine config is keyed by engine name; unconfigured optional engines
@@ -2135,6 +2150,12 @@ async function runWebSession(
         } catch (err) {
           logger.warn(`Failed to emit stream delta for session ${currentSession.id}: ${err instanceof Error ? err.message : err}`);
         }
+        // Voice mode: accumulate the orchestrator's spoken text so the whole
+        // turn can be synthesized in one Kokoro call at completion (see flush
+        // below). Only `text` deltas are spoken; tool_use/context are not.
+        if (currentSession.source === "talk" && delta.type === "text" && typeof delta.content === "string") {
+          feedTalkText(currentSession.id, delta.content);
+        }
       },
     }).finally(() => {
       clearInterval(runHeartbeat);
@@ -2149,6 +2170,8 @@ async function runWebSession(
     const rateLimit = !wasInterrupted ? detectRateLimit(result) : { limited: false as const };
 
     if (rateLimit.limited) {
+      // Drop any buffered voice text — we won't speak a rate-limited turn.
+      if (currentSession.source === "talk") discardTalkSpeech(currentSession.id);
       const emitDelta = (delta: StreamDelta) => {
         context.emit("session:delta", {
           sessionId: currentSession.id,
@@ -2301,6 +2324,14 @@ async function runWebSession(
     // Persist the assistant response
     if (result.result) {
       insertMessage(currentSession.id, "assistant", result.result);
+    }
+
+    // Voice mode: synthesize the whole turn's spoken text in one Kokoro call
+    // (streams talk:audio over the WS). Fire-and-forget so completion isn't
+    // blocked on audio. Discard instead of speaking a half-finished interrupt.
+    if (currentSession.source === "talk") {
+      if (wasInterrupted) discardTalkSpeech(currentSession.id);
+      else void flushTalkSpeech(currentSession.id, config.talk?.kokoro, context.emit);
     }
 
     const completedSession = updateSession(currentSession.id, {

@@ -64,6 +64,7 @@ export const TALK_EVENTS = {
   cardDismiss: "talk:card:dismiss",
   cardClear: "talk:card:clear",
   task: "talk:task",
+  focus: "talk:focus",
   turnDone: "talk:turn:done",
   ttsDownloadProgress: "talk:tts:download:progress",
   ttsDownloadComplete: "talk:tts:download:complete",
@@ -99,3 +100,30 @@ export interface TalkStatusResponse {
 
 /** Broadcast function injected everywhere (matches gateway server's `emit`). */
 export type Emit = (event: string, payload: unknown) => void
+
+/** Kokoro-82M TTS engine (sidecar-backed). Implemented by kokoro.ts. */
+export interface Tts {
+  /** Synthesize `text`, sentence-chunked, streaming talk:audio events; resolves when fully spoken. */
+  speak(sessionId: string, text: string, emit: Emit): Promise<void>
+  status(): { available: boolean; downloading: boolean; progress: number; voice: string; ready: boolean }
+  /** Pre-spawn the sidecar and load the model so the first real speak is fast. No-op if weights/venv are missing. */
+  warm?(): Promise<void>
+  /** Download Kokoro weights on first use, emitting talk:tts:download:* events. */
+  download(emit: Emit): Promise<void>
+  shutdown(): void
+}
+
+// ---------------------------------------------------------------------------
+// Voice orchestrator (Path 1) — WS events the gateway emits for the Talk surface
+// on top of the canonical `talk:*` set above. `talk:focus` tells the UI which
+// COO child the orchestrator is currently delegating to / narrating, so the
+// avatar can animate to that "channel".
+// ---------------------------------------------------------------------------
+export interface TalkFocusEvent {
+  /** The COO child session now in focus (the orchestrator's parentSessionId === orchestrator). */
+  cooId: string
+  /** Short human label for the channel (derived from the brief). */
+  label: string
+  /** The orchestrator session that owns this COO child. */
+  parentId: string
+}

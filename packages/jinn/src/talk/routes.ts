@@ -1,37 +1,24 @@
 /**
- * Jinn Talk — HTTP route dispatcher (Phase 2).
+ * Jinn Talk — HTTP route dispatcher (Path 1).
  *
  * Single entry point `handleTalkApi(req, res, context)` for everything under
  * `/api/talk/*`. Registered from gateway/api.ts near the STT routes. Returns
  * `true` when it owns the path (so api.ts can early-return), `false` otherwise.
  *
- * The heavy lifting lives elsewhere — this file only parses the request, wires
- * `TalkDeps`, and shapes the JSON response. The live token/audio/card stream
- * goes out over the WebSocket (talk:* events) during the awaited turn; the HTTP
- * response is just the terminal ok/error.
+ * Path 1 — the voice orchestrator is a REAL gateway session, not an in-process
+ * Agent-SDK loop. So this dispatcher is thin: it only bootstraps/returns the
+ * orchestrator session and exposes Kokoro TTS readiness/download. Actual voice
+ * turns go through the normal POST /api/sessions/:id/message; the orchestrator's
+ * spoken reply is synthesized server-side (see talk/tts-stream.ts, driven from
+ * the run loop in api.ts) and streamed as talk:audio over the WebSocket.
  */
 import type { IncomingMessage as HttpRequest, ServerResponse } from "node:http";
 import type { ApiContext } from "../gateway/api.js";
-import { runTalkTurn, warmTalkSession } from "./agent.js";
-import { createOrgBridge } from "./org-bridge.js";
-import { createKokoroTts } from "./kokoro.js";
-import type { OrgBridge, Tts, TalkDeps } from "./context.js";
-import type { TalkTurnRequest, TalkTtsRequest } from "./protocol.js";
+import { createSession, getSessionBySessionKey } from "../sessions/registry.js";
+import { getTalkTts } from "./tts-stream.js";
 
-// ── Module-level singletons ─────────────────────────────────────────────
-// Instantiated once for the gateway's lifetime. The org bridge is config-free;
-// the TTS engine reads the real `talk.kokoro` config lazily on first use so it
-// picks up the loaded config rather than whatever existed at import time.
-const org: OrgBridge = createOrgBridge();
-
-let tts: Tts | null = null;
-function getTts(context: ApiContext): Tts {
-  if (!tts) {
-    const config = context.getConfig();
-    tts = createKokoroTts(config.talk?.kokoro);
-  }
-  return tts;
-}
+/** Stable session key for the single hands-free orchestrator surface. */
+const TALK_SESSION_KEY = "talk:main";
 
 /**
  * Dispatch any `/api/talk/*` request. Returns `true` if handled (caller should
@@ -49,57 +36,42 @@ export async function handleTalkApi(
   if (!pathname.startsWith("/api/talk/")) return false;
 
   try {
-    // POST /api/talk/turn — run one agent turn. Streams talk:* over WS during
-    // the await; HTTP response is the terminal { ok, error }.
-    if (method === "POST" && pathname === "/api/talk/turn") {
-      const parsed = await readJsonBody(req, res);
-      if (!parsed.ok) return true; // readJsonBody already wrote the error response
-      const body = parsed.body as Partial<TalkTurnRequest> | null;
-      const sessionId = body?.sessionId;
-      const text = body?.text;
-      if (typeof sessionId !== "string" || !sessionId.trim()) {
-        badRequest(res, "sessionId is required");
-        return true;
-      }
-      if (typeof text !== "string" || !text.trim()) {
-        badRequest(res, "text is required");
-        return true;
-      }
-      const deps: TalkDeps = {
-        sessionId,
-        emit: context.emit,
-        org,
-        tts: getTts(context),
-      };
-      const result = await runTalkTurn(text, deps);
-      json(res, { ok: result.ok, error: result.error });
-      return true;
-    }
-
-    // POST /api/talk/warm — pre-boot the agent session so the first real turn
-    // is warm. Fire-and-forget; returns immediately.
-    if (method === "POST" && pathname === "/api/talk/warm") {
-      const parsed = await readJsonBody(req, res);
+    // POST /api/talk/session — bootstrap (or reuse) the orchestrator session.
+    // The orchestrator is a normal idle gateway session with source:"talk";
+    // buildContext() layers the AURA voice persona on it. Reuses the existing
+    // talk session across reloads unless { fresh:true } is sent.
+    if (method === "POST" && pathname === "/api/talk/session") {
+      const parsed = await readJsonBody(req, res, { allowEmpty: true });
       if (!parsed.ok) return true;
-      const body = parsed.body as Partial<TalkTurnRequest> | null;
-      const sessionId = body?.sessionId;
-      if (typeof sessionId !== "string" || !sessionId.trim()) {
-        badRequest(res, "sessionId is required");
-        return true;
+      const body = (parsed.body ?? {}) as { fresh?: boolean };
+      const config = context.getConfig();
+
+      if (!body.fresh) {
+        const existing = getSessionBySessionKey(TALK_SESSION_KEY);
+        if (existing && existing.source === "talk") {
+          json(res, { sessionId: existing.id, reused: true });
+          return true;
+        }
       }
-      warmTalkSession({
-        sessionId,
-        emit: context.emit,
-        org,
-        tts: getTts(context),
+
+      const session = createSession({
+        engine: "claude",
+        source: "talk",
+        sourceRef: TALK_SESSION_KEY,
+        connector: "web",
+        sessionKey: TALK_SESSION_KEY,
+        replyContext: { source: "talk" },
+        model: config.talk?.orchestratorModel ?? "haiku",
+        title: "Talk",
+        portalName: config.portal?.portalName,
       });
-      json(res, { ok: true });
+      json(res, { sessionId: session.id, reused: false });
       return true;
     }
 
-    // GET /api/talk/status — TTS engine readiness (TalkStatusResponse-ish).
+    // GET /api/talk/status — TTS engine readiness.
     if (method === "GET" && pathname === "/api/talk/status") {
-      const s = getTts(context).status();
+      const s = getTalkTts(context.getConfig().talk?.kokoro).status();
       json(res, {
         ttsAvailable: s.available,
         ttsDownloading: s.downloading,
@@ -113,8 +85,7 @@ export async function handleTalkApi(
     // POST /api/talk/tts/download — kick Kokoro weight download in the
     // background (progress streams over talk:tts:download:* WS events).
     if (method === "POST" && pathname === "/api/talk/tts/download") {
-      // Fire-and-forget: don't await; the watcher emits progress over WS.
-      getTts(context)
+      getTalkTts(context.getConfig().talk?.kokoro)
         .download(context.emit)
         .catch((err) => {
           context.emit("talk:tts:download:error", {
@@ -122,18 +93,6 @@ export async function handleTalkApi(
           });
         });
       json(res, { status: "downloading" });
-      return true;
-    }
-
-    // POST /api/talk/tts — direct WAV synthesis. Not implemented in this POC:
-    // audio streams over WS (talk:audio) during a /api/talk/turn instead. The
-    // Tts interface exposes no synchronous synth method, so we return 501.
-    if (method === "POST" && pathname === "/api/talk/tts") {
-      const parsed = await readJsonBody(req, res);
-      if (!parsed.ok) return true;
-      // Body parsed for shape-validation only; intentionally unused in the POC.
-      void (parsed.body as Partial<TalkTtsRequest> | null);
-      json(res, { error: "audio streams over WS in this build" }, 501);
       return true;
     }
 
@@ -147,13 +106,10 @@ export async function handleTalkApi(
 }
 
 // ── Local copies of api.ts response helpers ─────────────────────────────
-// api.ts keeps readJsonBody/json/badRequest module-private, so we re-implement
-// the same tiny contract here rather than widen api.ts's exported surface.
-// (Behaviour matches: JSON 200 by default; badRequest → 400; invalid body → 400.)
-
 async function readJsonBody(
   req: HttpRequest,
   res: ServerResponse,
+  opts?: { allowEmpty?: boolean },
 ): Promise<{ ok: true; body: unknown } | { ok: false }> {
   let raw: string;
   try {
@@ -168,6 +124,7 @@ async function readJsonBody(
     return { ok: false };
   }
   if (!raw.trim()) {
+    if (opts?.allowEmpty) return { ok: true, body: null };
     badRequest(res, "Empty request body");
     return { ok: false };
   }

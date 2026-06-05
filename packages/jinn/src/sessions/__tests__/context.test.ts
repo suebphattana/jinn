@@ -72,6 +72,22 @@ describe("buildContext — employee mode", () => {
   });
 });
 
+describe("buildContext — voice orchestrator persona (source:talk)", () => {
+  const MARKER = "You are AURA, the hands-free voice layer.";
+
+  it("injects the voice persona when voicePersona is provided", () => {
+    const out = buildContext({ ...baseOpts, voicePersona: MARKER });
+    expect(out).toContain(MARKER);
+    // Still keeps the base COO identity (gateway/delegation know-how) underneath.
+    expect(out).toContain("# You are Jinn");
+  });
+
+  it("omits the voice persona for normal sessions", () => {
+    const out = buildContext({ ...baseOpts });
+    expect(out).not.toContain(MARKER);
+  });
+});
+
 describe("buildContext — Current session reflects passed opts", () => {
   it("reflects sessionId, channel and user", () => {
     const out = buildContext({

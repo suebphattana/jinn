@@ -503,6 +503,8 @@ export interface JinnConfig {
   /** /talk voice loop — optional, off unless explicitly configured. */
   talk?: {
     enabled?: boolean;
+    /** Model for the hands-free voice orchestrator session (default: "haiku" — snappy). */
+    orchestratorModel?: string;
     kokoro?: {
       voice?: string;
       modelDir?: string;

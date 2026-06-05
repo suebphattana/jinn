@@ -22,7 +22,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.159",
     "@slack/bolt": "^4.3.0",
     "@whiskeysockets/baileys": "7.0.0-rc.9",
     "better-sqlite3": "^11.8.0",

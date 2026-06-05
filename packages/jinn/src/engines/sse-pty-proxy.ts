@@ -42,15 +42,21 @@ export interface SsePtyProxyOpts {
   primaryAgent?: https.Agent | http.Agent | false;
 }
 
-/** Is this upstream error the "stale pooled socket" symptom — a connection that
- *  was reset/torn before we got any response? Those are safe to retry on a fresh
- *  socket (request body fully buffered, nothing streamed to the client yet). We
- *  deliberately do NOT retry idle-timeouts or post-response errors. */
-function isRetriableUpstreamError(err: NodeJS.ErrnoException): boolean {
+/** Is this upstream error a transient connection fault safe to retry ONCE on a
+ *  fresh socket (request body fully buffered, nothing streamed to the client yet)?
+ *  Covers stale/torn pooled sockets (ECONNRESET/EPIPE/"socket hang up") AND a
+ *  CORRUPTED pooled TLS socket — "bad record mac" / "decrypt error" / EPROTO —
+ *  which surfaces under sub-agent fan-out when the keep-alive pool hands back a
+ *  socket whose TLS record state got clobbered; the retry uses agent:false, so a
+ *  brand-new socket is clean. We deliberately do NOT retry idle-timeouts or
+ *  post-response errors (can't retry once bytes have streamed to the client). */
+export function isRetriableUpstreamError(err: NodeJS.ErrnoException): boolean {
   return (
     err.code === "ECONNRESET" ||
     err.code === "EPIPE" ||
-    /socket hang up/i.test(err.message)
+    err.code === "EPROTO" ||
+    /socket hang up/i.test(err.message) ||
+    /bad record mac|decrypt error/i.test(err.message)
   );
 }
 

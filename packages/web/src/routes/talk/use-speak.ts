@@ -25,9 +25,15 @@ export interface SpeakHandle {
   /** Resolves when the utterance finishes (or after an estimated duration if TTS is unavailable, so the demo still advances). */
   speak: (text: string, opts?: SpeakOptions) => Promise<void>
   cancel: () => void
+  /**
+   * Unlock TTS inside a user gesture (REQUIRED on iOS Safari). Call this on the
+   * mic tap: it speaks a silent primer so later, post-network speak() calls are
+   * permitted, and nudges the voice list to load.
+   */
+  prime: () => void
   /** True while audio is playing. */
   speaking: boolean
-  /** Whether real speech synthesis is available in this browser. */
+  /** Whether speech synthesis exists in this browser (works with the default voice). */
   supported: boolean
 }
 
@@ -91,13 +97,13 @@ export function useSpeak(): SpeakHandle {
     }
 
     const synth = window.speechSynthesis
+    // The API exists → we can speak (with the default voice if the list is
+    // still empty, which is the normal state on iOS Safari until first speak).
+    setSupported(true)
 
     const loadVoices = () => {
       const voices = synth.getVoices()
-      if (voices.length > 0) {
-        voiceRef.current = pickVoice(voices)
-        setSupported(true)
-      }
+      if (voices.length > 0) voiceRef.current = pickVoice(voices)
     }
 
     loadVoices()
@@ -130,6 +136,27 @@ export function useSpeak(): SpeakHandle {
     settle()
   }, [clearFallbackTimers, settle])
 
+  // iOS Safari only allows speechSynthesis.speak() after it has been called once
+  // inside a user gesture. The mic tap is that gesture: speak a silent primer to
+  // unlock the audio channel and load voices, so the post-network reply speaks.
+  const prime = useCallback(() => {
+    const synth =
+      typeof window !== "undefined" ? window.speechSynthesis : undefined
+    if (!synth) return
+    try {
+      synth.cancel()
+      const primer = new SpeechSynthesisUtterance(" ")
+      primer.volume = 0
+      synth.speak(primer)
+      synth.resume()
+      const voices = synth.getVoices()
+      if (voices.length > 0 && !voiceRef.current) voiceRef.current = pickVoice(voices)
+      setSupported(true)
+    } catch {
+      /* noop */
+    }
+  }, [])
+
   const speak = useCallback(
     (text: string, opts?: SpeakOptions): Promise<void> => {
       // Cancel anything already in flight so promises never overlap.
@@ -146,10 +173,12 @@ export function useSpeak(): SpeakHandle {
 
       const synth =
         typeof window !== "undefined" ? window.speechSynthesis : undefined
-      const hasVoice = voiceRef.current !== null
 
       // ----- Working-now path: real Web Speech synthesis -----
-      if (synth && hasVoice) {
+      // Gate on the API existing — NOT on a picked voice. On iOS Safari the voice
+      // list is empty until the first speak(), but speaking with the engine's
+      // default voice works fine, so requiring a voice here silenced all output.
+      if (synth) {
         return new Promise<void>((resolve) => {
           resolveRef.current = resolve
 
@@ -232,5 +261,5 @@ export function useSpeak(): SpeakHandle {
     }
   }, [clearFallbackTimers])
 
-  return { speak, cancel, speaking, supported }
+  return { speak, cancel, prime, speaking, supported }
 }

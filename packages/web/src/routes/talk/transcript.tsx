@@ -5,9 +5,9 @@
  * orb (upper area). It shows only the most recent exchange — one user caption
  * and one assistant reply — so it never becomes a scroll. The latest assistant
  * line reveals word-by-word with a blur-in (each word eases from
- * opacity:0 + blur(6px) + translateY → settled, staggered ~65ms), exactly like
- * the prototype's `speak()` reveal. A soft blinking cursor trails a `partial`
- * reply that is still streaming.
+ * opacity:0 + blur(6px) + translateY → settled) once on mount; words stream in
+ * over the network so the arrival itself is the stagger. A soft blinking cursor
+ * trails a `partial` reply that is still streaming.
  *
  * Non-blocking by design (pointer-events:none) and themed entirely from Ledger
  * tokens. Honors prefers-reduced-motion (instant, no blur — see tracker.css).
@@ -40,7 +40,16 @@ const EASE_VARS: CSSProperties = {
   ["--ease-snappy" as string]: EASING.snappy,
 }
 
-/** Split into word spans whose stagger index drives the blur-in delay. */
+/**
+ * Split into word spans, each blurring in once on mount.
+ *
+ * Keyed by stable index and (critically) NOT remounted per streaming delta —
+ * the parent keys this run on the assistant id alone, so as the reply grows only
+ * the newly-appended words mount and animate; already-revealed words stay
+ * settled. Streaming arrival is the stagger, so there is no per-index delay
+ * (which previously left tail words perpetually faded as the run remounted every
+ * delta).
+ */
 function WordReveal({ text }: { text: string }) {
   // Preserve single spaces between words; collapse runs but keep content.
   const words = useMemo(() => text.split(/\s+/).filter(Boolean), [text])
@@ -52,10 +61,8 @@ function WordReveal({ text }: { text: string }) {
         // an inline-block box — so a space kept inside collapses and the words
         // run together. Emitting it as a sibling text node preserves it.
         // eslint-disable-next-line react/no-array-index-key
-        <span key={i} style={{ ["--i" as string]: i }}>
-          <span className="transcript__word" style={{ ["--i" as string]: i }}>
-            {word}
-          </span>
+        <span key={i}>
+          <span className="transcript__word">{word}</span>
           {i < words.length - 1 ? " " : ""}
         </span>
       ))}
@@ -92,12 +99,11 @@ export function Transcript({ entries, className }: TranscriptProps): JSX.Element
 
       {assistant ? (
         <p className="transcript__reply">
-          {/* Keyed on id+text so streaming updates remount the word run and
-              the blur-in reveal re-fires for the freshly appended words. */}
-          <WordReveal
-            key={`${assistant.id}:${assistant.text}`}
-            text={assistant.text}
-          />
+          {/* Keyed on the assistant id ALONE (not the text) so the word run
+              persists across streaming deltas — only newly appended words mount
+              and blur in; revealed words stay settled. A new turn (new id)
+              remounts and replays from scratch. */}
+          <WordReveal key={assistant.id} text={assistant.text} />
           {assistant.partial ? (
             <span className="transcript__cursor" aria-hidden="true" />
           ) : null}

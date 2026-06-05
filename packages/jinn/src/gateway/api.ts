@@ -63,7 +63,7 @@ import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyD
 import { loadInstances } from "../cli/instances.js";
 import { handleHookPost, LOOPBACK as HOOK_LOOPBACK } from "./hook-endpoint.js";
 import { handleTalkApi } from "../talk/routes.js";
-import { ORCHESTRATOR_PERSONA } from "../talk/orchestrator-persona.js";
+import { getOrchestratorPersona } from "../talk/orchestrator-persona.js";
 import { feedTalkText, flushTalkSpeech, discardTalkSpeech } from "../talk/tts-stream.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
@@ -2057,7 +2057,7 @@ async function runWebSession(
       hierarchy: orgHierarchy,
       // Hands-free voice orchestrator: layer the AURA persona on top of the
       // base identity so it behaves as the thin voice layer above the COO.
-      voicePersona: currentSession.source === "talk" ? ORCHESTRATOR_PERSONA : undefined,
+      voicePersona: currentSession.source === "talk" ? getOrchestratorPersona() : undefined,
     });
 
     // Per-engine config is keyed by engine name; unconfigured optional engines

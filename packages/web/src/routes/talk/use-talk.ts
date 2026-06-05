@@ -287,8 +287,9 @@ export function useTalk(): UseTalkReturn {
   // ---- Mic control ---------------------------------------------------------
   const startListening = useCallback(() => {
     playerRef.current?.resume()
-    // Prime browser TTS within the user gesture (iOS requires this once).
-    try { speakRef.current.cancel() } catch { /* noop */ }
+    // Unlock browser TTS within the user gesture (iOS Safari requires this, or
+    // the post-network reply is silently blocked).
+    try { speakRef.current.prime() } catch { /* noop */ }
     setState("listening")
     startLevelLoop("mic")
     void sttRef.current.handleMicClick()

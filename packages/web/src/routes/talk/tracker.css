@@ -329,15 +329,17 @@
   margin: 0 auto;
 }
 
-/* each word reveals with a blur-in, staggered via inline --i */
+/* Each word reveals with a blur-in once, on mount. No per-index delay: words
+   stream in over the network (that arrival IS the stagger), and the run is not
+   remounted per delta, so every word reliably settles instead of holding the
+   faded `from` state behind a long delay. */
 .transcript__word {
   display: inline-block;
   opacity: 0;
   filter: blur(6px);
   transform: translateY(6px);
-  animation: transcript-word-in 450ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1))
+  animation: transcript-word-in 420ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1))
     both;
-  animation-delay: calc(var(--i, 0) * 65ms);
 }
 
 @keyframes transcript-word-in {

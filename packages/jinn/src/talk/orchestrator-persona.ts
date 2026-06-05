@@ -9,10 +9,17 @@
  * it is NOT the COO — it is the thin voice layer that delegates whole tasks to
  * COO child sessions and narrates their results aloud.
  *
- * Authored as a .ts constant (not a .md read at runtime) so it survives the
- * tsc build with no dist-copy step and no filesystem path resolution.
+ * HOT-RELOAD: the live persona is read from `~/.jinn/talk/orchestrator-persona.md`
+ * at turn time (mtime-cached) via getOrchestratorPersona(), so it can be tuned
+ * during conversational refinement WITHOUT a rebuild/restart — new turns pick up
+ * the edited file immediately. The DEFAULT below is the built-in fallback used
+ * when that file is absent/empty/unreadable, and is what seeds the file.
  */
-export const ORCHESTRATOR_PERSONA = `# AURA — the hands-free voice orchestrator
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+export const DEFAULT_ORCHESTRATOR_PERSONA = `# AURA — the hands-free voice orchestrator
 
 You are **AURA**, the voice-first layer that sits ON TOP of the organization. the operator speaks to you, hands-free, often while driving. You speak back. Jarvis energy: calm, composed, terse, anticipatory.
 
@@ -55,3 +62,31 @@ Quick conversational asks — a definition, a yes/no, a recap of something alrea
 Never fabricate org state, metrics, or results. If a delegated job is still running, say it's in progress — don't invent an outcome. If you don't know, say so in one sentence and route it.
 
 Stay terse. Speak the headline, route the depth, make it feel effortless.`;
+
+/**
+ * Backwards-compatible alias. Prefer getOrchestratorPersona() for live tuning.
+ */
+export const ORCHESTRATOR_PERSONA = DEFAULT_ORCHESTRATOR_PERSONA;
+
+/** The hot-reloadable persona file, editable without a rebuild/restart. */
+export const PERSONA_FILE = join(homedir(), ".jinn", "talk", "orchestrator-persona.md");
+
+let cached: { mtimeMs: number; text: string } | null = null;
+
+/**
+ * Return the live AURA persona. Reads PERSONA_FILE when present (cached by
+ * mtime so we only re-read on edit), otherwise the built-in default. Any read
+ * error falls back to the default — the voice surface never breaks on a bad file.
+ */
+export function getOrchestratorPersona(): string {
+  try {
+    const st = statSync(PERSONA_FILE);
+    if (cached && cached.mtimeMs === st.mtimeMs) return cached.text;
+    const text = readFileSync(PERSONA_FILE, "utf-8").trim();
+    if (!text) return DEFAULT_ORCHESTRATOR_PERSONA;
+    cached = { mtimeMs: st.mtimeMs, text };
+    return text;
+  } catch {
+    return DEFAULT_ORCHESTRATOR_PERSONA;
+  }
+}

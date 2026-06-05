@@ -1,5 +1,6 @@
 import type { JinnConfig } from "../shared/types.js";
 import { getModelRegistry, effortLevelsForModel } from "../shared/models.js";
+import { logger } from "../shared/logger.js";
 
 /**
  * Validate a mid-chat model/effort change for an existing session.
@@ -36,8 +37,14 @@ export function validateSessionPatch(
     }
     const modelId = body.model.trim();
     if (entry && !entry.models.some((m) => m.id === modelId)) {
-      const known = entry.models.map((m) => m.id).join(", ");
-      return { ok: false, error: `unknown model "${modelId}" for engine "${engine}" (known: ${known || "none"})` };
+      if (engine === "pi") {
+        // Pi models are discovered dynamically; tolerate an id the snapshot hasn't
+        // caught yet (e.g. just after a restart, before discovery completes).
+        logger.warn(`pi model "${modelId}" not in discovered set yet — allowing`);
+      } else {
+        const known = entry.models.map((m) => m.id).join(", ");
+        return { ok: false, error: `unknown model "${modelId}" for engine "${engine}" (known: ${known || "none"})` };
+      }
     }
     updates.model = modelId;
   }

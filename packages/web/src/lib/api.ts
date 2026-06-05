@@ -142,6 +142,8 @@ export const api = {
   getStatus: () => get<Record<string, unknown>>("/api/status"),
   /** Resolved model + capability registry (engines, their models, effort levels). */
   getEngines: () => get<EnginesResponse>("/api/engines"),
+  /** Force re-discovery of dynamic (pi) models, returning the rebuilt registry. */
+  refreshEngines: () => post<EnginesResponse>("/api/engines/refresh"),
   getSessions: () => get<SessionsResponse>("/api/sessions"),
   /** One group's sessions, newest first — used by the sidebar "load more" button. */
   getSessionsForGroup: (group: string, offset: number, limit = 50) =>

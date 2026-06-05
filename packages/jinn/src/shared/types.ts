@@ -388,7 +388,7 @@ export interface PortalConfig {
  */
 
 /** How an engine conveys reasoning-effort to its CLI. */
-export type EffortMechanism = "claude-flag" | "codex-config" | "none";
+export type EffortMechanism = "claude-flag" | "codex-config" | "pi-flag" | "none";
 
 /** A single model and its capabilities, as exposed to the UI / validation. */
 export interface ModelInfo {
@@ -439,7 +439,7 @@ export interface JinnConfig {
   jinn?: { version?: string };
   gateway: { port: number; host: string; streaming?: boolean };
   engines: {
-    default: "claude" | "codex" | "antigravity";
+    default: "claude" | "codex" | "antigravity" | "pi";
     claude: {
       bin: string;
       model: string;
@@ -453,6 +453,7 @@ export interface JinnConfig {
      *  (PATH + common install dirs) when absent. agy ignores model/effort flags
      *  today, so those fields are forward-looking. */
     antigravity?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
+    pi?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
   };
   /** Optional model + capability registry. When absent, synthesized from engines.<name>.model. */
   models?: ModelsConfig;

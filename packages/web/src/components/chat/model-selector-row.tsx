@@ -7,6 +7,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { useModelRegistry, engineList, effortLevelsFor, findModel, defaultEffort, clampEffort, contextWindowFor } from '@/hooks/use-model-registry'
 
 /** Round a token count to a compact `k` string (e.g. 23148 → "23k", 980 → "980"). */
@@ -33,12 +37,6 @@ interface ModelSelectorRowProps {
   contextTokens?: number | null
   /** Start-a-new-chat handler — offered inside the locked-engine explainer popover. */
   onNewChat?: () => void
-}
-
-const ENGINE_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  codex: 'Codex',
-  antigravity: 'Antigravity',
 }
 
 // Inline metadata trigger — matches the composer hint strip exactly (caption2 +
@@ -77,18 +75,54 @@ const Sep = () => <span aria-hidden className="opacity-40 select-none">·</span>
  */
 export function ModelSelectorRow({ mode, value, onChange, pendingNote, disabled, contextTokens, onNewChat }: ModelSelectorRowProps) {
   const { data: registry, isLoading } = useModelRegistry()
+  const queryClient = useQueryClient()
+
+  // Resolve the engine to display. Keep the chosen/default one, unless it's an
+  // uninstalled engine on a NEW chat — then fall back to the first installed one.
+  // Existing chats stay pinned to their (possibly hidden) engine.
+  const engines = engineList(registry)
+  const preferred = value.engine ?? registry?.default
+  const engine =
+    mode === 'new' && engines.length > 0 && !engines.some((e) => e.name === preferred)
+      ? engines[0].name
+      : (preferred ?? '')
+
+  // If a NEW chat's selection resolved to a different (installed) engine because
+  // the chosen one is unavailable, sync that back so the created session is valid.
+  useEffect(() => {
+    if (mode !== 'new' || !registry) return
+    const pref = value.engine ?? registry.default
+    if (engines.length === 0 || engines.some((e) => e.name === pref)) return
+    const ne = registry.engines[engine]
+    if (!ne) return
+    onChange({
+      engine,
+      model: ne.defaultModel,
+      effortLevel: defaultEffort(effortLevelsFor(registry, engine, ne.defaultModel)),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registry, mode, engine, value.engine])
+
   if (isLoading || !registry) return null
 
-  const engines = engineList(registry)
-  const engine = value.engine ?? registry.default
   const entry = registry.engines[engine]
   const models = entry?.models ?? []
   const currentModel = findModel(registry, engine, value.model)
   const modelId = value.model ?? currentModel?.id ?? entry?.defaultModel ?? ''
   const efforts = effortLevelsFor(registry, engine, modelId)
 
-  const engineLabel = (e: string) => ENGINE_LABELS[e] ?? e
+  const engineLabel = (e: string) => e.charAt(0).toUpperCase() + e.slice(1)
   const modelLabel = (id: string) => models.find((m) => m.id === id)?.label ?? id
+
+  // Re-discover dynamic (pi) models without a restart, then update the cache.
+  const refreshModels = async () => {
+    try {
+      const fresh = await api.refreshEngines()
+      queryClient.setQueryData(queryKeys.engines.all, fresh)
+    } catch {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.engines.all })
+    }
+  }
 
   const pickEngine = (nextEngine: string) => {
     const ne = registry.engines[nextEngine]
@@ -140,15 +174,24 @@ export function ModelSelectorRow({ mode, value, onChange, pendingNote, disabled,
 
       <Sep />
 
-      {/* Model — always editable */}
-      <InlineTrigger label="Model" value={modelLabel(modelId)} disabled={disabled || models.length === 0}>
-        <DropdownMenuRadioGroup value={modelId} onValueChange={pickModel}>
-          {models.map((m) => (
-            <DropdownMenuRadioItem key={m.id} value={m.id}>
-              {m.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+      {/* Model — always editable. Empty list (e.g. pi still discovering) shows a
+          loading hint but stays openable so Refresh is reachable. */}
+      <InlineTrigger label="Model" value={models.length === 0 ? 'Loading…' : modelLabel(modelId)} disabled={disabled}>
+        {models.length === 0 ? (
+          <div className="max-w-[230px] px-2 py-1.5 text-[length:var(--text-caption1)] leading-snug text-[var(--text-secondary)]">
+            No models discovered yet.
+          </div>
+        ) : (
+          <DropdownMenuRadioGroup value={modelId} onValueChange={pickModel}>
+            {models.map((m) => (
+              <DropdownMenuRadioItem key={m.id} value={m.id}>
+                {m.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => void refreshModels()}>↻ Refresh models</DropdownMenuItem>
       </InlineTrigger>
 
       {/* Effort — hidden when the model has no effort levels */}

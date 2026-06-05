@@ -6,7 +6,7 @@ import path from "node:path";
 import yaml from "js-yaml";
 import type { CronJob, Engine, IncomingMessage, JinnConfig, Session, StreamDelta, Target } from "../shared/types.js";
 import { isInterruptibleEngine } from "../shared/types.js";
-import { getModelRegistry, invalidateModelRegistry, effortLevelsForModel } from "../shared/models.js";
+import { getModelRegistry, invalidateModelRegistry, effortLevelsForModel, refreshPiModels } from "../shared/models.js";
 import { validateSessionPatch } from "../sessions/session-patch.js";
 import type { SessionManager } from "../sessions/manager.js";
 import { buildContext } from "../sessions/context.js";
@@ -446,11 +446,16 @@ export async function handleApiRequest(
         status: "ok",
         uptime: Math.floor((Date.now() - context.startTime) / 1000),
         port: config.gateway.port || 7777,
+        // Derived from the model registry (single source of truth) so engine
+        // availability stays consistent with /api/engines instead of drifting.
         engines: {
           default: config.engines.default,
-          claude: { model: config.engines.claude.model, available: true },
-          codex: { model: config.engines.codex.model, available: true },
-          ...(config.engines.antigravity ? { antigravity: { model: config.engines.antigravity.model ?? "gemini-3-flash-preview", available: true } } : {}),
+          ...Object.fromEntries(
+            Object.entries(getModelRegistry(config)).map(([name, entry]) => [
+              name,
+              { model: entry.defaultModel, available: entry.available },
+            ]),
+          ),
         },
         sessions: { total: sessions.length, running, active: running },
         connectors,
@@ -1266,6 +1271,15 @@ export async function handleApiRequest(
       return json(res, { default: config.engines.default, engines: registry });
     }
 
+    // POST /api/engines/refresh — re-run dynamic model discovery (pi --list-models)
+    // and return the rebuilt registry. Lets the UI pick up models added to Pi
+    // without restarting the gateway.
+    if (method === "POST" && pathname === "/api/engines/refresh") {
+      const config = context.getConfig();
+      await refreshPiModels(config);
+      return json(res, { default: config.engines.default, engines: getModelRegistry(config) });
+    }
+
     // GET /api/config
     if (method === "GET" && pathname === "/api/config") {
       const config = context.getConfig();
@@ -2023,11 +2037,13 @@ async function runWebSession(
       hierarchy: orgHierarchy,
     });
 
-    const engineConfig = currentSession.engine === "codex"
-      ? config.engines.codex
-      : currentSession.engine === "antigravity"
-        ? (config.engines.antigravity ?? {})
-        : config.engines.claude;
+    // Per-engine config is keyed by engine name; unconfigured optional engines
+    // (antigravity/pi) resolve to {} so the engine falls back to dynamic bin/model
+    // resolution. Adding an engine needs no change here.
+    const engineConfig =
+      (config.engines as unknown as Record<string, { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string } | undefined>)[
+        currentSession.engine
+      ] ?? {};
     const effortLevel = resolveEffort(
       engineConfig,
       currentSession,

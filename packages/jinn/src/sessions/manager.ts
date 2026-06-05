@@ -266,11 +266,12 @@ export class SessionManager {
         hierarchy,
       });
 
-      const engineConfig = session.engine === "codex"
-        ? this.config.engines.codex
-        : session.engine === "antigravity"
-          ? (this.config.engines.antigravity ?? {})
-          : this.config.engines.claude;
+      // Per-engine config keyed by engine name; unconfigured optional engines
+      // resolve to {} (engine falls back to dynamic bin/model resolution).
+      const engineConfig =
+        (this.config.engines as unknown as Record<string, { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string } | undefined>)[
+          session.engine
+        ] ?? {};
       if (session.engine === "claude") {
         const mcpConfig = resolveMcpServers(this.config.mcp, employee);
         if (Object.keys(mcpConfig.mcpServers).length > 0) {
@@ -676,7 +677,7 @@ export class SessionManager {
         `Session: ${session.id}`,
         `Engine: ${session.engine}`,
         `Connector: ${session.connector || session.source}`,
-        `Model: ${session.model || this.config.engines[session.engine as "claude" | "codex" | "antigravity"]?.model || "default"}`,
+        `Model: ${session.model || this.config.engines[session.engine as "claude" | "codex" | "antigravity" | "pi"]?.model || "default"}`,
         `State: ${transportState}`,
         `Queue depth: ${queueDepth}`,
         `Created: ${session.createdAt}`,

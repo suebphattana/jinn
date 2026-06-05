@@ -6,23 +6,41 @@ import type {
   EffortMechanism,
   EngineModelsConfig,
 } from "./types.js";
+import { logger } from "./logger.js";
+import { resolveBin, isInstalled } from "./resolve-bin.js";
+import { discoverPiModels } from "./pi-models.js";
 
 /**
  * Model + capability registry — the single source of truth for which engines and
- * models exist and what they support (effort levels). Built from the
- * optional `models:` block in config.yaml; when that block is absent (or an engine
- * is missing from it) the entry is synthesized from `engines.<name>.model` so
- * existing configs keep working. Adding a NEW model is a config edit, no code change.
+ * models exist and what they support (effort levels, availability).
+ *
+ * Sources, in precedence order per engine:
+ *   1. Dynamic discovery (pi only) — `pi --list-models`, refreshed at boot and on
+ *      config reload into a snapshot that the (synchronous) registry reads.
+ *   2. The optional `models:` block in config.yaml.
+ *   3. Synthesis from `engines.<name>.model` (back-compat default).
+ *
+ * `available` reflects whether the engine's binary is actually installed, so the
+ * UI can hide engines you don't have.
  */
 
 /** Engines registered in this build (mirrors server.ts engine map). */
-const ENGINE_NAMES = ["claude", "codex", "antigravity"] as const;
+const ENGINE_NAMES = ["claude", "codex", "antigravity", "pi"] as const;
 type EngineName = (typeof ENGINE_NAMES)[number];
+
+/** Binary name probed for each engine's availability (override via engines.<name>.bin). */
+const ENGINE_BIN: Record<EngineName, string> = {
+  claude: "claude",
+  codex: "codex",
+  antigravity: "agy",
+  pi: "pi",
+};
 
 const EFFORT_MECHANISM: Record<EngineName, EffortMechanism> = {
   claude: "claude-flag",
   codex: "codex-config",
   antigravity: "none",
+  pi: "pi-flag",
 };
 
 /** Conservative per-engine defaults used when synthesizing (no `models:` block). */
@@ -30,7 +48,46 @@ const SYNTH_DEFAULTS: Record<EngineName, { supportsEffort: boolean; effortLevels
   claude: { supportsEffort: true, effortLevels: ["low", "medium", "high"], fallbackModel: "opus" },
   codex: { supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"], fallbackModel: "gpt-5.3-codex" },
   antigravity: { supportsEffort: false, effortLevels: [], fallbackModel: "gemini-3-flash-preview" },
+  // Placeholder shown only in the brief window before pi discovery completes; the
+  // provider/id form keeps it well-typed for the engine's split.
+  pi: { supportsEffort: false, effortLevels: [], fallbackModel: "ollama/gemma4:12b" },
 };
+
+/** Optional per-engine `bin` override from config. */
+function engineBinOverride(config: JinnConfig, name: EngineName): string | undefined {
+  return (config.engines as unknown as Record<string, { bin?: string } | undefined>)[name]?.bin;
+}
+
+/** Whether an engine's binary is installed (gates UI visibility). */
+function engineAvailable(config: JinnConfig, name: EngineName): boolean {
+  return isInstalled(ENGINE_BIN[name], engineBinOverride(config, name));
+}
+
+/** Snapshot of dynamically-discovered Pi models (null until first discovery). */
+let discoveredPiModels: ModelInfo[] | null = null;
+
+/**
+ * Discover Pi's local/custom models (`pi --list-models`) and refresh the registry.
+ * Async — populates a snapshot the synchronous registry reads. Never throws;
+ * degrades to the config/synthesized fallback when Pi is absent or discovery fails.
+ */
+export async function refreshPiModels(config: JinnConfig): Promise<void> {
+  if (!engineAvailable(config, "pi")) {
+    discoveredPiModels = null;
+    invalidateModelRegistry();
+    return;
+  }
+  try {
+    const bin = resolveBin("pi", engineBinOverride(config, "pi"));
+    discoveredPiModels = await discoverPiModels(bin);
+    logger.info(`Pi model discovery: ${discoveredPiModels.length} local model(s)`);
+  } catch (err) {
+    logger.warn(`Pi model discovery failed: ${err instanceof Error ? err.message : err}`);
+    discoveredPiModels = null;
+  } finally {
+    invalidateModelRegistry();
+  }
+}
 
 let cached: ModelRegistry | null = null;
 
@@ -76,16 +133,39 @@ export function contextWindowForModel(config: JinnConfig, engine: string, modelI
 export function buildRegistry(config: JinnConfig): ModelRegistry {
   const synthesized = synthesizeFromEngineConfig(config);
   const block = config.models;
-  if (!block) return synthesized;
 
   const registry: ModelRegistry = {};
   for (const name of ENGINE_NAMES) {
-    const engineBlock = block[name];
+    const available = engineAvailable(config, name);
+    // Pi's models are discovered dynamically when available; discovery overrides
+    // both the config block and synthesis.
+    if (name === "pi") {
+      registry[name] = buildPiEntry(config, block?.pi, synthesized[name], available);
+      continue;
+    }
+    const engineBlock = block?.[name];
     registry[name] = engineBlock
-      ? fromEngineModelsConfig(name, engineBlock)
+      ? fromEngineModelsConfig(name, engineBlock, available)
       : synthesized[name]; // engine omitted from the block → keep the synthesized entry
   }
   return registry;
+}
+
+/** Pi registry entry: discovered models > config `models.pi` block > synthesized. */
+function buildPiEntry(
+  config: JinnConfig,
+  piBlock: EngineModelsConfig | undefined,
+  synthEntry: EngineRegistryEntry,
+  available: boolean,
+): EngineRegistryEntry {
+  if (discoveredPiModels && discoveredPiModels.length > 0) {
+    const models = discoveredPiModels;
+    const pinned = config.engines.pi?.model;
+    const defaultModel = pinned && models.some((m) => m.id === pinned) ? pinned : models[0].id;
+    return { name: "pi", available, defaultModel, effortMechanism: "pi-flag", models };
+  }
+  if (piBlock) return fromEngineModelsConfig("pi", piBlock, available);
+  return { ...synthEntry, available };
 }
 
 /** Backward-compat: synthesize a minimal registry from engines.<name>.model. */
@@ -103,7 +183,7 @@ export function synthesizeFromEngineConfig(config: JinnConfig): ModelRegistry {
     };
     registry[name] = {
       name,
-      available: true,
+      available: engineAvailable(config, name),
       defaultModel: modelId,
       effortMechanism: EFFORT_MECHANISM[name],
       models: [model],
@@ -112,7 +192,7 @@ export function synthesizeFromEngineConfig(config: JinnConfig): ModelRegistry {
   return registry;
 }
 
-function fromEngineModelsConfig(name: EngineName, block: EngineModelsConfig): EngineRegistryEntry {
+function fromEngineModelsConfig(name: EngineName, block: EngineModelsConfig, available: boolean): EngineRegistryEntry {
   const models: ModelInfo[] = (block.models ?? []).map((m) => {
     const supportsEffort = m.supportsEffort ?? false;
     return {
@@ -126,7 +206,7 @@ function fromEngineModelsConfig(name: EngineName, block: EngineModelsConfig): En
   const defaultModel = block.default || models[0]?.id || SYNTH_DEFAULTS[name].fallbackModel;
   return {
     name,
-    available: true,
+    available,
     defaultModel,
     effortMechanism: block.effortMechanism ?? EFFORT_MECHANISM[name],
     models,

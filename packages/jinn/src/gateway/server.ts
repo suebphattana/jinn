@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { JinnConfig, Connector, Employee, Engine } from "../shared/types.js";
 import { loadConfig, normalizeClaudeEngineConfig } from "../shared/config.js";
-import { invalidateModelRegistry } from "../shared/models.js";
+import { invalidateModelRegistry, refreshPiModels } from "../shared/models.js";
 import { configureLogger, logger } from "../shared/logger.js";
 import { initDb, recoverStaleSessions, recoverStaleQueueItems, getInterruptedSessions, listSessions, updateSession, getSession } from "../sessions/registry.js";
 import { SessionManager, type RouteOptions } from "../sessions/manager.js";
@@ -16,6 +16,7 @@ import { InteractiveClaudeEngine } from "../engines/claude-interactive.js";
 import { PtyLifecycleManager } from "../engines/pty-lifecycle.js";
 import { CodexEngine } from "../engines/codex.js";
 import { AntigravityEngine } from "../engines/antigravity.js";
+import { PiEngine } from "../engines/pi.js";
 import type { PtyViewEngine } from "../engines/pty-view-engine.js";
 import { HookRegistry } from "./hook-registry.js";
 import { writeGatewayInfo, readGatewayInfo, updateGatewayPtyPids } from "./gateway-info.js";
@@ -246,7 +247,8 @@ export async function startGateway(
     onCleanup: () => refreshPtyPids(),
   });
   const antigravityEngine = new AntigravityEngine(antigravityLifecycle);
-  logger.info("Engines initialized: claude (interactive PTY), codex, antigravity (interactive PTY)");
+  const piEngine = new PiEngine();
+  logger.info("Engines initialized: claude (interactive PTY), codex, antigravity (interactive PTY), pi");
 
   const codexEngine = new CodexEngine();
   const engines = new Map<string, Engine>();
@@ -257,6 +259,11 @@ export async function startGateway(
   logger.info("Claude work turns: INTERACTIVE PTY (cc_entrypoint=cli, Max-subsidized)");
   engines.set("codex", codexEngine);
   engines.set("antigravity", antigravityEngine);
+  engines.set("pi", piEngine);
+
+  // Discover Pi's local models in the background (pi --list-models). Fire-and-forget:
+  // the registry serves the synthesized fallback until the snapshot lands.
+  void refreshPiModels(config);
 
   // PTY-capable engines, keyed by engine name — the /ws/pty handler routes by
   // session.engine so the xterm view attaches to the right engine.
@@ -832,6 +839,7 @@ export async function startGateway(
         currentConfig = loadConfig();
         apiContext.config = currentConfig;
         invalidateModelRegistry(); // rebuild the model/capability registry from the new config
+        void refreshPiModels(currentConfig); // re-discover pi models (engines.pi.bin may have changed)
         logger.info("Config reloaded successfully");
         emit("config:reloaded", {});
       } catch (err) {
@@ -937,6 +945,7 @@ export async function startGateway(
     interactiveClaudeEngine.killAll();
     codexEngine.killAll();
     antigravityEngine.killAll();
+    piEngine.killAll();
 
     // Dispose the PTY lifecycle manager.
     try {

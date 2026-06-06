@@ -226,7 +226,7 @@ export const api = {
   sttUpdateConfig: (languages: string[]) =>
     put<{ status: string; languages: string[] }>("/api/stt/config", { languages }),
   /**
-   * Talk (Path 1): bootstrap (or reuse) the hands-free voice orchestrator —
+   * Talk (Path 1): bootstrap (or reuse) the voice orchestrator —
    * a real gateway session with source:"talk". Voice turns then go through the
    * normal sendMessage(); the spoken reply streams back as talk:audio over WS.
    */

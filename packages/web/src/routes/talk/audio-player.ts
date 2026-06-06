@@ -191,7 +191,7 @@ export class TalkAudioPlayer {
     this.idleCb = cb
   }
 
-  /** Drop all queued audio and reset ordering state (e.g. on barge-in / unmount). */
+  /** Drop all queued audio and reset ordering state (e.g. on cancel / unmount). */
   reset(): void {
     // Abandon the in-flight decode chain; future enqueues start a fresh chain.
     this.chain = Promise.resolve()

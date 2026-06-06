@@ -25,6 +25,7 @@ import { GATEWAY_INFO_FILE, HOOK_RELAY_SCRIPT, JINN_HOME, CLAUDE_SETTINGS_DIR } 
 import { handleApiRequest, resumePendingWebQueueItems, type ApiContext } from "./api.js";
 import { pickEncoding, isCompressibleExt, compressStream } from "./compress.js";
 import { attachPtyWebSocket } from "./pty-ws.js";
+import { startWsHeartbeat, trackHeartbeat } from "./ws-heartbeat.js";
 import { ensureFilesDir, cleanupOldUploads } from "./files.js";
 import { initStt } from "../stt/stt.js";
 import { startWatchers, stopWatchers, syncSkillSymlinks } from "./watcher.js";
@@ -779,9 +780,31 @@ export async function startGateway(
   // the broadcast client set.
   const ptyWss = new WebSocketServer({ noServer: true });
 
+  // Protocol-level ping/pong sweep across both WS servers. Terminates half-open
+  // (dead but readyState===OPEN) sockets; terminating a PTY socket fires its
+  // close handler -> onDisconnect -> viewerCount decrement, fixing the leak.
+  const stopWsHeartbeat = startWsHeartbeat([wss, ptyWss], {
+    onSweep: (r) => { if (r.terminated > 0) logger.info(`WS heartbeat reaped ${r.terminated} dead socket(s)`); },
+  });
+
   wss.on("connection", (ws) => {
     wsClients.add(ws);
+    trackHeartbeat(ws);
     logger.info(`WebSocket client connected (${wsClients.size} total)`);
+
+    // App-level ping echo: the browser client cannot observe protocol-level
+    // pongs from JS, so it sends an app `ping` and watches for this `pong` to
+    // confirm server liveness during idle.
+    ws.on("message", (raw) => {
+      try {
+        const m = JSON.parse(raw.toString());
+        if (m?.event === "ping" && ws.readyState === 1) {
+          ws.send(JSON.stringify({ event: "pong", payload: {} }));
+        }
+      } catch {
+        // ignore non-JSON / unknown frames
+      }
+    });
 
     ws.on("close", () => {
       wsClients.delete(ws);
@@ -814,6 +837,7 @@ export async function startGateway(
       const ptyEngine = ptySession ? ptyViewEngines[ptySession.engine] : undefined;
       if (!ptyEngine) { socket.destroy(); return; }
       ptyWss.handleUpgrade(req, socket, head, (ws) => {
+        trackHeartbeat(ws);
         attachPtyWebSocket(ws, sessionId, ptyEngine);
       });
       return;
@@ -984,6 +1008,9 @@ export async function startGateway(
 
     // Stop watchers
     await stopWatchers();
+
+    // Stop the WS heartbeat sweep before tearing down the WS servers.
+    stopWsHeartbeat();
 
     // Close WebSocket connections
     for (const client of wsClients) {

@@ -18,7 +18,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useGateway } from "@/hooks/use-gateway"
 import { useStt } from "@/hooks/use-stt"
-import { useSpeak } from "./use-speak"
+import { useSpeak, splitSentences } from "./use-speak"
+import { stripMarkdown } from "@/lib/strip-markdown"
 import { api } from "@/lib/api"
 import { TalkAudioPlayer } from "./audio-player"
 import {
@@ -162,6 +163,11 @@ export function useTalk(): UseTalkReturn {
   }, [])
 
   // ---- Transcript helpers --------------------------------------------------
+  // Streaming display invariant: the caption shows only the CURRENT sentence,
+  // never the whole accumulated reply. We keep the full raw text in
+  // turnTextRef (for the spoken pass), but the entry's display `text` is the
+  // LAST sentence of the markdown-stripped accumulation, tagged with its `seg`
+  // index so transcript.tsx re-keys (switches) as sentences complete.
   const appendAssistantText = useCallback((fragment: string) => {
     setEntries((prev) => {
       if (!asstIdRef.current) {
@@ -171,9 +177,14 @@ export function useTalk(): UseTalkReturn {
       }
       const id = asstIdRef.current
       turnTextRef.current += fragment
-      const existing = prev.find((e) => e.id === id)
-      const merged = existing ? existing.text + fragment : fragment
-      return [...prev.filter((e) => e.id !== id), { id, role: "assistant", text: merged, partial: true }]
+      const stripped = stripMarkdown(turnTextRef.current)
+      const sentences = splitSentences(stripped)
+      const lastIdx = Math.max(0, sentences.length - 1)
+      const display = sentences.length ? sentences[lastIdx] : stripped
+      return [
+        ...prev.filter((e) => e.id !== id),
+        { id, role: "assistant", text: display, seg: lastIdx, partial: true },
+      ]
     })
   }, [])
 
@@ -250,42 +261,49 @@ export function useTalk(): UseTalkReturn {
       TALK_EVENTS.ttsDownloadError,
     ])
 
-    // Speak the completed reply. The transcript is driven SENTENCE-BY-SENTENCE:
-    // as each sentence utterance starts, we REPLACE the assistant caption with
-    // that sentence (tagged with its index) so it switches in sync with the
-    // voice instead of showing one concatenated blob.
+    // Speak the completed reply. The transcript is driven SENTENCE-BY-SENTENCE
+    // across ALL paths: each sentence REPLACES the caption (tagged with its
+    // index) so it switches in sync with the voice instead of showing one
+    // concatenated blob. We always route through speak() — it picks Web Speech,
+    // or the estimated-timer fallback (no synth), or caption-only timers
+    // (`mute`, when Kokoro audio is already playing). Markdown is stripped so
+    // the TTS never reads syntax aloud.
     const speakReplyIfNeeded = (asstId: string | null) => {
       const finalize = () => {
         if (!asstId) return
         setEntries((prev) => prev.map((e) => (e.id === asstId ? { ...e, partial: false } : e)))
       }
-      const text = turnTextRef.current.trim()
-      if (audioThisTurnRef.current) {
-        // Kokoro audio is playing; player.onIdle will settle. No per-sentence
-        // callbacks from server audio, so just finalize the full caption.
-        setState("speaking")
-        finalize()
-      } else if (text && speakRef.current.supported) {
-        setState("speaking")
-        speakRef.current
-          .speak(text, {
-            onSentence: ({ text: sentence, index }) => {
-              if (!asstId) return
-              setEntries((prev) =>
-                prev.map((e) =>
-                  e.id === asstId ? { ...e, text: sentence, seg: index, partial: true } : e,
-                ),
-              )
-            },
-          })
-          .then(() => { setState((s) => (s === "speaking" ? "idle" : s)); finalize() })
-          .catch(() => { setState((s) => (s === "speaking" ? "idle" : s)); finalize() })
-      } else {
+      const captionSentence = ({ text: sentence, index }: { text: string; index: number }) => {
+        if (!asstId) return
+        setEntries((prev) =>
+          prev.map((e) =>
+            e.id === asstId ? { ...e, text: sentence, seg: index, partial: true } : e,
+          ),
+        )
+      }
+      const kokoro = audioThisTurnRef.current
+      audioThisTurnRef.current = false
+      const text = stripMarkdown(turnTextRef.current).trim()
+      if (!text) {
         finalize()
         setState("idle")
         stopLevelLoop()
+        return
       }
-      audioThisTurnRef.current = false
+      setState("speaking")
+      // When kokoro is true, server audio owns the speaking/idle transition via
+      // player.onIdle — speak() runs caption-only timers and we only finalize.
+      const onDone = () => {
+        if (!kokoro) {
+          setState((s) => (s === "speaking" ? "idle" : s))
+          stopLevelLoop()
+        }
+        finalize()
+      }
+      speakRef.current
+        .speak(text, { mute: kokoro, onSentence: captionSentence })
+        .then(onDone)
+        .catch(onDone)
     }
 
     const unsub = gateway.subscribe((event: string, payload: unknown) => {
@@ -420,7 +438,13 @@ export function useTalk(): UseTalkReturn {
       if (turnSeqRef.current !== seq) return
       const orch = orchestratorIdRef.current
       if (text && text.trim() && orch) {
-        setEntries((prev) => [...prev, { id: `u${Date.now()}`, role: "user", text }])
+        // Display the stripped text (STT is plain, but this is the single
+        // display invariant); the outbound message below keeps the raw text so
+        // the route hint is appended cleanly.
+        setEntries((prev) => [
+          ...prev,
+          { id: `u${Date.now()}`, role: "user", text: stripMarkdown(text) },
+        ])
         // Switch override: if a thread is selected, prepend a machine route hint so
         // the orchestrator CONTINUES that COO session instead of spawning a new one.
         // The transcript keeps the clean text; only the engine sees the hint.

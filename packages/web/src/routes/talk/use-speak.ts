@@ -25,6 +25,13 @@ export interface SpeakOptions {
    * fallback path it fires on an estimated-duration timer.
    */
   onSentence?: (info: { text: string; index: number; total: number }) => void
+  /**
+   * Caption-only mode: drive `onSentence`/`onWord` on the estimated-duration
+   * timers but produce NO audio. Used when the gateway is already streaming
+   * Kokoro audio (we still want sentence-synced captions, but must not also
+   * Web-Speak the same reply).
+   */
+  mute?: boolean
 }
 
 /**
@@ -231,8 +238,12 @@ export function useSpeak(): SpeakHandle {
       if (sentences.length === 0) return Promise.resolve()
       const total = sentences.length
 
+      // `mute` forces the estimated-timer path (captions, no audio) even when
+      // SpeechSynthesis exists — used while server Kokoro audio is playing.
       const synth =
-        typeof window !== "undefined" ? window.speechSynthesis : undefined
+        !opts?.mute && typeof window !== "undefined"
+          ? window.speechSynthesis
+          : undefined
 
       // ----- Working-now path: real Web Speech synthesis -----
       // Gate on the API existing — NOT on a picked voice. On iOS Safari the voice

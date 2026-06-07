@@ -15,6 +15,7 @@
 import { useMemo } from "react"
 import type { CSSProperties, JSX } from "react"
 import { EASING } from "./motion"
+import { stripMarkdown } from "@/lib/strip-markdown"
 import "./tracker.css"
 
 /**
@@ -78,6 +79,8 @@ function WordReveal({ text }: { text: string }) {
 
 export function Transcript({ entries, className }: TranscriptProps): JSX.Element {
   // Keep only the most recent user line and the most recent assistant line.
+  // Text is already stripped upstream (use-talk); strip again here as a cheap
+  // idempotent render-boundary backstop so no markdown syntax can leak in.
   const { user, assistant } = useMemo(() => {
     let user: TranscriptEntry | undefined
     let assistant: TranscriptEntry | undefined
@@ -87,7 +90,10 @@ export function Transcript({ entries, className }: TranscriptProps): JSX.Element
       else if (!user && e.role === "user") user = e
       if (user && assistant) break
     }
-    return { user, assistant }
+    return {
+      user: user ? { ...user, text: stripMarkdown(user.text) } : undefined,
+      assistant: assistant ? { ...assistant, text: stripMarkdown(assistant.text) } : undefined,
+    }
   }, [entries])
 
   return (

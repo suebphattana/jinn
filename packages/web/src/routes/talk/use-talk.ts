@@ -36,6 +36,13 @@ import {
 import type { TranscriptEntry } from "./transcript"
 import type { AvatarState, Card } from "./types"
 import { threadReducer, type TalkThread, type ThreadAction } from "./thread-store"
+import { messagesToEntries, childrenToThreads } from "./rehydrate"
+import {
+  loadTargetThread,
+  saveTargetThread,
+  loadThreadLabels,
+  saveThreadLabel,
+} from "./talk-storage"
 
 export type { TalkThread } from "./thread-store"
 
@@ -72,6 +79,12 @@ export interface UseTalkReturn {
   renameThread: (id: string, label: string) => void
   /** Remove a thread chip (does not kill the gateway session). */
   dismissThread: (id: string) => void
+  /**
+   * Begin the heavy bootstrap (create/reuse the orchestrator session, probe TTS,
+   * rehydrate). Idempotent. TalkPage calls this on mount; the provider is
+   * globally mounted but stays dormant until a page activates it.
+   */
+  activate: () => void
   startListening: () => void
   stop: () => void
 }
@@ -82,10 +95,16 @@ export function useTalk(): UseTalkReturn {
   const [state, setState] = useState<AvatarState>("idle")
   const [entries, setEntries] = useState<TranscriptEntry[]>([])
   const [threads, setThreads] = useState<TalkThread[]>([])
-  const [targetThreadId, setTargetThreadId] = useState<string | null>(null)
+  // Lazy-init from localStorage so a routed-thread selection survives a reload.
+  const [targetThreadId, setTargetThreadId] = useState<string | null>(() => loadTargetThread())
   const [cards, setCards] = useState<Card[]>([])
   const [level, setLevel] = useState<number | undefined>(undefined)
   const [ttsStatus, setTtsStatus] = useState<TtsStatus>({ kind: "idle" })
+
+  // Heavy bootstrap is gated on activation (TalkPage calls activate() on mount),
+  // so the globally-mounted provider doesn't create a talk session until used.
+  const [activated, setActivated] = useState(false)
+  const activate = useCallback(() => setActivated(true), [])
 
   const [orchestratorId, setOrchestratorId] = useState<string | null>(null)
   const orchestratorIdRef = useRef<string | null>(null)
@@ -209,7 +228,10 @@ export function useTalk(): UseTalkReturn {
   // ---- Thread controls (panel) ---------------------------------------------
   const selectThread = useCallback((id: string | null) => setTargetThreadId(id), [])
   const renameThread = useCallback((id: string, label: string) => {
-    if (label.trim()) dispatchThread({ type: "label", id, label })
+    if (label.trim()) {
+      dispatchThread({ type: "label", id, label })
+      saveThreadLabel(id, label.trim()) // persist override so it survives reload
+    }
   }, [dispatchThread])
   const dismissThread = useCallback((id: string) => {
     const tmr = parkTimers.current.get(id)
@@ -400,11 +422,54 @@ export function useTalk(): UseTalkReturn {
     return () => { unsub() }
   }, [gateway, appendAssistantText, dispatchThread, schedulePark, startLevelLoop, stopLevelLoop, upsertCard, patchCard, dismissCard, clearCards])
 
-  // ---- Bootstrap orchestrator + probe TTS ----------------------------------
+  // ---- Server rehydration --------------------------------------------------
+  // Replay the reused orchestrator session so the transcript + COO thread chips
+  // survive a full reload / mobile tab-discard. Non-clobbering: a live transcript
+  // is never overwritten, and thread rebuilds MERGE (additive) so a reconnect
+  // can pick up threads created while the socket was down without dropping live
+  // ones. Cards are intentionally NOT rehydrated — they are transient; the
+  // orchestrator re-pushes any decision card it still wants on screen.
+  const rehydrate = useCallback(async (orchId: string) => {
+    try {
+      const [session, children] = await Promise.all([
+        api.getSession(orchId).catch(() => undefined),
+        api.getSessionChildren(orchId).catch(() => [] as Record<string, unknown>[]),
+      ])
+      if (orchestratorIdRef.current !== orchId) return // superseded
+      const mapped = messagesToEntries(session as Record<string, unknown> | undefined)
+      if (mapped.length) setEntries((cur) => (cur.length ? cur : mapped))
+
+      const rebuilt = childrenToThreads(children as Record<string, unknown>[], loadThreadLabels())
+      if (rebuilt.length) {
+        setThreads((cur) => {
+          if (!cur.length) return rebuilt
+          const known = new Set(cur.map((t) => t.id))
+          const adds = rebuilt.filter((t) => !known.has(t.id))
+          return adds.length ? [...cur, ...adds] : cur
+        })
+      }
+      // Drop a persisted target selection that no longer maps to any thread.
+      setTargetThreadId((cur) => {
+        if (!cur) return cur
+        const exists =
+          rebuilt.some((t) => t.id === cur) || threadsRef.current.some((t) => t.id === cur)
+        return exists ? cur : null
+      })
+    } catch {
+      /* best-effort; a later reconnect rehydrate will retry */
+    }
+  }, [])
+
+  // ---- Bootstrap orchestrator + probe TTS (gated on activation) -------------
   useEffect(() => {
+    if (!activated) return
     let alive = true
     api.talkCreateSession()
-      .then((r) => { if (alive) setOrchestratorId(r.sessionId) })
+      .then((r) => {
+        if (!alive) return
+        setOrchestratorId(r.sessionId)
+        void rehydrate(r.sessionId)
+      })
       .catch(() => { /* surfaced via connection hint */ })
     api.talkStatus()
       .then((s) => {
@@ -415,7 +480,25 @@ export function useTalk(): UseTalkReturn {
       })
       .catch(() => {})
     return () => { alive = false }
-  }, [])
+  }, [activated, rehydrate])
+
+  // ---- Persist the routed-thread selection ---------------------------------
+  useEffect(() => { saveTargetThread(targetThreadId) }, [targetThreadId])
+
+  // ---- Re-rehydrate after a WS reconnect (mobile tab-resume) ----------------
+  // Skips its first firing (the bootstrap already did the initial rehydrate);
+  // subsequent connectionSeq bumps are real reconnects.
+  const didInitialReconnectRef = useRef(false)
+  useEffect(() => {
+    if (!activated) return
+    const orch = orchestratorIdRef.current
+    if (!orch) return
+    if (!didInitialReconnectRef.current) {
+      didInitialReconnectRef.current = true
+      return
+    }
+    void rehydrate(orch)
+  }, [activated, gateway.connectionSeq, rehydrate])
 
   // ---- Mic control (plain tap-to-talk) -------------------------------------
   const startListening = useCallback(() => {
@@ -492,8 +575,9 @@ export function useTalk(): UseTalkReturn {
       sttAvailable: stt.available,
       ttsStatus,
       selectThread, renameThread, dismissThread,
+      activate,
       startListening, stop,
     }),
-    [state, entries, threads, targetThreadId, cards, level, gateway.connected, listening, stt.available, ttsStatus, selectThread, renameThread, dismissThread, startListening, stop],
+    [state, entries, threads, targetThreadId, cards, level, gateway.connected, listening, stt.available, ttsStatus, selectThread, renameThread, dismissThread, activate, startListening, stop],
   )
 }

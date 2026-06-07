@@ -6,7 +6,7 @@
  * drives the loop (tap to talk, tap to send). TTS is browser SpeechSynthesis by
  * default, so it speaks aloud on the phone with no server deps.
  */
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { ArrowLeft, Mic, Square, Sun, Moon } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -16,11 +16,15 @@ import { Transcript } from "./transcript"
 import { CardStack } from "./cards/card-stack"
 import { ThreadPanel } from "./thread-panel"
 import { ChildSessionModal } from "./child-session-modal"
-import { useTalk } from "./use-talk"
+import { useTalkContext } from "./talk-provider"
 
 export default function TalkPage() {
   const { theme, setTheme } = useTheme()
-  const talk = useTalk()
+  // State lives in TalkProvider (above the router) so it survives navigation;
+  // activate() kicks off the (gated) bootstrap the first time Talk is opened.
+  const talk = useTalkContext()
+  const { activate } = talk
+  useEffect(() => { activate() }, [activate])
   // Which COO child session's chat the modal is showing (null → closed).
   const [chatSessionId, setChatSessionId] = useState<string | null>(null)
 

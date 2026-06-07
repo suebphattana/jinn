@@ -1,0 +1,75 @@
+/**
+ * Jinn Talk — pure rehydration transforms (server snapshot → UI state).
+ *
+ * On mount/reload the reused orchestrator session is fetched and replayed so the
+ * transcript and COO thread chips survive a full reload or mobile tab-discard.
+ * These transforms are pure (no React/DOM) so they can be unit-tested; use-talk
+ * wires them into its bootstrap effect with non-clobbering setState guards.
+ */
+import type { TranscriptEntry } from "./transcript"
+import type { TalkThread } from "./thread-store"
+import { deriveLabel } from "./thread-store"
+import { channelHue } from "./channel-identity"
+import { stripMarkdown } from "@/lib/strip-markdown"
+
+/**
+ * Map a persisted session's messages to FINALIZED transcript entries. Only
+ * user/assistant roles are kept (the transcript shows the latest of each);
+ * notifications and empty bodies are dropped. Text is markdown-stripped to match
+ * the live display invariant.
+ */
+export function messagesToEntries(
+  session: Record<string, unknown> | undefined,
+): TranscriptEntry[] {
+  if (!session) return []
+  const history = (session.messages ?? session.history) as unknown
+  if (!Array.isArray(history)) return []
+  const out: TranscriptEntry[] = []
+  for (const raw of history) {
+    const m = raw as Record<string, unknown>
+    const role = m.role === "user" ? "user" : m.role === "assistant" ? "assistant" : null
+    if (!role) continue
+    const text = stripMarkdown(String(m.content ?? m.text ?? "")).trim()
+    if (!text) continue
+    const id = typeof m.id === "string" && m.id ? m.id : `${role}-${out.length}`
+    out.push({ id, role, text, partial: false })
+  }
+  return out
+}
+
+/**
+ * Rebuild parked COO thread chips from the orchestrator's child sessions. Each
+ * is idle + not orbiting (parked); a manual label override (if any) wins over
+ * the server title.
+ */
+export function childrenToThreads(
+  children: Array<Record<string, unknown>> | undefined,
+  labelOverrides: Record<string, string> = {},
+): TalkThread[] {
+  if (!Array.isArray(children)) return []
+  const out: TalkThread[] = []
+  for (const raw of children) {
+    const c = raw as Record<string, unknown>
+    const id = c.id != null ? String(c.id) : ""
+    if (!id) continue
+    const title = typeof c.title === "string" ? c.title.trim() : ""
+    const override = labelOverrides[id]
+    const label = override ? deriveLabel(override) : deriveLabel(title || id)
+    const tsRaw = c.lastActivity ?? c.createdAt
+    const ts =
+      typeof tsRaw === "string"
+        ? Date.parse(tsRaw) || 0
+        : typeof tsRaw === "number"
+          ? tsRaw
+          : 0
+    out.push({
+      id,
+      label,
+      hue: channelHue(title || id),
+      state: "idle",
+      orbiting: false,
+      ts,
+    })
+  }
+  return out
+}

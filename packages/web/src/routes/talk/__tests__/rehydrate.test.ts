@@ -76,4 +76,13 @@ describe("childrenToThreads", () => {
     expect(childrenToThreads([{ title: "x" }])).toEqual([])
     expect(childrenToThreads(undefined)).toEqual([])
   })
+
+  it("filters out dismissed (tombstoned) thread ids", () => {
+    const threads = childrenToThreads(
+      [{ id: "c1", title: "keep" }, { id: "c2", title: "gone" }],
+      {},
+      ["c2"],
+    )
+    expect(threads.map((t) => t.id)).toEqual(["c1"])
+  })
 })

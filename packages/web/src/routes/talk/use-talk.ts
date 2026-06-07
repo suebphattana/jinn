@@ -42,6 +42,9 @@ import {
   saveTargetThread,
   loadThreadLabels,
   saveThreadLabel,
+  removeThreadLabel,
+  loadDismissedThreads,
+  addDismissedThread,
 } from "./talk-storage"
 
 export type { TalkThread } from "./thread-store"
@@ -244,6 +247,10 @@ export function useTalk(): UseTalkReturn {
     if (tmr) { clearTimeout(tmr); parkTimers.current.delete(id) }
     dispatchThread({ type: "dismiss", id })
     setTargetThreadId((cur) => (cur === id ? null : cur))
+    // Tombstone it (so rehydrate won't resurrect the chip from the still-alive
+    // gateway child) and prune its now-dead label override.
+    addDismissedThread(id)
+    removeThreadLabel(id)
   }, [dispatchThread])
 
   // ---- Detail-card surface (orchestrator pushes via POST /api/talk/card) ----
@@ -461,7 +468,11 @@ export function useTalk(): UseTalkReturn {
       const mapped = messagesToEntries(session as Record<string, unknown> | undefined)
       if (mapped.length) setEntries((cur) => (cur.length ? cur : mapped))
 
-      const rebuilt = childrenToThreads(children as Record<string, unknown>[], loadThreadLabels())
+      const rebuilt = childrenToThreads(
+        children as Record<string, unknown>[],
+        loadThreadLabels(),
+        loadDismissedThreads(),
+      )
       if (rebuilt.length) {
         setThreads((cur) => {
           if (!cur.length) return rebuilt
@@ -482,6 +493,12 @@ export function useTalk(): UseTalkReturn {
     }
   }, [])
 
+  // Marks that the bootstrap has kicked off the INITIAL rehydrate, so the
+  // reconnect effect below only gates on it (never consumes it) — otherwise the
+  // first genuine reconnect (the first firing where orch is non-null) would be
+  // swallowed and a mobile tab-resume right after load wouldn't re-pull.
+  const didInitialReconnectRef = useRef(false)
+
   // ---- Bootstrap orchestrator + probe TTS (gated on activation) -------------
   useEffect(() => {
     if (!activated) return
@@ -491,6 +508,7 @@ export function useTalk(): UseTalkReturn {
         if (!alive) return
         setOrchestratorId(r.sessionId)
         void rehydrate(r.sessionId)
+        didInitialReconnectRef.current = true
       })
       .catch(() => { /* surfaced via connection hint */ })
     api.talkStatus()
@@ -508,17 +526,13 @@ export function useTalk(): UseTalkReturn {
   useEffect(() => { saveTargetThread(targetThreadId) }, [targetThreadId])
 
   // ---- Re-rehydrate after a WS reconnect (mobile tab-resume) ----------------
-  // Skips its first firing (the bootstrap already did the initial rehydrate);
-  // subsequent connectionSeq bumps are real reconnects.
-  const didInitialReconnectRef = useRef(false)
+  // Only GATES on the bootstrap's initial-rehydrate flag (set in the bootstrap
+  // effect, not consumed here), so the first real reconnect after load re-pulls.
   useEffect(() => {
     if (!activated) return
     const orch = orchestratorIdRef.current
     if (!orch) return
-    if (!didInitialReconnectRef.current) {
-      didInitialReconnectRef.current = true
-      return
-    }
+    if (!didInitialReconnectRef.current) return // bootstrap hasn't rehydrated yet
     void rehydrate(orch)
   }, [activated, gateway.connectionSeq, rehydrate])
 

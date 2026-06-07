@@ -14,6 +14,7 @@ export const TALK_KEY = "talk:main"
 
 const TARGET_KEY = `jinn-talk-target-${TALK_KEY}`
 const LABELS_KEY = `jinn-talk-labels-${TALK_KEY}`
+const DISMISSED_KEY = `jinn-talk-dismissed-${TALK_KEY}`
 
 export function loadTargetThread(): string | null {
   if (typeof window === "undefined") return null
@@ -52,6 +53,51 @@ export function saveThreadLabel(id: string, label: string): void {
     const map = loadThreadLabels()
     map[id] = label
     localStorage.setItem(LABELS_KEY, JSON.stringify(map))
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Drop a thread's label override (e.g. on dismiss) so the map doesn't accrete. */
+export function removeThreadLabel(id: string): void {
+  if (typeof window === "undefined") return
+  try {
+    const map = loadThreadLabels()
+    if (id in map) {
+      delete map[id]
+      localStorage.setItem(LABELS_KEY, JSON.stringify(map))
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Dismissed-thread tombstones. `dismissThread` only hides the chip (it never
+ * kills the gateway child session), so without a tombstone the thread would
+ * resurrect on the next reload/reconnect when rehydrate rebuilds from ALL
+ * server children. Keyed by talk:main.
+ */
+export function loadDismissedThreads(): string[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = localStorage.getItem(DISMISSED_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : []
+  } catch {
+    return []
+  }
+}
+
+export function addDismissedThread(id: string): void {
+  if (typeof window === "undefined") return
+  try {
+    const ids = loadDismissedThreads()
+    if (!ids.includes(id)) {
+      ids.push(id)
+      localStorage.setItem(DISMISSED_KEY, JSON.stringify(ids))
+    }
   } catch {
     /* ignore */
   }

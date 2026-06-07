@@ -87,6 +87,62 @@ export interface LinkCard extends CardBase {
   source?: string
 }
 
+// ----------------------------------------------------------------------------
+// Decision-support cards — INTERACTIVE. The orchestrator pushes these when a
+// child returns options to decide or approve; clicking a button sends a
+// synthetic user message back to the orchestrator (the action channel), it
+// does NOT mutate anything client-side. See use-talk `cardAction`.
+// ----------------------------------------------------------------------------
+
+/** A small key/value pair used in several decision cards. */
+export interface CardKV {
+  k: string
+  v: string
+}
+
+/** Pick exactly one of several options (each option is a button). */
+export interface ChoiceCard extends CardBase {
+  type: "choice"
+  prompt?: string
+  options: Array<{
+    id: string
+    label: string
+    detail?: string
+    badge?: string
+    meta?: CardKV[]
+  }>
+}
+
+/** Side-by-side comparison table. */
+export interface ComparisonCard extends CardBase {
+  type: "comparison"
+  columns: string[]
+  rows: Array<{ label: string; cells: string[]; highlight?: number }>
+}
+
+/** Approve / reject a prepared (often irreversible) action. */
+export interface ApprovalCard extends CardBase {
+  type: "approval"
+  summary: string
+  details?: CardKV[]
+  confirmLabel?: string
+  rejectLabel?: string
+  /** Red styling + emphasis when the action is destructive/irreversible. */
+  danger?: boolean
+}
+
+/** A toned key/value readout (good/bad/neutral). */
+export interface KeyValueCard extends CardBase {
+  type: "keyvalue"
+  rows: Array<{ k: string; v: string; tone?: "good" | "bad" | "neutral" }>
+}
+
+/** Before/after hunks (a config or code change). */
+export interface DiffCard extends CardBase {
+  type: "diff"
+  hunks: Array<{ label?: string; before?: string; after?: string }>
+}
+
 export type Card =
   | TextCard
   | StatCard
@@ -96,8 +152,16 @@ export type Card =
   | StatusCard
   | AgentActivityCard
   | LinkCard
+  | ChoiceCard
+  | ComparisonCard
+  | ApprovalCard
+  | KeyValueCard
+  | DiffCard
 
 export type CardType = Card["type"]
+
+/** Card types whose buttons send actions back to the orchestrator. */
+export const INTERACTIVE_CARD_TYPES = new Set<CardType>(["choice", "approval"])
 
 // ============================================================================
 // Parallel-task tracker — multiple concurrent jobs the COO is running.

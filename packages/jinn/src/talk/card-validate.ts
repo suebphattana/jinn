@@ -101,6 +101,57 @@ export function validateCard(input: unknown): Result {
       if (!isString(input.label)) return { ok: false, error: "link card requires string label" };
       break;
 
+    case "choice": {
+      if (!Array.isArray(input.options) || input.options.length === 0) {
+        return { ok: false, error: "choice card requires a non-empty options array" };
+      }
+      for (const opt of input.options) {
+        if (!isObject(opt) || !isString(opt.id) || opt.id.length === 0 || !isString(opt.label)) {
+          return { ok: false, error: "choice options require non-empty string id and string label" };
+        }
+      }
+      break;
+    }
+
+    case "comparison": {
+      if (!Array.isArray(input.columns) || !input.columns.every(isString)) {
+        return { ok: false, error: "comparison card requires a string columns array" };
+      }
+      if (!Array.isArray(input.rows)) {
+        return { ok: false, error: "comparison card requires a rows array" };
+      }
+      for (const row of input.rows) {
+        if (!isObject(row) || !isString(row.label) || !Array.isArray(row.cells) || !row.cells.every(isString)) {
+          return { ok: false, error: "comparison rows require string label and string cells array" };
+        }
+      }
+      break;
+    }
+
+    case "approval":
+      if (!isString(input.summary)) return { ok: false, error: "approval card requires string summary" };
+      break;
+
+    case "keyvalue": {
+      if (!Array.isArray(input.rows)) return { ok: false, error: "keyvalue card requires a rows array" };
+      for (const row of input.rows) {
+        if (!isObject(row) || !isString(row.k) || !isString(row.v)) {
+          return { ok: false, error: "keyvalue rows require string k and v" };
+        }
+      }
+      break;
+    }
+
+    case "diff": {
+      if (!Array.isArray(input.hunks) || input.hunks.length === 0) {
+        return { ok: false, error: "diff card requires a non-empty hunks array" };
+      }
+      for (const hunk of input.hunks) {
+        if (!isObject(hunk)) return { ok: false, error: "diff hunks must be objects" };
+      }
+      break;
+    }
+
     default:
       return { ok: false, error: `unknown card type: ${String(type)}` };
   }

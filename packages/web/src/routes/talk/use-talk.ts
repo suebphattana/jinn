@@ -85,6 +85,12 @@ export interface UseTalkReturn {
    * globally mounted but stays dormant until a page activates it.
    */
   activate: () => void
+  /**
+   * Action channel: a decision-card button sends a synthetic user message back
+   * to the orchestrator (reuses the same sendMessage path as the mic). The
+   * message carries a machine `[card-action …]` tag the orchestrator interprets.
+   */
+  cardAction: (message: string) => void
   startListening: () => void
   stop: () => void
 }
@@ -265,6 +271,22 @@ export function useTalk(): UseTalkReturn {
   }, [])
 
   const clearCards = useCallback(() => setCards([]), [])
+
+  // ---- Action channel (decision-card buttons) ------------------------------
+  // A card button sends a SYNTHETIC user message back to the orchestrator —
+  // the same sendMessage path the mic uses. No new WS event / route. The human
+  // tail (after the machine `[card-action …]` tag) is shown as a user line.
+  const cardAction = useCallback((message: string) => {
+    const orch = orchestratorIdRef.current
+    const msg = message.trim()
+    if (!orch || !msg) return
+    const display = stripMarkdown(msg.replace(/^\[card-action[^\]]*\]\s*/, "")).trim()
+    if (display) {
+      setEntries((prev) => [...prev, { id: `u${Date.now()}`, role: "user", text: display }])
+    }
+    setState("thinking")
+    api.sendMessage(orch, { message: msg }).catch(() => { setState("idle"); stopLevelLoop() })
+  }, [stopLevelLoop])
 
   // ---- WS subscription -----------------------------------------------------
   useEffect(() => {
@@ -575,9 +597,9 @@ export function useTalk(): UseTalkReturn {
       sttAvailable: stt.available,
       ttsStatus,
       selectThread, renameThread, dismissThread,
-      activate,
+      activate, cardAction,
       startListening, stop,
     }),
-    [state, entries, threads, targetThreadId, cards, level, gateway.connected, listening, stt.available, ttsStatus, selectThread, renameThread, dismissThread, activate, startListening, stop],
+    [state, entries, threads, targetThreadId, cards, level, gateway.connected, listening, stt.available, ttsStatus, selectThread, renameThread, dismissThread, activate, cardAction, startListening, stop],
   )
 }

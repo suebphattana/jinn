@@ -75,4 +75,52 @@ describe("validateCard", () => {
       validateCard({ id: "c1", type: "text", body: "hi", title: 7 }).ok,
     ).toBe(false);
   });
+
+  // --- decision-support variants ---
+
+  it("accepts a valid card of each decision-support type", () => {
+    const cards: unknown[] = [
+      { id: "d1", type: "choice", prompt: "pick", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] },
+      { id: "d2", type: "comparison", columns: ["X", "Y"], rows: [{ label: "Price", cells: ["1", "2"], highlight: 1 }] },
+      { id: "d3", type: "approval", summary: "Send it?", details: [{ k: "To", v: "x@y.com" }], danger: true },
+      { id: "d4", type: "keyvalue", rows: [{ k: "Uptime", v: "99%", tone: "good" }] },
+      { id: "d5", type: "diff", hunks: [{ label: "cfg", before: "a", after: "b" }] },
+    ];
+    for (const card of cards) {
+      const result = validateCard(card);
+      expect(result.ok, JSON.stringify(card)).toBe(true);
+    }
+  });
+
+  it("rejects a choice card with empty options", () => {
+    expect(validateCard({ id: "d1", type: "choice", options: [] }).ok).toBe(false);
+  });
+
+  it("rejects a choice option missing id or label", () => {
+    expect(validateCard({ id: "d1", type: "choice", options: [{ label: "A" }] }).ok).toBe(false);
+    expect(validateCard({ id: "d1", type: "choice", options: [{ id: "a" }] }).ok).toBe(false);
+  });
+
+  it("rejects a comparison card with non-string cells", () => {
+    const result = validateCard({
+      id: "d2",
+      type: "comparison",
+      columns: ["X"],
+      rows: [{ label: "Price", cells: [1, 2] }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/cells/);
+  });
+
+  it("rejects an approval card without a string summary", () => {
+    expect(validateCard({ id: "d3", type: "approval" }).ok).toBe(false);
+  });
+
+  it("rejects a keyvalue row missing k or v", () => {
+    expect(validateCard({ id: "d4", type: "keyvalue", rows: [{ k: "only" }] }).ok).toBe(false);
+  });
+
+  it("rejects a diff card with empty hunks", () => {
+    expect(validateCard({ id: "d5", type: "diff", hunks: [] }).ok).toBe(false);
+  });
 });

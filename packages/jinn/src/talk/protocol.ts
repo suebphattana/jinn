@@ -37,9 +37,32 @@ export interface AgentActivity {
 export interface AgentActivityCard extends CardBase { type: "agent-activity"; agents: AgentActivity[] }
 export interface LinkCard extends CardBase { type: "link"; url: string; label: string; source?: string }
 
+// Decision-support cards — INTERACTIVE (buttons send a synthetic user message
+// back to the orchestrator; see web use-talk `cardAction`).
+export interface CardKV { k: string; v: string }
+export interface ChoiceCard extends CardBase {
+  type: "choice"; prompt?: string
+  options: Array<{ id: string; label: string; detail?: string; badge?: string; meta?: CardKV[] }>
+}
+export interface ComparisonCard extends CardBase {
+  type: "comparison"; columns: string[]
+  rows: Array<{ label: string; cells: string[]; highlight?: number }>
+}
+export interface ApprovalCard extends CardBase {
+  type: "approval"; summary: string; details?: CardKV[]
+  confirmLabel?: string; rejectLabel?: string; danger?: boolean
+}
+export interface KeyValueCard extends CardBase {
+  type: "keyvalue"; rows: Array<{ k: string; v: string; tone?: "good" | "bad" | "neutral" }>
+}
+export interface DiffCard extends CardBase {
+  type: "diff"; hunks: Array<{ label?: string; before?: string; after?: string }>
+}
+
 export type Card =
   | TextCard | StatCard | ListCard | ImageCard
   | ImageGridCard | StatusCard | AgentActivityCard | LinkCard
+  | ChoiceCard | ComparisonCard | ApprovalCard | KeyValueCard | DiffCard
 
 export interface TrackerTask {
   id: string

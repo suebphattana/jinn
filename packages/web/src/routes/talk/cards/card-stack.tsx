@@ -45,9 +45,11 @@ interface TrackedCard {
 function CardShell({
   tracked,
   onExited,
+  onAction,
 }: {
   tracked: TrackedCard
   onExited: (id: string) => void
+  onAction?: (message: string) => void
 }): JSX.Element {
   const { card, phase, enterIndex } = tracked
   const isLink = card.type === "link"
@@ -92,7 +94,7 @@ function CardShell({
 
   return (
     <div className={className} style={style} onAnimationEnd={handleAnimationEnd}>
-      <CardRenderer card={card} />
+      <CardRenderer card={card} onAction={onAction} />
     </div>
   )
 }
@@ -100,9 +102,12 @@ function CardShell({
 export function CardStack({
   cards,
   className,
+  onAction,
 }: {
   cards: Card[]
   className?: string
+  /** Action channel: a decision-card button sends this synthetic user message. */
+  onAction?: (message: string) => void
 }): JSX.Element {
   // The rendered set = incoming cards + cards still playing their exit.
   const [tracked, setTracked] = useState<TrackedCard[]>(() =>
@@ -187,7 +192,7 @@ export function CardStack({
   return (
     <div className={deckClass}>
       {tracked.map((t) => (
-        <CardShell key={t.card.id} tracked={t} onExited={handleExited} />
+        <CardShell key={t.card.id} tracked={t} onExited={handleExited} onAction={onAction} />
       ))}
     </div>
   )

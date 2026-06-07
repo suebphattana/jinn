@@ -119,7 +119,7 @@ export default function TalkPage() {
             maxHeight: "46dvh",
           }}
         >
-          <CardStack cards={talk.cards} />
+          <CardStack cards={talk.cards} onAction={talk.cardAction} />
         </div>
       )}
 

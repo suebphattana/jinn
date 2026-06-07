@@ -417,6 +417,257 @@ a.jt-card--link:hover {
 .jt-card__body { margin-top: 2px; }
 
 /* ===========================================================================
+   Decision-support cards — INTERACTIVE. The deck is pointer-events:none, so
+   any clickable control re-enables itself with .jt-action.
+   =========================================================================== */
+.jt-action {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* ---- choice card ---- */
+.jt-choice__prompt {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+.jt-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.jt-choice__opt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--separator);
+  background: var(--fill-tertiary);
+  color: var(--text-primary);
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-color 220ms cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.jt-choice__opt:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--separator));
+  background: var(--accent-fill);
+}
+.jt-choice__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.jt-choice__label {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.jt-choice__badge {
+  flex-shrink: 0;
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.jt-choice__detail {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.jt-choice__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.jt-choice__metaItem b {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* ---- comparison card ---- */
+.jt-cmp__wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.jt-cmp {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.jt-cmp th,
+.jt-cmp td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid color-mix(in srgb, var(--separator) 65%, transparent);
+  white-space: nowrap;
+}
+.jt-cmp thead th {
+  font-family: var(--font-code);
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+.jt-cmp tbody th {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.jt-cmp tbody td {
+  color: var(--text-primary);
+}
+.jt-cmp__hl {
+  background: var(--accent-fill);
+  color: var(--accent);
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- approval card ---- */
+.jt-approval__summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+.jt-approval__warn {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--system-red);
+}
+.jt-approval--danger .jt-approval__summary {
+  color: color-mix(in srgb, var(--system-red) 22%, var(--text-primary));
+}
+.jt-approval__actions {
+  display: flex;
+  gap: 9px;
+  margin-top: 14px;
+}
+.jt-approval__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--separator);
+  transition:
+    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.jt-approval__btn:hover { transform: translateY(-1px); }
+.jt-approval__btn--reject {
+  background: var(--fill-tertiary);
+  color: var(--text-secondary);
+}
+.jt-approval__btn--confirm {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: transparent;
+}
+.jt-approval__btn--danger {
+  background: var(--system-red);
+  color: #fff;
+}
+
+/* ---- keyvalue card (also used for approval details) ---- */
+.jt-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+.jt-kv__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 4px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--separator) 50%, transparent);
+}
+.jt-kv__row:last-child { border-bottom: none; }
+.jt-kv__k {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+.jt-kv__v {
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--text-primary);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.jt-kv__v--good { color: var(--system-green); }
+.jt-kv__v--bad { color: var(--system-red); }
+.jt-kv__v--neutral { color: var(--text-primary); }
+
+/* ---- diff card ---- */
+.jt-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.jt-diff__label {
+  font-family: var(--font-code);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+.jt-diff__line {
+  margin: 0;
+  padding: 6px 10px;
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
+}
+.jt-diff__line--before {
+  background: color-mix(in srgb, var(--system-red) 11%, transparent);
+  border-left-color: color-mix(in srgb, var(--system-red) 55%, transparent);
+  color: color-mix(in srgb, var(--system-red) 30%, var(--text-primary));
+}
+.jt-diff__line--after {
+  background: color-mix(in srgb, var(--system-green) 11%, transparent);
+  border-left-color: color-mix(in srgb, var(--system-green) 55%, transparent);
+  color: color-mix(in srgb, var(--system-green) 30%, var(--text-primary));
+  margin-top: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jt-choice__opt,
+  .jt-approval__btn {
+    transition: none;
+  }
+  .jt-choice__opt:hover,
+  .jt-approval__btn:hover {
+    transform: none;
+  }
+}
+
+/* ===========================================================================
    Keyframes — entrance / exit / ambient.
    The stack drives entrance/exit by toggling these animations inline so it can
    stagger per-index; ambient pulses live here.

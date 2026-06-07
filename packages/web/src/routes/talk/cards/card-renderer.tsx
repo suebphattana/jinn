@@ -11,17 +11,24 @@
  */
 import type { JSX } from "react"
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowRight,
   ArrowUp,
   Check,
   Globe,
+  X,
 } from "lucide-react"
 import type {
   AgentActivity,
+  ApprovalCard,
   Card,
+  ChoiceCard,
+  ComparisonCard,
+  DiffCard,
   ImageCard,
   ImageGridCard,
+  KeyValueCard,
   LinkCard,
   ListCard,
   StatCard,
@@ -29,6 +36,9 @@ import type {
   TextCard,
 } from "../types"
 import "./cards.css"
+
+/** Callback a card button fires to send a synthetic user message (action channel). */
+type OnAction = (message: string) => void
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -278,6 +288,146 @@ function LinkBody({ card }: { card: LinkCard }) {
 }
 
 // ---------------------------------------------------------------------------
+// Decision-support primitives (INTERACTIVE — buttons fire onAction)
+// ---------------------------------------------------------------------------
+
+function ChoiceBody({ card, onAction }: { card: ChoiceCard; onAction?: OnAction }) {
+  return (
+    <div className="jt-card__body">
+      {card.prompt ? <p className="jt-choice__prompt">{card.prompt}</p> : null}
+      <div className="jt-choice">
+        {card.options.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            className="jt-choice__opt jt-action"
+            onClick={() =>
+              onAction?.(`[card-action card=${card.id} action=choose option=${opt.id}] ${opt.label}`)
+            }
+          >
+            <span className="jt-choice__head">
+              <span className="jt-choice__label">{opt.label}</span>
+              {opt.badge ? <span className="jt-choice__badge">{opt.badge}</span> : null}
+            </span>
+            {opt.detail ? <span className="jt-choice__detail">{opt.detail}</span> : null}
+            {opt.meta && opt.meta.length > 0 ? (
+              <span className="jt-choice__meta">
+                {opt.meta.map((m, i) => (
+                  <span className="jt-choice__metaItem" key={`${m.k}-${i}`}>
+                    <b>{m.k}</b> {m.v}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ComparisonBody({ card }: { card: ComparisonCard }) {
+  return (
+    <div className="jt-card__body jt-cmp__wrap">
+      <table className="jt-cmp">
+        <thead>
+          <tr>
+            <th />
+            {card.columns.map((c, i) => (
+              <th key={`${c}-${i}`}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {card.rows.map((row, ri) => (
+            <tr key={`${row.label}-${ri}`}>
+              <th scope="row">{row.label}</th>
+              {row.cells.map((cell, ci) => (
+                <td key={ci} className={row.highlight === ci ? "jt-cmp__hl" : undefined}>
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ApprovalBody({ card, onAction }: { card: ApprovalCard; onAction?: OnAction }) {
+  const confirm = card.confirmLabel ?? "Approve"
+  const reject = card.rejectLabel ?? "Reject"
+  return (
+    <div className={`jt-card__body jt-approval${card.danger ? " jt-approval--danger" : ""}`}>
+      <p className="jt-approval__summary">
+        {card.danger ? (
+          <AlertTriangle className="jt-approval__warn" size={16} strokeWidth={2.5} aria-hidden />
+        ) : null}
+        {card.summary}
+      </p>
+      {card.details && card.details.length > 0 ? (
+        <dl className="jt-kv">
+          {card.details.map((d, i) => (
+            <div className="jt-kv__row" key={`${d.k}-${i}`}>
+              <dt className="jt-kv__k">{d.k}</dt>
+              <dd className="jt-kv__v">{d.v}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      <div className="jt-approval__actions">
+        <button
+          type="button"
+          className="jt-approval__btn jt-approval__btn--reject jt-action"
+          onClick={() => onAction?.(`[card-action card=${card.id} action=reject] ${reject}`)}
+        >
+          <X size={15} strokeWidth={2.5} aria-hidden /> {reject}
+        </button>
+        <button
+          type="button"
+          className={`jt-approval__btn jt-approval__btn--confirm jt-action${card.danger ? " jt-approval__btn--danger" : ""}`}
+          onClick={() => onAction?.(`[card-action card=${card.id} action=approve] ${confirm}`)}
+        >
+          <Check size={15} strokeWidth={2.5} aria-hidden /> {confirm}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function KeyValueBody({ card }: { card: KeyValueCard }) {
+  return (
+    <dl className="jt-kv jt-card__body">
+      {card.rows.map((row, i) => (
+        <div className="jt-kv__row" key={`${row.k}-${i}`}>
+          <dt className="jt-kv__k">{row.k}</dt>
+          <dd className={`jt-kv__v jt-kv__v--${row.tone ?? "neutral"}`}>{row.v}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function DiffBody({ card }: { card: DiffCard }) {
+  return (
+    <div className="jt-card__body jt-diff">
+      {card.hunks.map((hunk, i) => (
+        <div className="jt-diff__hunk" key={i}>
+          {hunk.label ? <div className="jt-diff__label">{hunk.label}</div> : null}
+          {hunk.before !== undefined ? (
+            <pre className="jt-diff__line jt-diff__line--before">{hunk.before}</pre>
+          ) : null}
+          {hunk.after !== undefined ? (
+            <pre className="jt-diff__line jt-diff__line--after">{hunk.after}</pre>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Public renderer
 // ---------------------------------------------------------------------------
 
@@ -287,7 +437,13 @@ function LinkBody({ card }: { card: LinkCard }) {
  * icon+label fragment via the same switch so the renderer remains the single
  * source of per-type markup.
  */
-export function CardRenderer({ card }: { card: Card }): JSX.Element {
+export function CardRenderer({
+  card,
+  onAction,
+}: {
+  card: Card
+  onAction?: OnAction
+}): JSX.Element {
   switch (card.type) {
     case "text":
       return (
@@ -342,6 +498,41 @@ export function CardRenderer({ card }: { card: Card }): JSX.Element {
       // Link cards have no eyebrow header by default — the whole card is the
       // tappable target. CardStack renders this fragment inside an <a>.
       return <LinkBody card={card} />
+    case "choice":
+      return (
+        <>
+          <CardHead title={card.title} badge={card.badge} />
+          <ChoiceBody card={card} onAction={onAction} />
+        </>
+      )
+    case "comparison":
+      return (
+        <>
+          <CardHead title={card.title} badge={card.badge} />
+          <ComparisonBody card={card} />
+        </>
+      )
+    case "approval":
+      return (
+        <>
+          <CardHead title={card.title} badge={card.badge} />
+          <ApprovalBody card={card} onAction={onAction} />
+        </>
+      )
+    case "keyvalue":
+      return (
+        <>
+          <CardHead title={card.title} badge={card.badge} />
+          <KeyValueBody card={card} />
+        </>
+      )
+    case "diff":
+      return (
+        <>
+          <CardHead title={card.title} badge={card.badge} />
+          <DiffBody card={card} />
+        </>
+      )
     default: {
       // Exhaustiveness guard — if a new card type is added to the union this
       // line fails to compile until handled here.

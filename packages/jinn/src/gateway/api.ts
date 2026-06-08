@@ -808,6 +808,10 @@ export async function handleApiRequest(
       const config = context.getConfig();
       const engineName = body.engine || config.engines.default;
       const sessionKey = `web:${Date.now()}`;
+      // Opt-in SSO identity capture: when an auth proxy fronts the gateway and
+      // `gateway.userHeader` is configured, persist the forwarded identity on the
+      // session. Unset config → undefined → stored as NULL (single-user no-op).
+      const userId = resolveUserHeader(req.headers, config.gateway.userHeader);
       const session = createSession({
         engine: engineName,
         source: "web",
@@ -815,6 +819,7 @@ export async function handleApiRequest(
         connector: "web",
         sessionKey,
         replyContext: { source: "web" },
+        userId,
         employee: body.employee,
         parentSessionId: body.parentSessionId,
         effortLevel: body.effortLevel,
@@ -2047,6 +2052,32 @@ function loadTranscriptMessages(engineSessionId: string): Array<{ role: string; 
 const NON_CONNECTOR_SOURCES = new Set(["web", "talk", "cron"]);
 
 /**
+ * Resolve the forwarded SSO identity from request headers, given the configured
+ * `gateway.userHeader` (a single header name or a priority-ordered list). Node
+ * lowercases incoming header keys, so we look up case-insensitively. Returns the
+ * first present, non-empty, trimmed value; `undefined` when the config is unset
+ * or no configured header is present. Unset config = single-user no-op: the
+ * header is never read and the caller falls back to "web-user".
+ */
+export function resolveUserHeader(
+  headers: Record<string, string | string[] | undefined>,
+  userHeaderConfig: string | string[] | undefined,
+): string | undefined {
+  if (!userHeaderConfig) return undefined;
+  const names = Array.isArray(userHeaderConfig) ? userHeaderConfig : [userHeaderConfig];
+  for (const name of names) {
+    if (!name) continue;
+    const raw = headers[name.toLowerCase()];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Relay a completed turn's assistant text back to the connector channel that
  * originated the session. Inbound connector messages reply via `manager.route`,
  * but turns completed through `runWebSession` (parent callbacks, cron
@@ -2115,7 +2146,7 @@ async function runWebSession(
     const systemPrompt = buildContext({
       source: currentSession.source,
       channel: currentSession.sourceRef,
-      user: "web-user",
+      user: currentSession.userId ?? "web-user",
       employee,
       connectors: Array.from(context.connectors.keys()),
       config,

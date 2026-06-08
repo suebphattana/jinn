@@ -157,6 +157,9 @@ export interface Session {
   model: string | null;
   title: string | null;
   parentSessionId: string | null;
+  /** Forwarded SSO identity captured from an auth proxy (opt-in via
+   *  `gateway.userHeader`). Null/undefined for single-user installs. */
+  userId?: string | null;
   status: "idle" | "running" | "error" | "waiting" | "interrupted";
   effortLevel: string | null;
   totalCost: number;
@@ -437,7 +440,17 @@ export type ModelsConfig = Record<string, EngineModelsConfig>;
 
 export interface JinnConfig {
   jinn?: { version?: string };
-  gateway: { port: number; host: string; streaming?: boolean };
+  gateway: {
+    port: number;
+    host: string;
+    streaming?: boolean;
+    /** Opt-in: when set, POST /api/sessions reads the forwarded SSO identity
+     *  from this request header (set by an auth proxy such as oauth2-proxy,
+     *  Traefik forward-auth, or IAP) and persists it on the session. Accepts a
+     *  single header name or a priority-ordered list. Unset = single-user
+     *  no-op (sessions default to "web-user", header never read). */
+    userHeader?: string | string[];
+  };
   engines: {
     default: "claude" | "codex" | "antigravity" | "pi";
     claude: {

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   model TEXT,
   title TEXT,
   parent_session_id TEXT,
+  user_id TEXT,
   status TEXT DEFAULT 'idle',
   created_at TEXT NOT NULL,
   last_activity TEXT NOT NULL,
@@ -102,6 +103,7 @@ function rowToSession(row: Record<string, unknown>): Session {
     model: (row.model as string) ?? null,
     title: (row.title as string) ?? null,
     parentSessionId: (row.parent_session_id as string) ?? null,
+    userId: (row.user_id as string) ?? null,
     effortLevel: (row.effort_level as string) ?? null,
     status: row.status as Session['status'],
     totalCost: (row.total_cost as number) ?? 0,
@@ -188,6 +190,7 @@ export function migrateSessionsSchema(database: Database.Database): void {
     ['total_turns', 'INTEGER', '0'],
     ['effort_level', 'TEXT'],
     ['last_context_tokens', 'INTEGER'],
+    ['user_id', 'TEXT'],
   ];
 
   for (const [name, type, defaultVal] of missingColumns) {
@@ -220,6 +223,7 @@ export interface CreateSessionOpts {
   model?: string;
   title?: string;
   parentSessionId?: string;
+  userId?: string | null;
   effortLevel?: string;
 }
 
@@ -251,9 +255,9 @@ export function createSession(opts: CreateSessionOpts & { prompt?: string; porta
   const stmt = db.prepare(`
     INSERT INTO sessions (
       id, engine, source, source_ref, connector, session_key, reply_context, message_id, transport_meta,
-      employee, model, title, parent_session_id, effort_level, status, created_at, last_activity
+      employee, model, title, parent_session_id, user_id, effort_level, status, created_at, last_activity
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?)
   `);
   stmt.run(
     id,
@@ -269,6 +273,7 @@ export function createSession(opts: CreateSessionOpts & { prompt?: string; porta
     opts.model ?? null,
     title,
     opts.parentSessionId ?? null,
+    opts.userId ?? null,
     opts.effortLevel ?? null,
     now,
     now,
@@ -289,6 +294,7 @@ export function createSession(opts: CreateSessionOpts & { prompt?: string; porta
     model: opts.model ?? null,
     title,
     parentSessionId: opts.parentSessionId ?? null,
+    userId: opts.userId ?? null,
     effortLevel: opts.effortLevel ?? null,
     status: 'idle',
     totalCost: 0,
@@ -329,6 +335,7 @@ export interface UpdateSessionFields {
   lastActivity?: string;
   lastError?: string | null;
   title?: string;
+  userId?: string | null;
 }
 
 export function updateSession(id: string, updates: UpdateSessionFields): Session | undefined {
@@ -383,6 +390,10 @@ export function updateSession(id: string, updates: UpdateSessionFields): Session
   if (updates.title !== undefined) {
     sets.push('title = ?');
     values.push(updates.title);
+  }
+  if (updates.userId !== undefined) {
+    sets.push('user_id = ?');
+    values.push(updates.userId);
   }
 
   if (sets.length === 0) return getSession(id);

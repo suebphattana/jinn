@@ -2039,6 +2039,40 @@ function loadTranscriptMessages(engineSessionId: string): Array<{ role: string; 
   return [];
 }
 
+/**
+ * Sources that are NOT backed by an external chat connector. Anything else
+ * (slack, telegram, discord, whatsapp, …) is connector-sourced and its turn
+ * results must be relayed back to the originating channel.
+ */
+const NON_CONNECTOR_SOURCES = new Set(["web", "talk", "cron"]);
+
+/**
+ * Relay a completed turn's assistant text back to the connector channel that
+ * originated the session. Inbound connector messages reply via `manager.route`,
+ * but turns completed through `runWebSession` (parent callbacks, cron
+ * follow-ups, rate-limit resumes) otherwise never reach the channel. No-ops for
+ * web/talk/cron sources, empty text, or a missing connector/replyContext; errors
+ * are logged and swallowed so delivery failure never breaks completion.
+ */
+export async function deliverConnectorReply(
+  session: Pick<Session, "source" | "connector" | "replyContext"> & { id?: string },
+  text: string,
+  connectors: Map<string, import("../shared/types.js").Connector>,
+): Promise<void> {
+  if (!text || NON_CONNECTOR_SOURCES.has(session.source)) return;
+  if (!session.connector || !session.replyContext) return;
+  const connector = connectors.get(session.connector);
+  if (!connector) return;
+  try {
+    const target = connector.reconstructTarget(session.replyContext);
+    await connector.replyMessage(target, text);
+  } catch (err) {
+    logger.warn(
+      `Connector reply delivery failed for session ${session.id ?? "?"}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function runWebSession(
   session: Session,
   prompt: string,
@@ -2307,6 +2341,8 @@ async function runWebSession(
             });
             if (completedFallback) {
               notifyParentSession(completedFallback, { result: fallbackResult.result, error: fallbackResult.error ?? null, cost: fallbackResult.cost, durationMs: fallbackResult.durationMs }, { alwaysNotify: employee?.alwaysNotify });
+              // Relay the fallback turn to the originating connector channel (#51).
+              if (fallbackResult.result) void deliverConnectorReply(completedFallback, fallbackResult.result, context.connectors);
             }
 
             context.emit("session:completed", {
@@ -2369,6 +2405,8 @@ async function runWebSession(
                 `✅ Claude usage limit cleared. Session ${currentSession.id}${currentSession.employee ? ` (${currentSession.employee})` : ""} resumed.`,
               );
               notifyParentSession(completedAfterRetry, { result: retryResult.result, error: retryResult.error ?? null, cost: retryResult.cost, durationMs: retryResult.durationMs }, { alwaysNotify: employee?.alwaysNotify });
+              // Relay the resumed (rate-limit-cleared) turn to the originating connector channel (#51).
+              if (retryResult.result) void deliverConnectorReply(completedAfterRetry, retryResult.result, context.connectors);
             }
 
             context.emit("session:completed", {
@@ -2441,6 +2479,13 @@ async function runWebSession(
     const reportedError = wasInterrupted ? null : (result.error ?? null);
     if (completedSession) {
       notifyParentSession(completedSession, { result: result.result, error: reportedError, cost: result.cost, durationMs: result.durationMs }, { alwaysNotify: employee?.alwaysNotify });
+    }
+
+    // Relay the turn back to the originating connector channel (#51). Only
+    // connector-sourced sessions reaching this path (parent callbacks, cron
+    // follow-ups) deliver; web/talk/cron + interrupted turns no-op.
+    if (completedSession && !wasInterrupted && result.result) {
+      await deliverConnectorReply(completedSession, result.result, context.connectors);
     }
 
     context.emit("session:completed", {

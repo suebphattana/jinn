@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.18.1] - 2026-06-08
+
+### 🐛 Fixes
+- **Chat alignment.** The in-progress **"Thinking" indicator** now shares the same gutter as message text and tool cards (it was inset ~16px to the left). Completes the tool-card alignment from 0.18.0.
+- **Mobile composer strip.** The Engine · Model · Effort · context selector row no longer wraps on phones (a grid spacer was stealing half the row, pushing "Opus 4.8" onto two lines). It's now mobile-first single-line with non-wrapping pills that scroll if needed, and the "· applies next message" hint is hidden on mobile (kept on desktop).
+
 ## [0.18.0] - 2026-06-04
 
 > Big release: the voice-first **Talk** interface, the **Antigravity** engine (replacing Gemini CLI), a dynamic model registry with mid-chat switching, a race-free `jinn restart`, the **Ledger** web theme, and WebSocket reliability work.

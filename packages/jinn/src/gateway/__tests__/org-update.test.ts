@@ -107,22 +107,22 @@ alwaysNotify: false
   });
 
   it("preserves all other YAML fields when updating one field", () => {
-    writeYaml("homy", "lead.yaml", `
-name: homy-lead
-displayName: Homy Lead
-department: homy
+    writeYaml("content", "lead.yaml", `
+name: content-lead
+displayName: Content Lead
+department: content
 rank: manager
 engine: claude
 model: opus
-persona: The homy lead
+persona: The content lead
 emoji: "🏠"
 maxCostUsd: 5
 `);
-    updateEmployeeYaml("homy-lead", { alwaysNotify: false });
+    updateEmployeeYaml("content-lead", { alwaysNotify: false });
 
-    const data = readYaml("homy", "lead.yaml");
-    expect(data.displayName).toBe("Homy Lead");
-    expect(data.department).toBe("homy");
+    const data = readYaml("content", "lead.yaml");
+    expect(data.displayName).toBe("Content Lead");
+    expect(data.department).toBe("content");
     expect(data.rank).toBe("manager");
     expect(data.engine).toBe("claude");
     expect(data.model).toBe("opus");

@@ -13,17 +13,17 @@ import type { Employee, JinnConfig } from "../../shared/types.js";
 const baseOpts = {
   source: "slack",
   channel: "C123",
-  user: "the operator",
+  user: "Alex",
 };
 
 const minimalEmployee: Employee = {
-  name: "pravko-lead",
-  displayName: "Pravko Lead",
-  department: "pravko",
+  name: "content-lead",
+  displayName: "Content Lead",
+  department: "content",
   rank: "manager",
   engine: "claude",
   model: "opus",
-  persona: "You lead the Pravko legal-AI team.",
+  persona: "You lead the content team.",
 };
 
 describe("buildContext — COO (no employee)", () => {
@@ -60,12 +60,12 @@ describe("buildContext — COO (no employee)", () => {
 describe("buildContext — employee mode", () => {
   it("emits the employee identity section instead of the COO anchor", () => {
     const out = buildContext({ ...baseOpts, employee: minimalEmployee });
-    expect(out).toContain("# You are Pravko Lead");
+    expect(out).toContain("# You are Content Lead");
     expect(out).toContain("You are an AI employee in the Jinn gateway system.");
     expect(out).toContain("## Your persona");
-    expect(out).toContain("You lead the Pravko legal-AI team.");
+    expect(out).toContain("You lead the content team.");
     // The employee section carries the role block, not the COO "manual" anchor.
-    expect(out).toContain("**Department**: pravko");
+    expect(out).toContain("**Department**: content");
     expect(out).toContain("**Rank**: manager");
     // The COO-only anchor wording must NOT appear for an employee.
     expect(out).not.toContain("COO of the user's AI organization");
@@ -150,7 +150,7 @@ describe("buildContext — self-evolution is omitted when configured", () => {
     fs.mkdirSync(path.join(tmpHome, "knowledge"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpHome, "knowledge", "user-profile.md"),
-      "# the operator\nSolo indie developer running several apps. This profile is well past fifty chars.",
+      "# Alex\nSolo indie developer running several apps. This profile is well past fifty chars.",
     );
     process.env.JINN_HOME = tmpHome;
     vi.resetModules();
@@ -208,7 +208,7 @@ describe("buildContext — self-evolution appears ONLY for a fresh install", () 
     fs.mkdirSync(path.join(tmpHome, "knowledge"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpHome, "knowledge", "user-profile.md"),
-      "# the operator\nSolo indie developer running several apps. This profile is well past fifty chars.",
+      "# Alex\nSolo indie developer running several apps. This profile is well past fifty chars.",
     );
     const { buildContext: freshBuild } = await import("../context.js");
     const out = freshBuild({ ...baseOpts });

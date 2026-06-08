@@ -14,10 +14,10 @@ import type { Card } from "../../types"
 
 const CARDS: Card[] = [
   {
-    id: "pravko-blog",
+    id: "content-blog",
     type: "status",
     title: "DELEGATED",
-    label: "Pravko blog pipeline",
+    label: "Content blog pipeline",
     progress: 0.4,
     state: "running",
     chips: ["phase 2"],
@@ -45,7 +45,7 @@ const CARDS: Card[] = [
     id: "agents",
     type: "agent-activity",
     agents: [
-      { id: "a1", name: "pravko-lead", role: "writer", status: "running", detail: "drafting", progress: 0.5 },
+      { id: "a1", name: "content-lead", role: "writer", status: "running", detail: "drafting", progress: 0.5 },
     ],
   },
 ]
@@ -55,7 +55,7 @@ describe("CardStack", () => {
     render(<CardStack cards={CARDS} />)
 
     // status card
-    expect(screen.getByText("Pravko blog pipeline")).toBeTruthy()
+    expect(screen.getByText("Content blog pipeline")).toBeTruthy()
     expect(screen.getByText("Running")).toBeTruthy()
     expect(screen.getByText("phase 2")).toBeTruthy()
     // list card
@@ -68,7 +68,7 @@ describe("CardStack", () => {
     const link = screen.getByText("Open dashboard").closest("a")
     expect(link?.getAttribute("href")).toBe("https://example.com/dashboard")
     // agent-activity card
-    expect(screen.getByText("pravko-lead")).toBeTruthy()
+    expect(screen.getByText("content-lead")).toBeTruthy()
     expect(screen.getByText("drafting")).toBeTruthy()
   })
 
@@ -99,7 +99,7 @@ describe("CardStack", () => {
         id: "appr",
         type: "approval",
         summary: "Send the invoice?",
-        details: [{ k: "Amount", v: "€920" }],
+        details: [{ k: "Amount", v: "€100" }],
         danger: true,
       },
       { id: "kv", type: "keyvalue", rows: [{ k: "Uptime", v: "99.9%", tone: "good" }] },
@@ -110,7 +110,7 @@ describe("CardStack", () => {
     expect(screen.getByText("Production")).toBeTruthy()
     expect(screen.getByText("Seats")).toBeTruthy()
     expect(screen.getByText("Send the invoice?")).toBeTruthy()
-    expect(screen.getByText("€920")).toBeTruthy()
+    expect(screen.getByText("€100")).toBeTruthy()
     expect(screen.getByText("99.9%")).toBeTruthy()
     expect(screen.getByText("old")).toBeTruthy()
     expect(screen.getByText("new")).toBeTruthy()

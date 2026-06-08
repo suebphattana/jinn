@@ -203,32 +203,32 @@ test('loadProjects returns empty array when file does not exist', () => {
 test('saveProjects writes and loadProjects reads back', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jinn-test-'))
   const filePath = path.join(tmpDir, 'projects.json')
-  const projects = [{ id: 'pravko', name: 'Pravko', color: '#3b82f6', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]
+  const projects = [{ id: 'project-a', name: 'Project A', color: '#3b82f6', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]
   saveProjects(projects, filePath)
   const loaded = loadProjects(filePath)
   assert.equal(loaded.length, 1)
-  assert.equal(loaded[0].id, 'pravko')
+  assert.equal(loaded[0].id, 'project-a')
   fs.rmSync(tmpDir, { recursive: true })
 })
 
 test('createProject generates id from name and sets timestamps', () => {
-  const project = createProject({ name: 'Tax Tool', color: '#ef4444' })
-  assert.equal(project.id, 'tax-tool')
-  assert.equal(project.name, 'Tax Tool')
+  const project = createProject({ name: 'Demo Project', color: '#ef4444' })
+  assert.equal(project.id, 'demo-project')
+  assert.equal(project.name, 'Demo Project')
   assert.equal(project.color, '#ef4444')
   assert.ok(project.createdAt)
   assert.ok(project.updatedAt)
 })
 
 test('createProject with custom id preserves it', () => {
-  const project = createProject({ name: 'Tax Tool', color: '#ef4444', id: 'custom-id' })
+  const project = createProject({ name: 'Demo Project', color: '#ef4444', id: 'custom-id' })
   assert.equal(project.id, 'custom-id')
 })
 
 test('updateProject merges fields and updates timestamp', () => {
-  const original = createProject({ name: 'Pravko', color: '#3b82f6' })
-  const updated = updateProject(original, { name: 'Pravko Chat', archived: true })
-  assert.equal(updated.name, 'Pravko Chat')
+  const original = createProject({ name: 'Project A', color: '#3b82f6' })
+  const updated = updateProject(original, { name: 'Project A Pro', archived: true })
+  assert.equal(updated.name, 'Project A Pro')
   assert.equal(updated.color, '#3b82f6')
   assert.equal(updated.archived, true)
   assert.notEqual(updated.updatedAt, original.updatedAt)
@@ -342,9 +342,9 @@ test('loadTasks returns empty array when file does not exist', () => {
 })
 
 test('createTask sets defaults and generates uuid', () => {
-  const task = createTask({ projectId: 'pravko', title: 'Localize to German' })
+  const task = createTask({ projectId: 'project-a', title: 'Localize to German' })
   assert.ok(task.id)
-  assert.equal(task.projectId, 'pravko')
+  assert.equal(task.projectId, 'project-a')
   assert.equal(task.title, 'Localize to German')
   assert.equal(task.status, 'todo')
   assert.equal(task.priority, null)
@@ -468,48 +468,48 @@ import { autoTagSession } from './project-tagger.js'
 
 // Minimal mock types matching the function signature
 const projects = [
-  { id: 'pravko', name: 'Pravko', color: '#000', createdAt: '', updatedAt: '' },
-  { id: 'homy', name: 'Homy', color: '#000', createdAt: '', updatedAt: '' },
+  { id: 'project-a', name: 'Project A', color: '#000', createdAt: '', updatedAt: '' },
+  { id: 'acme', name: 'Acme', color: '#000', createdAt: '', updatedAt: '' },
   { id: 'general', name: 'General', color: '#888', createdAt: '', updatedAt: '' },
 ]
 
 const orgDepts = {
-  'pravko-lead': 'pravko',
-  'pravko-writer': 'pravko',
-  'homy-lead': 'homy',
-  'jimmy-dev': 'platform',
+  'a-lead': 'project-a',
+  'content-lead': 'project-a',
+  'acme-lead': 'acme',
+  'lead-developer': 'platform',
 }
 
 test('manual tags take precedence (step 1)', () => {
-  const session = { projects: ['custom-tag'], employee: 'pravko-lead', title: 'Homy blog', parentSessionId: null }
+  const session = { projects: ['custom-tag'], employee: 'a-lead', title: 'Acme blog', parentSessionId: null }
   const result = autoTagSession(session as any, projects, orgDepts, {})
   assert.deepEqual(result, ['custom-tag'])
 })
 
 test('employee department mapping (step 2)', () => {
-  const session = { projects: [], employee: 'pravko-lead', title: null, parentSessionId: null }
+  const session = { projects: [], employee: 'a-lead', title: null, parentSessionId: null }
   const result = autoTagSession(session as any, projects, orgDepts, {})
-  assert.deepEqual(result, ['pravko'])
+  assert.deepEqual(result, ['project-a'])
 })
 
 test('parent session inheritance (step 3)', () => {
   const session = { projects: [], employee: null, title: null, parentSessionId: 'parent-1' }
-  const sessionProjects = { 'parent-1': ['homy'] }
+  const sessionProjects = { 'parent-1': ['acme'] }
   const result = autoTagSession(session as any, projects, orgDepts, sessionProjects)
-  assert.deepEqual(result, ['homy'])
+  assert.deepEqual(result, ['acme'])
 })
 
 test('child session inheritance when no other match (step 4)', () => {
   const session = { id: 'coo-session', projects: [], employee: null, title: null, parentSessionId: null, childSessionIds: ['child-1', 'child-2'] }
-  const sessionProjects = { 'child-1': ['pravko'], 'child-2': ['pravko', 'homy'] }
+  const sessionProjects = { 'child-1': ['project-a'], 'child-2': ['project-a', 'acme'] }
   const result = autoTagSession(session as any, projects, orgDepts, sessionProjects)
-  assert.deepEqual(result, ['pravko', 'homy'])
+  assert.deepEqual(result, ['project-a', 'acme'])
 })
 
 test('keyword inference from title (step 5)', () => {
-  const session = { projects: [], employee: null, title: 'Fix Pravko blog SEO', parentSessionId: null }
+  const session = { projects: [], employee: null, title: 'Fix Project A blog SEO', parentSessionId: null }
   const result = autoTagSession(session as any, projects, orgDepts, {})
-  assert.deepEqual(result, ['pravko'])
+  assert.deepEqual(result, ['project-a'])
 })
 
 test('falls back to general (step 6)', () => {
@@ -519,9 +519,9 @@ test('falls back to general (step 6)', () => {
 })
 
 test('does not duplicate tags', () => {
-  const session = { projects: [], employee: 'pravko-lead', title: 'Pravko blog', parentSessionId: null }
+  const session = { projects: [], employee: 'a-lead', title: 'Project A blog', parentSessionId: null }
   const result = autoTagSession(session as any, projects, orgDepts, {})
-  assert.deepEqual(result, ['pravko'])
+  assert.deepEqual(result, ['project-a'])
 })
 ```
 
@@ -2374,7 +2374,7 @@ Also pass `sessions` to `GraphView`.
 
 Create a test project via API:
 ```bash
-curl -X POST http://0.0.0.0:7777/api/projects -H 'Content-Type: application/json' -d '{"name":"Pravko","color":"#3b82f6","icon":"⚖️"}'
+curl -X POST http://0.0.0.0:7777/api/projects -H 'Content-Type: application/json' -d '{"name":"Project A","color":"#3b82f6","icon":"⚖️"}'
 ```
 
 Navigate to `/command`. Verify:

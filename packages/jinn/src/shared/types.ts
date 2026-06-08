@@ -232,7 +232,7 @@ export interface OrgNode {
   directReports: string[];
   /** Depth in tree (root = 0, root's reports = 1, etc.) */
   depth: number;
-  /** Path from root to this node (excluding virtual root), e.g. ["pravko-lead", "pravko-writer"] */
+  /** Path from root to this node (excluding virtual root), e.g. ["content-lead", "content-writer"] */
   chain: string[];
 }
 

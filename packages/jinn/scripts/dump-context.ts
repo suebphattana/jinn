@@ -2,7 +2,7 @@
  * Debug helper: dump the exact context Jinn constructs for the COO vs an employee.
  *
  * Run:  npx tsx scripts/dump-context.ts [employeeName]
- * Default employee: asomaniac-dev
+ * Default employee: content-lead
  *
  * Emits 4 files into ~/.jinn/debug-context/:
  *   coo-system-prompt.md        — what Jinn PASSES via --settings appendSystemPrompt (COO/Jimbo)
@@ -18,7 +18,7 @@ import { scanOrg, findEmployee } from "../src/gateway/org.js";
 import { resolveOrgHierarchy } from "../src/gateway/org-hierarchy.js";
 import { JINN_HOME } from "../src/shared/paths.js";
 
-const empName = process.argv[2] || "asomaniac-dev";
+const empName = process.argv[2] || "content-lead";
 const outDir = join(JINN_HOME, "debug-context");
 mkdirSync(outDir, { recursive: true });
 
@@ -34,7 +34,7 @@ if (!employee) {
 const common = {
   source: "slack",
   channel: "C_DEBUG",
-  user: "the operator",
+  user: "alex",
   connectors: ["slack"],
   config,
   sessionId: "DEBUG-SESSION-0000",

@@ -22,25 +22,25 @@ describe('buildNewSessionParams', () => {
   it('includes employee field when an employee is selected', () => {
     const params = buildNewSessionParams({
       message: 'Fix the bug',
-      selectedEmployee: 'jimmy-dev',
+      selectedEmployee: 'lead-developer',
     })
     expect(params).toEqual({
       source: 'web',
       prompt: 'Fix the bug',
-      employee: 'jimmy-dev',
+      employee: 'lead-developer',
     })
   })
 
   it('includes attachments when provided', () => {
     const params = buildNewSessionParams({
       message: 'Check this',
-      selectedEmployee: 'pravko-lead',
+      selectedEmployee: 'content-lead',
       attachmentIds: ['file-1', 'file-2'],
     })
     expect(params).toEqual({
       source: 'web',
       prompt: 'Check this',
-      employee: 'pravko-lead',
+      employee: 'content-lead',
       attachments: ['file-1', 'file-2'],
     })
   })
@@ -81,18 +81,18 @@ describe('buildNewSessionParams', () => {
     })
     expect(initial).not.toHaveProperty('employee')
 
-    // User selects jimmy-dev, then sends
+    // User selects lead-developer, then sends
     const afterSelection = buildNewSessionParams({
       message: 'Hello',
-      selectedEmployee: 'jimmy-dev',
+      selectedEmployee: 'lead-developer',
     })
-    expect(afterSelection.employee).toBe('jimmy-dev')
+    expect(afterSelection.employee).toBe('lead-developer')
 
-    // User switches to pravko-lead, then sends
+    // User switches to content-lead, then sends
     const afterSwitch = buildNewSessionParams({
       message: 'Hello',
-      selectedEmployee: 'pravko-lead',
+      selectedEmployee: 'content-lead',
     })
-    expect(afterSwitch.employee).toBe('pravko-lead')
+    expect(afterSwitch.employee).toBe('content-lead')
   })
 })

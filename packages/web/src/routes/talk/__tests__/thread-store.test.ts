@@ -11,14 +11,14 @@ const f = (threads: TalkThread[], id: string, label: string, ts = 1) =>
 
 describe("deriveLabel", () => {
   it("collapses whitespace and trims", () => {
-    expect(deriveLabel("  pravko   blog  ")).toBe("pravko blog")
+    expect(deriveLabel("  content   blog  ")).toBe("content blog")
   })
   it("falls back for empty input", () => {
     expect(deriveLabel("")).toBe("Thread")
     expect(deriveLabel("   ")).toBe("Thread")
   })
   it("caps long labels with an ellipsis", () => {
-    const out = deriveLabel("research the entire bulgarian tax code end to end")
+    const out = deriveLabel("research the entire quarterly finance report end to end")
     expect(out.length).toBeLessThanOrEqual(32)
     expect(out.endsWith("…")).toBe(true)
   })
@@ -26,12 +26,12 @@ describe("deriveLabel", () => {
 
 describe("threadReducer", () => {
   it("creates a thread on first focus with a stable hue + thinking/orbiting", () => {
-    const ts = f([], "coo1", "pravko-lead", 10)
+    const ts = f([], "coo1", "content-lead", 10)
     expect(ts).toHaveLength(1)
     expect(ts[0]).toMatchObject({
       id: "coo1",
-      label: "pravko-lead",
-      hue: channelHue("pravko-lead"),
+      label: "content-lead",
+      hue: channelHue("content-lead"),
       state: "thinking",
       orbiting: true,
       ts: 10,
@@ -39,17 +39,17 @@ describe("threadReducer", () => {
   })
 
   it("re-focusing the same id reactivates without changing hue/label", () => {
-    let ts = f([], "coo1", "pravko-lead", 10)
+    let ts = f([], "coo1", "content-lead", 10)
     ts = threadReducer(ts, { type: "done", id: "coo1", ts: 20 })
     ts = threadReducer(ts, { type: "park", id: "coo1" })
     expect(ts[0]).toMatchObject({ state: "idle", orbiting: false })
     ts = threadReducer(ts, { type: "focus", id: "coo1", label: "ignored-on-existing", ts: 30 })
     expect(ts).toHaveLength(1)
-    expect(ts[0]).toMatchObject({ state: "thinking", orbiting: true, ts: 30, label: "pravko-lead" })
+    expect(ts[0]).toMatchObject({ state: "thinking", orbiting: true, ts: 30, label: "content-lead" })
   })
 
   it("done marks idle but keeps the thread; park stops orbiting", () => {
-    let ts = f([], "coo1", "homy-lead", 1)
+    let ts = f([], "coo1", "demo-lead", 1)
     ts = threadReducer(ts, { type: "done", id: "coo1", ts: 2 })
     expect(ts[0].state).toBe("idle")
     expect(ts[0].orbiting).toBe(true)
@@ -59,7 +59,7 @@ describe("threadReducer", () => {
   })
 
   it("label renames without touching hue", () => {
-    let ts = f([], "coo1", "pravko-lead", 1)
+    let ts = f([], "coo1", "content-lead", 1)
     const hue = ts[0].hue
     ts = threadReducer(ts, { type: "label", id: "coo1", label: "Tax research" })
     expect(ts[0].label).toBe("Tax research")
@@ -96,7 +96,7 @@ describe("threadReducer", () => {
   })
 
   it("a done+parked thread still exists in the list", () => {
-    let ts = f([], "coo1", "homy-lead", 1)
+    let ts = f([], "coo1", "demo-lead", 1)
     ts = threadReducer(ts, { type: "done", id: "coo1", ts: 2 })
     ts = threadReducer(ts, { type: "park", id: "coo1" })
     expect(ts).toHaveLength(1)

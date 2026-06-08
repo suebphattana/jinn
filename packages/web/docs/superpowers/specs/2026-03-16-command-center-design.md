@@ -34,11 +34,11 @@ A new **Command Center** page (`/command`) with three complementary views - Grap
 
 ```typescript
 interface Project {
-  id: string              // e.g. "pravko", "homy", "tax-tool"
-  name: string            // "Pravko", "Homy", "Tax Declaration Tool"
+  id: string              // e.g. "project-a", "acme", "demo-project"
+  name: string            // "Project A", "Acme", "Demo Project"
   color: string           // hex color for graph node + badges
   icon?: string           // emoji or icon identifier
-  parentId?: string       // optional nesting (e.g. "tax-tool" → parent "pravko")
+  parentId?: string       // optional nesting (e.g. "demo-project" → parent "project-a")
   archived?: boolean      // hidden from views but data preserved
   createdAt: string       // ISO timestamp
   updatedAt: string       // ISO timestamp
@@ -119,7 +119,7 @@ A living, spatial map of the operation. Each project is an interactive node.
 - Special: "General/Inbox" node has dashed border to distinguish from real projects
 
 **Edges:**
-- Connect projects that share sessions (a session tagged both "Pravko" and "Tax Tool" creates an edge)
+- Connect projects that share sessions (a session tagged both "Project A" and "Demo Project" creates an edge)
 - Animated dash when a shared session is running
 - Thickness proportional to number of shared sessions
 - Color inherits from the more active project
@@ -386,7 +386,7 @@ All three views handle these states consistently:
 - Graph nodes are keyboard-focusable (`Tab` to navigate, `Enter` to open slide-over)
 - `Tab`/`1`/`2`/`3` keyboard shortcuts to switch between Graph/Dashboard/Timeline tabs
 - Slide-over traps focus when open, `Escape` to close
-- All status indicators (pulsing, glowing, colored) have `aria-label` descriptions (e.g., "Pravko: 2 errors, 1 running")
+- All status indicators (pulsing, glowing, colored) have `aria-label` descriptions (e.g., "Project A: 2 errors, 1 running")
 - Color is never the only indicator - status dots include shape differentiation (circle = running, triangle = error, diamond = attention)
 
 ## Out of Scope

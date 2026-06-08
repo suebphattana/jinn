@@ -20,7 +20,7 @@ export type AudioLevel = number
 
 export interface CardBase {
   id: string
-  /** Small mono eyebrow label, e.g. "TASK · PRAVKO BLOG PIPELINE". */
+  /** Small mono eyebrow label, e.g. "TASK · CONTENT PIPELINE". */
   title?: string
   /** Optional right-aligned status word in the header, e.g. "RUNNING". */
   badge?: string
@@ -179,7 +179,7 @@ export interface AgentActivity {
 export interface TrackerTask {
   id: string
   title: string
-  /** Who owns it, e.g. "pravko-lead". */
+  /** Who owns it, e.g. "content-lead". */
   owner: string
   status: JobStatus
   /** 0..1 */

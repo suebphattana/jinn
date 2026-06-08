@@ -49,7 +49,7 @@
     },
     {
       "i": 3,
-      "say": "Ask the team to quickly confirm whether the Pravko blog cron jobs are enabled. Read-only, one line back, do not change or send anything.",
+      "say": "Ask the team to quickly confirm whether the Project A blog cron jobs are enabled. Read-only, one line back, do not change or send anything.",
       "expect": "delegate",
       "reply": "Checking cron status now.",
       "score": {
@@ -70,7 +70,7 @@
           "turns": 0
         }
       },
-      "relay": "All enabled—every Pravko blog phase and both analytics jobs are running on schedule.",
+      "relay": "All enabled—every Project A blog phase and both analytics jobs are running on schedule.",
       "relayScore": {
         "words": 13,
         "flags": [],
@@ -130,7 +130,7 @@
           "turns": 0
         }
       },
-      "relay": "Pravko.",
+      "relay": "Project A.",
       "relayScore": {
         "words": 1,
         "flags": [],
@@ -141,7 +141,7 @@
       "i": 6,
       "say": "So overall, anything I should worry about today?",
       "expect": "direct",
-      "reply": "Nope—org's clean, crons firing on schedule, no blockers. Just that Pravko's your focus.",
+      "reply": "Nope—org's clean, crons firing on schedule, no blockers. Just that Project A's your focus.",
       "score": {
         "words": 13,
         "flags": [],

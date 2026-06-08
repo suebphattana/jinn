@@ -7,7 +7,7 @@ import { isFilePath } from '../chat-messages'
 // segment, ending in a short extension.
 describe('isFilePath', () => {
   const shouldLink = [
-    'docs/superpowers/specs/2026-05-31-movekit-support-design.md',
+    'docs/superpowers/specs/2026-05-31-support-design.md',
     '~/Projects/jinn/packages/web/src/main.tsx',
     '/etc/hosts.conf',
     'skills/foo/SKILL.md',

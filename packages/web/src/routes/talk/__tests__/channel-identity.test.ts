@@ -7,14 +7,14 @@
 import { describe, it, expect } from "vitest"
 import { channelHue, channelIdentity } from "../channel-identity"
 
-const KEYS = ["pravko-lead", "homy-lead", "movekit-lead", "sqlnoir-lead", "ventures-lead"]
+const KEYS = ["content-lead", "demo-lead", "studio-lead", "acme-lead", "ventures-lead"]
 
 describe("channel-identity", () => {
   it("is deterministic for a given key", () => {
     for (const k of KEYS) {
       expect(channelHue(k)).toBe(channelHue(k))
     }
-    expect(channelIdentity("pravko-lead").hue).toBe(channelIdentity("pravko-lead").hue)
+    expect(channelIdentity("content-lead").hue).toBe(channelIdentity("content-lead").hue)
   })
 
   it("keeps every hue in the non-amber arc [90, 350)", () => {

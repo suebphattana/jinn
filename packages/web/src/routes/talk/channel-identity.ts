@@ -3,7 +3,7 @@
  *
  * Every COO child the orchestrator patches to is a "channel". Each channel gets
  * a stable colour signature derived deterministically from a key (the child's
- * label when known — e.g. "pravko-lead" — else its session id), so the same COO
+ * label when known — e.g. "content-lead" — else its session id), so the same COO
  * always wears the same hue: the main orb borrows it while patched, and the
  * satellite orb is painted with it.
  *

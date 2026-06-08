@@ -13,21 +13,21 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: 'light', label: 'Light' },
 ]
 
-const E = { jimbo: '\u{1F3A9}', dev: '\u{1F9D1}‍\u{1F4BB}', pravko: '⚖️', movekit: '\u{1F4E6}', cos: '\u{1F4CB}', reddit: '\u{1F47D}' }
+const E = { jimbo: '\u{1F3A9}', dev: '\u{1F9D1}‍\u{1F4BB}', projA: '⚖️', projB: '\u{1F4E6}', cos: '\u{1F4CB}', scout: '\u{1F47D}' }
 const SAMPLE = {
-  user1: 'What’s the status on the MoveKit billing fix?',
-  reply: 'The AVS / billing-address fix shipped to all MoveKit Checkout Sessions — `billing_address_collection: "required"`. Conversion held flat through the first 48 hours, so no regression. I’ve queued the 30-day review for June 17. Want me to wire a PostHog funnel alert in the meantime?',
+  user1: 'What’s the status on the Project B billing fix?',
+  reply: 'The AVS / billing-address fix shipped to all Project B Checkout Sessions — `billing_address_collection: "required"`. Conversion held flat through the first 48 hours, so no regression. I’ve queued the 30-day review for June 17. Want me to wire a PostHog funnel alert in the meantime?',
 }
 const EMPLOYEES = [
   { id: 'jimbo', emoji: E.jimbo, name: 'Jimbo', state: 'idle', unread: 0 },
-  { id: 'jinn-dev', emoji: E.dev, name: 'Jinn Dev', state: 'working', unread: 0 },
-  { id: 'movekit', emoji: E.movekit, name: 'MoveKit Support', state: 'working', unread: 2 },
-  { id: 'pravko', emoji: E.pravko, name: 'Pravko Lead', state: 'idle', unread: 0 },
+  { id: 'lead-developer', emoji: E.dev, name: 'Lead Developer', state: 'working', unread: 0 },
+  { id: 'projB', emoji: E.projB, name: 'Project B Support', state: 'working', unread: 2 },
+  { id: 'projA', emoji: E.projA, name: 'Project A Lead', state: 'idle', unread: 0 },
   { id: 'cos', emoji: E.cos, name: 'Chief of Staff', state: 'idle', unread: 1 },
-  { id: 'reddit', emoji: E.reddit, name: 'Reddit Scout', state: 'idle', unread: 0 },
+  { id: 'scout', emoji: E.scout, name: 'Growth Scout', state: 'idle', unread: 0 },
 ]
 const DEV_CHATS = [
-  { title: 'MoveKit billing fix', snippet: 'queued the 30-day review…', state: 'working' },
+  { title: 'Project B billing fix', snippet: 'queued the 30-day review…', state: 'working' },
   { title: 'Gateway WS reconnect', snippet: 'patched the boot-guard', state: 'idle' },
   { title: 'Redesign showcase', snippet: 'ledger dock, light + dark', state: 'idle' },
 ]
@@ -51,7 +51,7 @@ function DockShell({ theme, palette }: { theme: Theme; palette: boolean }) {
       </aside>
 
       <aside className="dk-chats">
-        <div className="dk-chats-head"><span className="dk-emp">{E.dev} Jinn Dev</span><span className="dk-emp-state">working</span></div>
+        <div className="dk-chats-head"><span className="dk-emp">{E.dev} Lead Developer</span><span className="dk-emp-state">working</span></div>
         <button className="dk-search">Search agents & chats <kbd>⌘K</kbd></button>
         {DEV_CHATS.map((c, i) => (
           <div key={c.title} className={`dk-chat ${i === 0 ? 'is-active' : ''}`}>
@@ -70,7 +70,7 @@ function DockShell({ theme, palette }: { theme: Theme; palette: boolean }) {
           <div className="dk-turn">
             <div className="dk-av">{E.dev}</div>
             <div className="dk-msg">
-              <div className="dk-byline">JINN-DEV</div>
+              <div className="dk-byline">LEAD-DEVELOPER</div>
               <p dangerouslySetInnerHTML={{ __html: mdLite(SAMPLE.reply) }} />
               <div className="dk-tool">▪ ran 4 tools · 1.8s</div>
             </div>
@@ -86,12 +86,12 @@ function DockShell({ theme, palette }: { theme: Theme; palette: boolean }) {
       {palette && (
         <div className="dk-overlay">
           <div className="dk-palette">
-            <div className="dk-pal-input"><span>move</span><span className="dk-caret" /></div>
+            <div className="dk-pal-input"><span>proj</span><span className="dk-caret" /></div>
             <div className="dk-pal-group">EMPLOYEES</div>
-            <div className="dk-pal-row is-sel">{E.movekit} <b>MoveKit Support</b><span className="dk-pal-mut">2 unread · working</span><kbd>↵</kbd></div>
+            <div className="dk-pal-row is-sel">{E.projB} <b>Project B Support</b><span className="dk-pal-mut">2 unread · working</span><kbd>↵</kbd></div>
             <div className="dk-pal-group">CHATS</div>
-            <div className="dk-pal-row">{E.dev} MoveKit billing fix <span className="dk-pal-mut">Jinn Dev · working</span></div>
-            <div className="dk-pal-row">{E.movekit} Refund — Pedro M. <span className="dk-pal-mut">MoveKit · awaiting ✅</span></div>
+            <div className="dk-pal-row">{E.dev} Project B billing fix <span className="dk-pal-mut">Lead Developer · working</span></div>
+            <div className="dk-pal-row">{E.projB} Refund — Sample Customer <span className="dk-pal-mut">Project B · awaiting ✅</span></div>
             <div className="dk-pal-foot"><span>↑↓ navigate</span><span>↵ open</span><span>⌘↵ open in split</span><span>esc</span></div>
           </div>
         </div>

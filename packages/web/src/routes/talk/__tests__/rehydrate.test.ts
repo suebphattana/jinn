@@ -49,13 +49,13 @@ describe("messagesToEntries", () => {
 describe("childrenToThreads", () => {
   it("rebuilds parked idle threads with stable hue", () => {
     const threads = childrenToThreads([
-      { id: "c1", title: "pravko-lead", createdAt: "2026-06-07T10:00:00Z" },
+      { id: "c1", title: "content-lead", createdAt: "2026-06-07T10:00:00Z" },
     ])
     expect(threads).toEqual([
       {
         id: "c1",
-        label: "pravko-lead",
-        hue: channelHue("pravko-lead"),
+        label: "content-lead",
+        hue: channelHue("content-lead"),
         state: "idle",
         orbiting: false,
         ts: Date.parse("2026-06-07T10:00:00Z"),

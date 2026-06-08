@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import * as pty from "node-pty";
 import type { InterruptibleEngine, EngineRunOpts, EngineResult, EngineRateLimitInfo, StreamDelta } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
@@ -83,6 +85,52 @@ function lastTurnContextTokens(transcriptPath: string): number | undefined {
     last = Number(u.input_tokens ?? 0) + Number(u.cache_read_input_tokens ?? 0) + Number(u.cache_creation_input_tokens ?? 0);
   }
   return last && last > 0 ? last : undefined;
+}
+
+/** Claude Code stores per-project transcripts at
+ *  ~/.claude/projects/<cwd-slug>/<claudeSessionId>.jsonl, where the slug is the
+ *  cwd with every "/" and "." replaced by "-". Derive that path; fall back to a
+ *  scan across project dirs if the slug heuristic misses (defensive). Exported
+ *  for the transcript-recovery unit test. */
+export function findTranscriptForSession(
+  claudeSessionId: string,
+  homeDir: string = JINN_HOME,
+  projectsDir: string = path.join(os.homedir(), ".claude", "projects"),
+): string | undefined {
+  if (!claudeSessionId) return undefined;
+  const slug = homeDir.replace(/[/.]/g, "-");
+  const direct = path.join(projectsDir, slug, `${claudeSessionId}.jsonl`);
+  if (fs.existsSync(direct)) return direct;
+  try {
+    for (const d of fs.readdirSync(projectsDir)) {
+      const p = path.join(projectsDir, d, `${claudeSessionId}.jsonl`);
+      if (fs.existsSync(p)) return p;
+    }
+  } catch { /* projects dir missing — nothing to recover */ }
+  return undefined;
+}
+
+/** Last assistant text block from a Claude transcript — the turn's final
+ *  message. Used to recover result text when the Stop hook (which normally
+ *  carries last_assistant_message) was lost (gateway restart deleting
+ *  gateway.json mid-turn, PTY crash, or SSE drop), so the parent-session
+ *  callback shows real output instead of "(no output)". Exported for tests. */
+export function lastAssistantTextFromTranscript(transcriptPath: string): string | undefined {
+  let raw: string;
+  try { raw = fs.readFileSync(transcriptPath, "utf-8"); } catch { return undefined; }
+  let last: string | undefined;
+  for (const line of raw.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    let msg: any;
+    try { msg = JSON.parse(t); } catch { continue; }
+    if (msg.type !== "assistant") continue;
+    const content = msg?.message?.content;
+    if (!Array.isArray(content)) continue;
+    const text = content.filter((b: any) => b?.type === "text").map((b: any) => String(b.text ?? "")).join("");
+    if (text.trim()) last = text;
+  }
+  return last;
 }
 
 function computeInteractiveCost(transcriptPath: string, model?: string): { cost: number; turns: number } | null {
@@ -422,6 +470,22 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       // headless claude.ts so interactive/CLI-view turns also populate the meter.
       const ctx = lastTurnContextTokens(transcriptPath);
       if (ctx) result.contextTokens = ctx;
+    }
+    // Recover lost result text: if the turn settled with no text and no API-level
+    // failure, the Stop hook (which carries last_assistant_message) was dropped —
+    // a gateway restart deleted gateway.json mid-turn so hook-relay.mjs couldn't
+    // POST it, or the PTY died / SSE proxy dropped before it landed. The real final
+    // message is still on disk in the transcript; backfill it so the parent-session
+    // callback shows real output instead of "(no output)". stopFailure turns are a
+    // genuine no-output API error — leave those alone.
+    if (!result.result?.trim() && !resolver.stopFailure) {
+      const sid = resolver.sessionId ?? opts.resumeSessionId ?? result.sessionId;
+      const recoveryPath = sid ? findTranscriptForSession(sid) : undefined;
+      const recovered = recoveryPath ? lastAssistantTextFromTranscript(recoveryPath) : undefined;
+      if (recovered) {
+        logger.info(`Recovered ${recovered.length} chars of lost turn text for session ${jinnSessionId} from transcript (Stop hook missing)`);
+        result.result = recovered;
+      }
     }
     // Map a StopFailure rate-limit into result.rateLimit so manager.ts's
     // wait/retry/fallback machinery engages exactly as it does for `claude -p`.

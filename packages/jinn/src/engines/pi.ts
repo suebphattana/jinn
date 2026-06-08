@@ -6,6 +6,7 @@ import type { InterruptibleEngine, EngineRunOpts, EngineResult } from "../shared
 import { logger } from "../shared/logger.js";
 import { resolveBin } from "../shared/resolve-bin.js";
 import { JINN_HOME } from "../shared/paths.js";
+import { buildSpawnOptions } from "./spawn-opts.js";
 
 interface LiveProcess {
   proc: ChildProcess;
@@ -136,12 +137,7 @@ export class PiEngine implements InterruptibleEngine {
     const cleanEnv = this.buildCleanEnv();
 
     return new Promise((resolve, reject) => {
-      const proc = spawn(bin, args, {
-        cwd: opts.cwd,
-        env: cleanEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-      });
+      const proc = spawn(bin, args, buildSpawnOptions(opts.cwd, cleanEnv, process.platform));
 
       const rl = readline.createInterface({ input: proc.stdout, terminal: false });
 

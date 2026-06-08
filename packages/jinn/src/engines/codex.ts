@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { InterruptibleEngine, EngineRunOpts, EngineResult, StreamDelta } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
+import { buildSpawnOptions } from "./spawn-opts.js";
 
 interface LiveProcess {
   proc: ChildProcess;
@@ -73,12 +74,7 @@ export class CodexEngine implements InterruptibleEngine {
     const cleanEnv = this.buildCleanEnv();
 
     return new Promise((resolve, reject) => {
-      const proc = spawn(bin, args, {
-        cwd: opts.cwd,
-        env: cleanEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-      });
+      const proc = spawn(bin, args, buildSpawnOptions(opts.cwd, cleanEnv, process.platform));
 
       const sessionId = opts.sessionId || `codex-${Date.now()}`;
       this.liveProcesses.set(sessionId, {

@@ -156,6 +156,21 @@ export function migrateMessagesSchema(database: Database.Database): void {
   if (!colNames.has('media')) {
     database.exec('ALTER TABLE messages ADD COLUMN media TEXT');
   }
+  // Mid-turn streaming: `partial=1` rows are the live blocks (text segments + tool
+  // calls) persisted DURING a turn so a refresh restores in-progress output. They
+  // are deleted at turn end and replaced by the single consolidated final message
+  // (same end-state as before). `seq` orders blocks within a turn (timestamp ms
+  // collides across blocks); `tool_call` carries the tool name so a reloaded tool
+  // block renders as a tool card, matching the live stream. All additive/nullable.
+  if (!colNames.has('partial')) {
+    database.exec('ALTER TABLE messages ADD COLUMN partial INTEGER');
+  }
+  if (!colNames.has('seq')) {
+    database.exec('ALTER TABLE messages ADD COLUMN seq INTEGER');
+  }
+  if (!colNames.has('tool_call')) {
+    database.exec('ALTER TABLE messages ADD COLUMN tool_call TEXT');
+  }
 }
 
 export function migrateSessionsSchema(database: Database.Database): void {
@@ -617,6 +632,10 @@ export interface SessionMessage {
   timestamp: number;
   /** Parsed from the `media` JSON column; undefined when the message has no attachments. */
   media?: MessageMedia[];
+  /** True for a live mid-turn block (deleted + replaced by the final message at turn end). */
+  partial?: boolean;
+  /** Tool name when this block is a tool call — lets a reloaded block render as a tool card. */
+  toolCall?: string;
 }
 
 function parseMediaColumn(value: unknown): MessageMedia[] | undefined {
@@ -642,14 +661,48 @@ export function insertMessage(sessionId: string, role: string, content: string, 
 export function getMessages(sessionId: string): SessionMessage[] {
   const db = initDb();
   const rows = db
-    .prepare('SELECT id, role, content, timestamp, media FROM messages WHERE session_id = ? ORDER BY timestamp ASC')
-    .all(sessionId) as Array<{ id: string; role: string; content: string; timestamp: number; media: string | null }>;
+    .prepare('SELECT id, role, content, timestamp, media, partial, seq, tool_call FROM messages WHERE session_id = ? ORDER BY timestamp ASC, seq ASC')
+    .all(sessionId) as Array<{ id: string; role: string; content: string; timestamp: number; media: string | null; partial: number | null; seq: number | null; tool_call: string | null }>;
   return rows.map((r) => {
     const msg: SessionMessage = { id: r.id, role: r.role, content: r.content, timestamp: r.timestamp };
     const media = parseMediaColumn(r.media);
     if (media) msg.media = media;
+    if (r.partial) msg.partial = true;
+    if (r.tool_call) msg.toolCall = r.tool_call;
     return msg;
   });
+}
+
+/**
+ * Insert a live mid-turn block (`partial=1`). `seq` orders blocks within the turn;
+ * `toolCall` is set when the block is a tool call (renders as a tool card on reload).
+ * These rows are wiped by `deletePartialMessages` at turn end.
+ */
+export function insertPartialMessage(sessionId: string, role: string, content: string, seq: number, toolCall?: string): string {
+  const db = initDb();
+  const id = uuidv4();
+  db.prepare('INSERT INTO messages (id, session_id, role, content, timestamp, partial, seq, tool_call) VALUES (?, ?, ?, ?, ?, 1, ?, ?)').run(
+    id, sessionId, role, content, Date.now(), seq, toolCall ?? null,
+  );
+  return id;
+}
+
+/** Grow the current partial text block in place (debounced text streaming). */
+export function updatePartialMessage(id: string, content: string): void {
+  const db = initDb();
+  db.prepare('UPDATE messages SET content = ? WHERE id = ? AND partial = 1').run(content, id);
+}
+
+/** Delete all live partial blocks for a session (called at turn end before the final insert). */
+export function deletePartialMessages(sessionId: string): number {
+  const db = initDb();
+  return db.prepare('DELETE FROM messages WHERE session_id = ? AND partial = 1').run(sessionId).changes;
+}
+
+/** Boot sweep: drop any partial blocks stranded by a mid-turn gateway restart. */
+export function clearAllPartialMessages(): number {
+  const db = initDb();
+  return db.prepare('DELETE FROM messages WHERE partial = 1').run().changes;
 }
 
 export interface QueueItem {

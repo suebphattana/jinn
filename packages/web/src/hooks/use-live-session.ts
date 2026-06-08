@@ -23,8 +23,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import type { Message, MediaAttachment } from '@/lib/conversations'
 import {
-  saveIntermediateMessages,
-  loadIntermediateMessages,
   clearIntermediateMessages,
   reconcileMessages,
 } from '@/lib/conversations'
@@ -131,17 +129,6 @@ export function useLiveSession(
 
   useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
 
-  // Helper: persist intermediate messages to localStorage (editable pane only).
-  const persistIntermediate = useCallback((msgs: Message[], sid: string | null) => {
-    if (readOnlyRef.current) return
-    if (!sid) return
-    const start = intermediateStartRef.current
-    if (start < 0) return
-    const intermediate = msgs.slice(start)
-    if (intermediate.length > 0) {
-      saveIntermediateMessages(sid, intermediate)
-    }
-  }, [])
 
   // Listen for session events via subscribe
   useEffect(() => {
@@ -183,7 +170,6 @@ export function useLiveSession(
                   timestamp: Date.now(),
                 },
               ]
-              persistIntermediate(updated, sid)
               return updated
             })
           }
@@ -200,7 +186,6 @@ export function useLiveSession(
                 toolCall: toolName,
               },
             ]
-            persistIntermediate(updated, sid)
             return updated
           })
         } else if (deltaType === 'tool_result') {
@@ -210,7 +195,6 @@ export function useLiveSession(
             if (last && last.role === 'assistant' && last.toolCall) {
               updated[updated.length - 1] = { ...last, content: `Used ${last.toolCall}` }
             }
-            persistIntermediate(updated, sid)
             return updated
           })
         } else if (deltaType === 'context') {
@@ -324,7 +308,7 @@ export function useLiveSession(
         onRefreshRef.current?.()
       }
     })
-  }, [subscribe, persistIntermediate])
+  }, [subscribe])
 
   // Load session data
   const loadSession = useCallback(async (id: string) => {
@@ -354,6 +338,9 @@ export function useLiveSession(
             role: (m.role as 'user' | 'assistant' | 'notification') || 'assistant',
             content: String(m.content || m.text || ''),
             timestamp: m.timestamp ? Number(m.timestamp) : Date.now(),
+            // A persisted mid-turn tool block carries its tool name so it renders as
+            // a tool card on reload, matching the live stream.
+            ...(typeof m.toolCall === 'string' && m.toolCall ? { toolCall: m.toolCall } : {}),
             ...(Array.isArray(m.media) && m.media.length > 0
               ? { media: m.media as MediaAttachment[] }
               : {}),
@@ -394,24 +381,20 @@ export function useLiveSession(
       }
 
       if (isRunning) {
-        const cached = readOnlyRef.current ? [] : loadIntermediateMessages(id)
-        if (cached.length > 0) {
-          intermediateStartRef.current = backendMessages.length
-          // Reconcile so a live-pushed attachment not yet in the snapshot survives.
-          setMessages((current) => reconcileMessages(current, [...backendMessages, ...cached]))
-        } else {
-          intermediateStartRef.current = backendMessages.length
-          setMessages((current) => {
-            // If backend has FEWER messages than local, the backend snapshot is stale —
-            // local already contains streaming-completed messages not yet persisted (or
-            // a stale-snapshot race during slow GET). Keep current.
-            if (backendMessages.length < current.length) {
-              return current
-            }
-            const next = backendMessages.length > 0 ? backendMessages : current
-            return reconcileMessages(current, next)
-          })
-        }
+        // The server now persists mid-turn partial blocks, so the backend snapshot
+        // already carries in-progress output — no localStorage replay needed. This is
+        // what makes a mid-turn refresh restore the streamed blocks on any device.
+        intermediateStartRef.current = backendMessages.length
+        setMessages((current) => {
+          // If backend has FEWER messages than local, the backend snapshot is stale —
+          // local already contains newer live blocks the server hasn't flushed yet (or
+          // a stale-snapshot race during slow GET). Keep current.
+          if (backendMessages.length < current.length) {
+            return current
+          }
+          const next = backendMessages.length > 0 ? backendMessages : current
+          return reconcileMessages(current, next)
+        })
         // Loading state is owned by handleSend (sets true) + WS session:completed/stopped (sets false).
         // loadSession must NEVER set loading=true — a stale GET arriving after completion would
         // re-arm the spinner and stick (the WS completion event has already passed).

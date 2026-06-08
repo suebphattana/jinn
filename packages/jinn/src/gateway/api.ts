@@ -25,6 +25,9 @@ import {
   deleteSessions,
   duplicateSession,
   insertMessage,
+  insertPartialMessage,
+  updatePartialMessage,
+  deletePartialMessages,
   getMessages,
   enqueueQueueItem,
   cancelQueueItem,
@@ -2119,6 +2122,44 @@ async function runWebSession(
       });
     }, 5000);
 
+    // Mid-turn persistence: mirror the live stream into `partial` DB rows so a
+    // refresh restores in-progress blocks. Coalesced — text grows ONE row
+    // (debounced, never per-token, so SQLite isn't hammered); each tool call is
+    // its own row. All wiped + replaced by the single final message at turn end
+    // (deletePartialMessages below). Only the primary engine stream is mirrored;
+    // the rate-limit fallback stream stays WS-only (rare path).
+    let partialSeq = 0;
+    let curTextId: string | null = null; // the growing text-block row, null between blocks
+    let curText = "";
+    let lastToolId: string | null = null; // last tool row, for the tool_result → "Used" update
+    let partialFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushPartialText = () => {
+      partialFlushTimer = null;
+      if (!curText.trim()) return;
+      if (curTextId) updatePartialMessage(curTextId, curText);
+      else curTextId = insertPartialMessage(currentSession.id, "assistant", curText, partialSeq++);
+    };
+    const persistPartialDelta = (delta: StreamDelta) => {
+      if (delta.type === "text" || delta.type === "text_snapshot") {
+        if (typeof delta.content !== "string") return;
+        if (delta.type === "text_snapshot") {
+          if (delta.content.length > curText.length) curText = delta.content;
+        } else {
+          curText += delta.content;
+        }
+        if (!partialFlushTimer) partialFlushTimer = setTimeout(flushPartialText, 600);
+      } else if (delta.type === "tool_use") {
+        flushPartialText(); // finalize the text block before the tool
+        if (partialFlushTimer) { clearTimeout(partialFlushTimer); partialFlushTimer = null; }
+        const tool = delta.toolName || String(delta.content ?? "");
+        lastToolId = insertPartialMessage(currentSession.id, "assistant", `Using ${tool}`, partialSeq++, tool);
+        curTextId = null; curText = ""; // a fresh text block begins after the tool
+      } else if (delta.type === "tool_result") {
+        const tool = delta.toolName || String(delta.content ?? "");
+        if (lastToolId) updatePartialMessage(lastToolId, `Used ${tool}`);
+      }
+    };
+
     const syncSinceIso = (currentSession.transportMeta as any)?.claudeSyncSince;
     const syncSinceMs = typeof syncSinceIso === "string" ? new Date(syncSinceIso).getTime() : NaN;
     const syncRequested = currentSession.engine === "claude" && typeof syncSinceIso === "string" && Number.isFinite(syncSinceMs);
@@ -2179,6 +2220,13 @@ async function runWebSession(
         } catch (err) {
           logger.warn(`Failed to emit stream delta for session ${currentSession.id}: ${err instanceof Error ? err.message : err}`);
         }
+        // Mirror the block into a persisted partial row (refresh survival). Guarded
+        // so a DB hiccup never breaks the live stream above.
+        try {
+          persistPartialDelta(delta);
+        } catch (err) {
+          logger.warn(`Failed to persist partial block for session ${currentSession.id}: ${err instanceof Error ? err.message : err}`);
+        }
         // Voice mode: accumulate the orchestrator's spoken text so the whole
         // turn can be synthesized in one Kokoro call at completion (see flush
         // below). Only `text` deltas are spoken; tool_use/context are not.
@@ -2188,12 +2236,20 @@ async function runWebSession(
       },
     }).finally(() => {
       clearInterval(runHeartbeat);
+      // Stop any pending debounced text flush so it can't re-insert a partial row
+      // after the turn-end cleanup below deletes them.
+      if (partialFlushTimer) { clearTimeout(partialFlushTimer); partialFlushTimer = null; }
     });
 
     if (!getSession(currentSession.id)) {
       logger.info(`Skipping completion for deleted web session ${currentSession.id}`);
       return;
     }
+
+    // Turn settled — the live partial blocks are now superseded by the single
+    // consolidated message persisted below (success / rate-limit fallback / retry).
+    // Wipe them so the post-turn reload shows exactly the final message, as before.
+    deletePartialMessages(currentSession.id);
 
     const wasInterrupted = result.error?.startsWith("Interrupted");
     const rateLimit = !wasInterrupted ? detectRateLimit(result) : { limited: false as const };
@@ -2408,6 +2464,8 @@ async function runWebSession(
       logger.info(`Skipping error handling for deleted web session ${currentSession.id}: ${errMsg}`);
       return;
     }
+    // The run threw — drop any orphaned mid-turn partial blocks.
+    deletePartialMessages(currentSession.id);
     const erroredSession = updateSession(currentSession.id, {
       status: "error",
       lastActivity: new Date().toISOString(),

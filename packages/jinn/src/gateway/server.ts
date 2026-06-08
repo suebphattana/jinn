@@ -10,7 +10,7 @@ import type { JinnConfig, Connector, Employee, Engine } from "../shared/types.js
 import { loadConfig, normalizeClaudeEngineConfig } from "../shared/config.js";
 import { invalidateModelRegistry, refreshPiModels } from "../shared/models.js";
 import { configureLogger, logger } from "../shared/logger.js";
-import { initDb, recoverStaleSessions, recoverStaleQueueItems, getInterruptedSessions, listSessions, updateSession, getSession } from "../sessions/registry.js";
+import { initDb, recoverStaleSessions, recoverStaleQueueItems, clearAllPartialMessages, getInterruptedSessions, listSessions, updateSession, getSession } from "../sessions/registry.js";
 import { SessionManager, type RouteOptions } from "../sessions/manager.js";
 import { InteractiveClaudeEngine } from "../engines/claude-interactive.js";
 import { PtyLifecycleManager } from "../engines/pty-lifecycle.js";
@@ -152,6 +152,12 @@ export async function startGateway(
   const recoveredQueue = recoverStaleQueueItems();
   if (recoveredQueue > 0) {
     logger.info(`Recovered ${recoveredQueue} in-flight queue item(s) from previous run — reset to pending`);
+  }
+  // Drop any mid-turn streaming blocks stranded by a restart — their turn's final
+  // message was never written, so the partials have nothing to consolidate into.
+  const sweptPartials = clearAllPartialMessages();
+  if (sweptPartials > 0) {
+    logger.info(`Swept ${sweptPartials} stranded mid-turn partial message(s) from previous run`);
   }
 
   // Resolve gateway port/host early so boot artifacts (gateway.json) can record it.

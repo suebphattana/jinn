@@ -413,7 +413,6 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
   // optional override the installer prefers if present (none ships by default).
   const templateConfig = path.join(TEMPLATE_DIR, "config.yaml");
   const templateClaude = path.join(TEMPLATE_DIR, "CLAUDE.md");
-  const templateAgents = path.join(TEMPLATE_DIR, "AGENTS.md");
 
   if (!fs.existsSync(CONFIG_PATH)) {
     let source = fs.existsSync(templateConfig)
@@ -467,12 +466,10 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
       fs.symlinkSync("CLAUDE.md", agentsMdPath); // relative target → portable within ~/.jinn
     } catch {
       // Symlinks unavailable: copy the CANONICAL manual (CLAUDE.md) so the
-      // fallback still matches, never the stale template AGENTS.md.
-      let source = fs.existsSync(claudeMdPath)
+      // fallback always matches what claude reads.
+      const source = fs.existsSync(claudeMdPath)
         ? fs.readFileSync(claudeMdPath, "utf-8")
-        : fs.existsSync(templateAgents)
-          ? applyTemplateReplacements(fs.readFileSync(templateAgents, "utf-8"), templateReplacements)
-          : defaultAgentsMd(portalName);
+        : defaultAgentsMd(portalName);
       ensureFile(agentsMdPath, source);
     }
     created.push(agentsMdPath);

@@ -60,11 +60,11 @@ New optional fields:
 
 Example:
 ```yaml
-name: jimmy-dev
-displayName: Jimmy Dev
+name: backend-dev
+displayName: Backend Dev
 rank: senior
 department: platform
-reportsTo: jimbo
+reportsTo: {{portalSlug}}
 provides:
   - name: code-review
     description: "Review PRs and provide feedback"

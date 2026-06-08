@@ -78,6 +78,8 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
   const [localName, setLocalName] = useState("")
   const [localOperator, setLocalOperator] = useState("")
   const [localLanguage, setLocalLanguage] = useState(settings.language ?? "English")
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const TOTAL_STEPS = 4
 
@@ -108,7 +110,7 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
     })
   }, [forceOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleNext = useCallback(() => {
+  const handleNext = useCallback(async () => {
     // Commit name/operator/language on step 0
     if (step === 0) {
       setPortalName(localName || null)
@@ -120,20 +122,29 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
       setDirection("forward")
       setStep(step + 1)
     } else {
-      // Complete — persist to backend config
-      api.completeOnboarding({
-        portalName: localName || undefined,
-        operatorName: localOperator || undefined,
-        language: localLanguage || undefined,
-      }).catch(() => {
-        // Best-effort: localStorage still has the values
-      })
-      if (!forceOpen) {
-        localStorage.setItem("jinn-onboarded", "true")
+      // Complete — persist to backend, then close ONLY on a confirmed save.
+      // Setting the localStorage flag before the POST succeeds would hide the
+      // wizard while the server still thinks onboarding is pending (it would
+      // reappear on another device, and the name/language would be lost).
+      setSubmitting(true)
+      setSubmitError(null)
+      try {
+        await api.completeOnboarding({
+          portalName: localName || undefined,
+          operatorName: localOperator || undefined,
+          language: localLanguage || undefined,
+        })
+        if (!forceOpen) {
+          localStorage.setItem("jinn-onboarded", "true")
+        }
+        setVisible(false)
+        onClose?.()
+        navigate("/")
+      } catch {
+        setSubmitError("Couldn't save your setup — check that the gateway is running, then try again.")
+      } finally {
+        setSubmitting(false)
       }
-      setVisible(false)
-      onClose?.()
-      navigate("/")
     }
   }, [
     step,
@@ -150,6 +161,7 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
     if (step > 0) {
       setDirection("back")
       setStep(step - 1)
+      setSubmitError(null)
     }
   }, [step])
 
@@ -387,6 +399,15 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
           )}
         </div>
 
+        {submitError ? (
+          <p
+            role="alert"
+            className="px-[var(--space-5)] pt-[var(--space-2)] text-[length:var(--text-footnote)] text-[#e5484d]"
+          >
+            {submitError}
+          </p>
+        ) : null}
+
         {/* Navigation buttons */}
         <div className="flex justify-between items-center px-[var(--space-5)] pb-[var(--space-5)] pt-[var(--space-3)] gap-[var(--space-3)]">
           {step > 0 ? (
@@ -402,12 +423,13 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
           )}
           <button
             onClick={handleNext}
-            className="px-[var(--space-6)] py-[var(--space-2)] rounded-[var(--radius-md)] bg-[var(--accent)] text-[var(--accent-contrast)] border-none cursor-pointer text-[length:var(--text-subheadline)] font-[var(--weight-semibold)] transition-all duration-150 inline-flex items-center gap-1.5"
+            disabled={submitting}
+            className="px-[var(--space-6)] py-[var(--space-2)] rounded-[var(--radius-md)] bg-[var(--accent)] text-[var(--accent-contrast)] border-none cursor-pointer text-[length:var(--text-subheadline)] font-[var(--weight-semibold)] transition-all duration-150 inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {step === 0
               ? "Next"
               : step === TOTAL_STEPS - 1
-                ? "Get Started"
+                ? (submitting ? "Saving…" : "Get Started")
                 : "Next"}
             {step === TOTAL_STEPS - 1 ? (
               <Rocket size={16} />

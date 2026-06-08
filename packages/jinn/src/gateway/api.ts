@@ -80,6 +80,10 @@ export interface ApiContext {
   emit: (event: string, payload: unknown) => void;
   connectors: Map<string, import("../shared/types.js").Connector>;
   reloadConnectorInstances?: () => Promise<{ started: string[]; stopped: string[]; errors: string[] }>;
+  /** Re-read config.yaml into memory immediately (same as the file-watcher does,
+   *  but synchronous). Call after a handler writes config.yaml so getConfig()
+   *  reflects the change without waiting on the debounced watcher (~1s). */
+  reloadConfig?: () => void;
   hookRegistry?: import("./hook-registry.js").HookRegistry;
   hookSecret?: string;
   /** PTY-backed Claude engine used by CLI-mode message sends so the user sees the
@@ -1409,6 +1413,7 @@ export async function handleApiRequest(
       const merged = deepMerge(existing, body);
       const yamlStr = yaml.dump(merged);
       fs.writeFileSync(CONFIG_PATH, yamlStr);
+      context.reloadConfig?.(); // refresh in-memory config now (don't wait on the watcher)
       invalidateModelRegistry(); // models/engines may have changed — rebuild on next read
       logger.info("Config updated via API");
       return json(res, { status: "ok" });
@@ -1647,9 +1652,12 @@ export async function handleApiRequest(
         },
       };
 
-      // Write updated config
+      // Write updated config, then refresh the in-memory copy synchronously so
+      // GET /api/onboarding reflects onboarded:true immediately (not after the
+      // debounced file-watcher fires ~1s later).
       const yamlStr = yaml.dump(updated, { lineWidth: -1 });
       fs.writeFileSync(CONFIG_PATH, yamlStr);
+      context.reloadConfig?.();
       logger.info(`Onboarding: portal name="${portalName}", operator="${operatorName}", language="${language}"`);
 
       const effectiveName = portalName || "Jinn";

@@ -752,6 +752,23 @@ export async function startGateway(
     reloadOrg,
   };
 
+  // Re-read config.yaml into memory. Used by both the file-watcher (debounced)
+  // and by API handlers that write config.yaml and need getConfig() to reflect
+  // the change immediately (e.g. onboarding / PUT /api/config).
+  const reloadConfig = (): void => {
+    try {
+      currentConfig = loadConfig();
+      apiContext.config = currentConfig;
+      invalidateModelRegistry(); // rebuild the model/capability registry from the new config
+      void refreshPiModels(currentConfig); // re-discover pi models (engines.pi.bin may have changed)
+      logger.info("Config reloaded successfully");
+      emit("config:reloaded", {});
+    } catch (err) {
+      logger.error(`Failed to reload config: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+  apiContext.reloadConfig = reloadConfig;
+
   // Replay any pending web queue items (e.g. gateway restart mid-run)
   resumePendingWebQueueItems(apiContext);
 
@@ -877,20 +894,7 @@ export async function startGateway(
 
   // Start file watchers
   startWatchers({
-    onConfigReload: () => {
-      try {
-        currentConfig = loadConfig();
-        apiContext.config = currentConfig;
-        invalidateModelRegistry(); // rebuild the model/capability registry from the new config
-        void refreshPiModels(currentConfig); // re-discover pi models (engines.pi.bin may have changed)
-        logger.info("Config reloaded successfully");
-        emit("config:reloaded", {});
-      } catch (err) {
-        logger.error(
-          `Failed to reload config: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    },
+    onConfigReload: reloadConfig,
     onCronReload: () => {
       const updatedJobs = loadJobs();
       reloadScheduler(updatedJobs);

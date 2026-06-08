@@ -133,8 +133,8 @@ export default function OrgPage() {
 
         {/* Detail panel */}
         {selected && (
-          <div className="absolute top-0 right-0 bottom-0 z-30">
-            <div className="w-[380px] max-w-[100vw] h-full overflow-y-auto bg-[var(--bg)] flex flex-col shadow-[var(--shadow-overlay)]">
+          <div className="absolute top-0 right-0 bottom-0 left-0 sm:left-auto z-30">
+            <div className="w-full sm:w-[420px] lg:w-[468px] xl:w-[520px] max-w-[100vw] h-full overflow-y-auto bg-[var(--bg)] flex flex-col shadow-[var(--shadow-overlay)]">
               {/* Close button */}
               <div className="sticky top-0 z-10 flex items-center justify-end px-[var(--space-4)] py-[var(--space-3)] bg-[var(--bg)]">
                 <button

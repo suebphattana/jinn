@@ -104,6 +104,11 @@ jinn start
 
 Then open [http://localhost:7777](http://localhost:7777).
 
+> **Authenticate your engines first.** Jinn drives the official engine CLIs, so
+> sign in to them once before `jinn start`: run `claude` and use `/login`, and
+> run `codex` to sign in. (Antigravity, if you use it, signs in the same way via
+> its own CLI.) Without this, sessions can't reach the models.
+
 Everyday commands:
 
 ```bash
@@ -190,28 +195,29 @@ Jinn reads its configuration from `~/.jinn/config.yaml`. An example:
 ```yaml
 gateway:
   port: 7777
+  host: "127.0.0.1"
 
 engines:
-  default: claude
+  default: claude        # claude | codex | antigravity
   claude:
-    enabled: true
+    bin: claude          # binary on your PATH
+    model: opus
+    effortLevel: medium
   codex:
-    enabled: false
-  antigravity:
-    enabled: false
+    bin: codex
+    model: gpt-5.4
+    effortLevel: high
 
 connectors:
   slack:
-    enabled: true
-    app_token: xapp-...
-    bot_token: xoxb-...
-
-cron:
-  jobs:
-    - name: daily-review
-      schedule: "0 9 * * *"
-      task: "Review open PRs"
+    shareSessionInChannel: false
+    ignoreOldMessagesOnBoot: true
 ```
+
+Each engine points at a CLI binary (`bin`) and a default `model`; the
+`engines.default` key selects which one new sessions use. Cron jobs are defined
+separately in `~/.jinn/cron/jobs.json` (hot-reloaded on change), not inline in
+`config.yaml`.
 
 The AI org (employees) lives as individual YAML files in `~/.jinn/org/`, one per
 employee, each defining its persona, rank, department, and engine. The daemon

@@ -6,6 +6,7 @@ import type { InterruptibleEngine, EngineRunOpts, EngineResult, EngineRateLimitI
 import { logger } from "../shared/logger.js";
 import { JINN_HOME, CLAUDE_SETTINGS_DIR, HOOK_RELAY_SCRIPT } from "../shared/paths.js";
 import { writeSessionSettings } from "../shared/claude-settings.js";
+import { resolveBin } from "../shared/resolve-bin.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
 import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-view-engine.js";
 import type { HookRegistry, HookPayload } from "../gateway/hook-registry.js";
@@ -664,7 +665,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     });
     const { proxy, port } = await this.startProxy(jinnSessionId);
     const env = this.buildPtyEnv(port || undefined);
-    const bin = opts.bin || "claude";
+    const bin = resolveBin("claude", opts.bin);
     const geom = this.lastGeom.get(jinnSessionId);
     logger.info(`InteractiveClaudeEngine spawning ${bin} (resume: ${opts.resumeSessionId || "none"}, geom: ${geom ? `${geom.cols}×${geom.rows}` : "default"}, sseProxy: ${port || "off"})`);
     const proc = pty.spawn(bin, args, {
@@ -702,7 +703,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     ];
     if (opts.engineSessionId) args.unshift("--resume", opts.engineSessionId);
     if (opts.model) args.push("--model", opts.model);
-    const bin = opts.bin || "claude";
+    const bin = resolveBin("claude", opts.bin);
     // Caller (pty-ws) passes the client's current cols/rows. Cache them so a
     // future cold spawn through run() picks up the right geometry too.
     const cols = opts.cols ?? this.lastGeom.get(jinnSessionId)?.cols ?? 120;

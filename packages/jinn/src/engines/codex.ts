@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { InterruptibleEngine, EngineRunOpts, EngineResult, StreamDelta } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
+import { resolveBin } from "../shared/resolve-bin.js";
 
 interface LiveProcess {
   proc: ChildProcess;
@@ -60,7 +61,7 @@ export class CodexEngine implements InterruptibleEngine {
       prompt += "\n\nAttached files:\n" + opts.attachments.map((a) => `- ${a}`).join("\n");
     }
 
-    const bin = opts.bin || "codex";
+    const bin = resolveBin("codex", opts.bin);
     const isResume = !!opts.resumeSessionId;
     const args = isResume
       ? this.buildResumeArgs(opts, prompt)

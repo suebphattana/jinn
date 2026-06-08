@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { execSync, spawn } from "node:child_process";
 import yaml from "js-yaml";
+import { isInstalled, resolveBin } from "../shared/resolve-bin.js";
 import {
   JINN_HOME,
   CONFIG_PATH,
@@ -55,12 +56,9 @@ function prompt(question: string, defaultValue?: string): Promise<string> {
 }
 
 function whichBin(name: string): string | null {
-  try {
-    const cmd = process.platform === "win32" ? "where" : "which";
-    return execSync(`${cmd} ${name}`, { encoding: "utf-8" }).trim().split("\n")[0];
-  } catch {
-    return null;
-  }
+  // Match the runtime's resolution (PATH + common bin dirs like ~/.local/bin),
+  // not just PATH, so setup doesn't warn about an engine the gateway can find.
+  return isInstalled(name) ? resolveBin(name) : null;
 }
 
 function runVersion(bin: string): string | null {
@@ -350,6 +348,14 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
   } else {
     fail("codex not found");
     info("Install with: npm install -g @openai/codex");
+  }
+
+  // 3b. Loudly warn if NO engine is installed — the gateway will start, but it
+  //     cannot run any session until at least one engine CLI is on PATH.
+  if (!claudePath && !codexPath) {
+    console.log("");
+    warn("No AI engine CLI found (claude or codex).");
+    warn("The gateway will start, but sessions will fail until you install one above.");
   }
 
   // 4. Check auth / versions

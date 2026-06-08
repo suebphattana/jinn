@@ -4,6 +4,9 @@
   "description": "Lightweight AI gateway daemon orchestrating Claude Code, Codex, and Antigravity CLI",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "jinn": "./dist/bin/jinn.js"
   },

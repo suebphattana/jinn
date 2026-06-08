@@ -60,7 +60,10 @@ function engineBinOverride(config: JinnConfig, name: EngineName): string | undef
 
 /** Whether an engine's binary is installed (gates UI visibility). */
 export function engineAvailable(config: JinnConfig, name: EngineName): boolean {
-  return isInstalled(ENGINE_BIN[name], engineBinOverride(config, name));
+  const bin = ENGINE_BIN[name];
+  // Unknown engine name (e.g. a typo in config.sessions.fallbackEngine) → not available.
+  if (!bin) return false;
+  return isInstalled(bin, engineBinOverride(config, name));
 }
 
 /** Snapshot of dynamically-discovered Pi models (null until first discovery). */

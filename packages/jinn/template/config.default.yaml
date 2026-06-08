@@ -4,6 +4,14 @@ jinn:
 gateway:
   port: 7777
   host: "127.0.0.1"
+  # Optional: capture a forwarded SSO identity onto sessions when running behind an
+  # auth proxy (oauth2-proxy / Traefik forward-auth / IAP). Set to the header name
+  # the proxy injects, or a priority-ordered list. Leave unset for single-user installs
+  # (sessions keep the default "web-user" identity; no request is ever rejected).
+  # SECURITY: the proxy MUST overwrite this header on every request — if clients can
+  # send it directly, identity is spoofable. Only enable behind a trusted forward-auth.
+  # userHeader: "x-auth-request-email"
+  # userHeader: ["x-auth-request-email", "x-forwarded-user"]
 
 engines:
   default: claude

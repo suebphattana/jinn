@@ -562,8 +562,14 @@ h1, h2, h3, h4, h5, h6 {
 .react-flow__controls { background: var(--material-regular) !important; border: 1px solid var(--separator) !important; border-radius: var(--radius-md) !important; overflow: hidden; box-shadow: var(--shadow-card); }
 .react-flow__controls-button { background: var(--material-regular) !important; border-color: var(--separator) !important; color: var(--text-secondary) !important; }
 .react-flow__controls-button:hover { background: var(--material-thin) !important; color: var(--text-primary) !important; }
-.react-flow__edge-path { opacity: 0.85; stroke-width: 1.5; }
+/* Edge stroke/width/opacity are set per-edge inline by the layout seam. */
 .react-flow__node { transition: transform 200ms var(--ease-spring); }
+
+/* Per-department hue (org map group containers). Hue comes from --dept-h set
+   inline on the node; S/L is fixed per theme so it stays low-saturation and
+   in-palette. Amber --accent is reserved for selection, never used here. */
+.org-dept-accent { background-color: hsl(var(--dept-h, 40) 38% 56%); }
+[data-theme="light"] .org-dept-accent { background-color: hsl(var(--dept-h, 40) 42% 40%); }
 
 /* ============================================
    Apple Card

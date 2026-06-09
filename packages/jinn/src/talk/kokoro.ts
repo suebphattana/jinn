@@ -15,7 +15,7 @@
 import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
-import { spawn, type ChildProcess } from "node:child_process"
+import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { JINN_HOME } from "../shared/paths.js"
 import { logger } from "../shared/logger.js"
@@ -96,9 +96,24 @@ export function createKokoroTts(opts?: {
     return fs.existsSync(onnxFile) && fs.existsSync(voicesFile)
   }
 
-  /** Is the venv python runnable? */
+  /**
+   * Is the venv python runnable? `fs.existsSync` follows symlinks, so a DANGLING
+   * symlink (e.g. the base Homebrew python was upgraded/removed out from under
+   * the venv) correctly reports false → ensureVenv() rebuilds on the next
+   * download(). We additionally surface the broken-symlink case with a warning
+   * so a silent python upgrade doesn't quietly strand us on the fallback voice.
+   */
   function pythonPresent(): boolean {
-    return fs.existsSync(pythonBin)
+    if (fs.existsSync(pythonBin)) return true
+    const lst = fs.lstatSync(pythonBin, {
+      throwIfNoEntry: false,
+    } as fs.StatSyncOptions & { throwIfNoEntry: false })
+    if (lst && lst.isSymbolicLink()) {
+      logger.warn(
+        `[kokoro] venv python is a broken symlink (${pythonBin}) — its base interpreter is gone; the venv will be rebuilt on next download()`,
+      )
+    }
+    return false
   }
 
   async function httpGetHealth(p: number): Promise<HealthResponse | null> {
@@ -341,12 +356,34 @@ export function createKokoroTts(opts?: {
   }
 }
 
+/**
+ * Pick the newest available base Python for the venv. Prefer a modern, wheel-rich
+ * interpreter (kokoro-onnx/onnxruntime want >=3.10); fall back to bare `python3`.
+ * This is what makes a rebuild survive a Homebrew python churn (e.g. 3.13 removed).
+ */
+function pickVenvPython(): string {
+  for (const c of ["python3.12", "python3.11", "python3.13", "python3.10", "python3"]) {
+    const r = spawnSync(c, ["--version"], { stdio: "ignore" })
+    if (r.status === 0) return c
+  }
+  return "python3"
+}
+
 /** Create the venv and install the Python deps for the sidecar. */
 function ensureVenv(modelDir: string): Promise<void> {
   const venvDir = path.join(modelDir, "venv")
   const py = path.join(venvDir, "bin", "python")
+  // Always rebuild from scratch: `python3 -m venv` does NOT reliably repair a
+  // venv whose base interpreter was removed (dangling bin/python symlink), so a
+  // stale dir would otherwise wedge us on the fallback voice forever.
+  try {
+    fs.rmSync(venvDir, { recursive: true, force: true })
+  } catch {
+    /* ignore */
+  }
+  const basePython = pickVenvPython()
   return new Promise<void>((resolve, reject) => {
-    const make = spawn("python3", ["-m", "venv", venvDir], { stdio: "ignore" })
+    const make = spawn(basePython, ["-m", "venv", venvDir], { stdio: "ignore" })
     make.on("error", reject)
     make.on("exit", (code) => {
       if (code !== 0) return reject(new Error(`venv creation failed (code ${code})`))

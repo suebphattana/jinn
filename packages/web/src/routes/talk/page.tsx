@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { ArrowLeft, Mic, Square, Sun, Moon } from "lucide-react"
+import { ArrowLeft, Mic, Square, Sun, Moon, Keyboard, Volume2, VolumeX, Send } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTheme } from "@/routes/providers"
 import { Constellation } from "./constellation"
@@ -31,6 +31,16 @@ export default function TalkPage() {
   useEffect(() => { activate() }, [activate])
   // Which COO child session's chat the modal is showing (null → closed).
   const [chatSessionId, setChatSessionId] = useState<string | null>(null)
+  // Type-to-talk: a tucked-away text input for when you can't (or don't want to)
+  // speak. Sends via the same path as a voice turn. Works without the mic/STT.
+  const [typing, setTyping] = useState(false)
+  const [draft, setDraft] = useState("")
+  const submitText = useCallback(() => {
+    const t = draft.trim()
+    if (!t) return
+    talk.sendText(t)
+    setDraft("")
+  }, [draft, talk])
 
   const isRecording = talk.listening
 
@@ -161,7 +171,7 @@ export default function TalkPage() {
         className="absolute inset-x-0 bottom-0 z-30 flex flex-col items-center gap-3"
         style={{ paddingBottom: "max(env(safe-area-inset-bottom), 22px)" }}
       >
-        {talk.state === "speaking" && (
+        {talk.state === "speaking" && !talk.muted && (
           <button
             onClick={talk.stopSpeaking}
             aria-label="Stop speaking"
@@ -172,9 +182,35 @@ export default function TalkPage() {
         )}
         <div className="flex items-center gap-2">
           <p className="text-caption1 text-[var(--text-quaternary)]">{hint}</p>
-          {/* Neural-vs-fallback voice indicator (hidden until first spoken turn). */}
-          <TalkVoiceIndicator voiceMode={talk.voiceMode} />
+          {/* Neural-vs-fallback voice indicator (or "Muted" in silent mode). */}
+          <TalkVoiceIndicator voiceMode={talk.voiceMode} muted={talk.muted} />
         </div>
+
+        {/* Type-to-talk: compact text input, revealed by the keyboard toggle. */}
+        {typing && (
+          <form
+            onSubmit={(e) => { e.preventDefault(); submitText() }}
+            className="flex w-full max-w-sm items-center gap-2 px-4"
+          >
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Type a message to AURA…"
+              aria-label="Type a message to AURA"
+              className="h-10 flex-1 rounded-full border border-[var(--separator)] bg-[var(--material-regular)] px-4 text-footnote text-[var(--text-primary)] outline-none backdrop-blur-md placeholder:text-[var(--text-quaternary)] focus:border-[var(--accent)]"
+            />
+            <button
+              type="submit"
+              aria-label="Send message"
+              disabled={!draft.trim()}
+              className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-contrast)] transition-opacity disabled:opacity-40"
+            >
+              <Send size={16} />
+            </button>
+          </form>
+        )}
+
         <button
           onClick={onMic}
           aria-label={isRecording ? "Stop and send" : "Start talking"}
@@ -187,6 +223,39 @@ export default function TalkPage() {
         >
           {isRecording ? <Square size={22} className="fill-current" /> : <Mic size={26} />}
         </button>
+
+        {/* Secondary controls: mute (silent/read mode) + type-to-talk toggle. */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={talk.toggleMute}
+            aria-pressed={talk.muted}
+            aria-label={talk.muted ? "Unmute" : "Mute"}
+            title={talk.muted ? "Muted — replies are read, not spoken" : "Mute — silent/read mode"}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-footnote backdrop-blur-md transition-colors",
+              talk.muted
+                ? "border-[var(--accent)] bg-[var(--accent-fill)] text-[var(--accent)]"
+                : "border-[var(--separator)] bg-[var(--material-regular)] text-[var(--text-secondary)] active:bg-[var(--fill-secondary)]",
+            )}
+          >
+            {talk.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            {talk.muted ? "Muted" : "Mute"}
+          </button>
+          <button
+            onClick={() => setTyping((v) => !v)}
+            aria-pressed={typing}
+            aria-label="Type a message instead of talking"
+            title="Type instead of talk"
+            className={cn(
+              "inline-flex size-8 items-center justify-center rounded-full border backdrop-blur-md transition-colors",
+              typing
+                ? "border-[var(--accent)] bg-[var(--accent-fill)] text-[var(--accent)]"
+                : "border-[var(--separator)] bg-[var(--material-regular)] text-[var(--text-secondary)] active:bg-[var(--fill-secondary)]",
+            )}
+          >
+            <Keyboard size={15} />
+          </button>
+        </div>
       </div>
 
       {/* Read-only chat popup for a tapped COO child session (chip or orb). */}

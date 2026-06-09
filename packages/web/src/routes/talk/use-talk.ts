@@ -100,6 +100,12 @@ export interface UseTalkReturn {
   ttsStatus: TtsStatus
   /** Voice that produced the last spoken turn (neural Kokoro vs Web-Speech). */
   voiceMode: VoiceMode
+  /** Silent/text mode: when true AURA doesn't speak; replies are read. */
+  muted: boolean
+  /** Toggle silent/text mode (persisted; silences any in-flight speech). */
+  toggleMute: () => void
+  /** Type-to-talk: send a typed message via the same path as a voice turn. */
+  sendText: (text: string) => void
   /** Raw STT lifecycle state — drives the whisper-model-download modal. */
   sttState: SttState
   /** 0..100 while the whisper model downloads (null otherwise). */
@@ -155,6 +161,13 @@ export function useTalk(): UseTalkReturn {
   const [level, setLevel] = useState<number | undefined>(undefined)
   const [ttsStatus, setTtsStatus] = useState<TtsStatus>({ kind: "idle" })
   const [voiceMode, setVoiceMode] = useState<VoiceMode>(null)
+  // Silent/text mode: when muted, AURA does not speak (Kokoro audio is discarded
+  // client-side + Web-Speech is cancelled) and replies are read in the transcript.
+  // Persisted so the preference survives reloads.
+  const [muted, setMuted] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    return localStorage.getItem("talk-muted") === "1"
+  })
   const [engineInfo, setEngineInfo] = useState<TalkEngineInfo>({
     engine: null,
     model: null,
@@ -194,6 +207,10 @@ export function useTalk(): UseTalkReturn {
   const turnCounterRef = useRef(0)
   // Did the gateway stream Kokoro audio this turn? If so we DON'T also Web-Speak.
   const audioThisTurnRef = useRef(false)
+  // Live mirror so the WS audio handler + speak path read the current mute
+  // without re-subscribing.
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
   // Known COO thread (child) session ids so we can route their stream events.
   // Synced from `threads` each render AND added immediately on focus (so a child
   // delta arriving the same tick as focus still routes).
@@ -412,7 +429,8 @@ export function useTalk(): UseTalkReturn {
           ),
         )
       }
-      const kokoro = audioThisTurnRef.current
+      const mutedNow = mutedRef.current
+      const kokoro = audioThisTurnRef.current && !mutedNow
       audioThisTurnRef.current = false
       const text = stripMarkdown(turnTextRef.current).trim()
       if (!text) {
@@ -423,8 +441,9 @@ export function useTalk(): UseTalkReturn {
       }
       // Record which voice is producing this turn so the UI can show neural vs
       // fallback. `kokoro` is true only when server talk:audio actually arrived
-      // and played — so a silent Kokoro break surfaces here as "fallback".
-      setVoiceMode(kokoro ? "neural" : "fallback")
+      // and played — so a silent Kokoro break surfaces here as "fallback". When
+      // muted there is no voice at all → null (the UI shows a "Muted" badge).
+      setVoiceMode(mutedNow ? null : kokoro ? "neural" : "fallback")
       setState("speaking")
       // When kokoro is true, server audio owns the speaking/idle transition via
       // player.onIdle — speak() runs caption-only timers and we only finalize.
@@ -435,8 +454,10 @@ export function useTalk(): UseTalkReturn {
         }
         finalize()
       }
+      // mute the synth when Kokoro audio owns playback OR the user muted: both
+      // run caption-only timers so the transcript advances without any sound.
       speakRef.current
-        .speak(text, { mute: kokoro, onSentence: captionSentence })
+        .speak(text, { mute: mutedNow || kokoro, onSentence: captionSentence })
         .then(onDone)
         .catch(onDone)
     }
@@ -498,6 +519,9 @@ export function useTalk(): UseTalkReturn {
         }
         case TALK_EVENTS.audio: {
           if (!isOrch) break
+          // Muted = silent/read mode: discard server (Kokoro) audio entirely.
+          // The caption still advances via speakReplyIfNeeded's mute path.
+          if (mutedRef.current) break
           const ev = payload as TalkAudioEvent
           audioThisTurnRef.current = true
           player.enqueue(ev.seq, ev.mime, ev.dataBase64)
@@ -702,6 +726,54 @@ export function useTalk(): UseTalkReturn {
     void sttRef.current.handleMicClick()
   }, [startLevelLoop])
 
+  // ---- Shared send path (voice + typed) ------------------------------------
+  // The single way a user message reaches the orchestrator: shows the clean text
+  // as a user line, applies the thread route-hint override, and POSTs. Reused by
+  // BOTH the mic (stop()) and the typed-text input so they never diverge.
+  const sendToOrchestrator = useCallback((rawText: string) => {
+    const orch = orchestratorIdRef.current
+    const text = rawText.trim()
+    if (!orch || !text) return
+    setEntries((prev) => [
+      ...prev,
+      { id: `u${Date.now()}`, role: "user", text: stripMarkdown(text) },
+    ])
+    // Switch override: if a thread is selected, prepend a machine route hint so
+    // the orchestrator CONTINUES that COO session instead of spawning a new one.
+    // The transcript keeps the clean text; only the engine sees the hint.
+    const target = targetThreadIdRef.current
+      ? threadsRef.current.find((t) => t.id === targetThreadIdRef.current)
+      : null
+    const outbound = target
+      ? `[Route this to the existing "${target.label}" COO thread: session ${target.id}. Continue that thread instead of spawning a new one.]\n${text}`
+      : text
+    setState("thinking")
+    api.sendMessage(orch, { message: outbound }).catch(() => {
+      setState("idle"); stopLevelLoop()
+    })
+  }, [stopLevelLoop])
+
+  /** Type-to-talk: send a typed message exactly like a transcribed voice turn.
+   *  Works even when STT is unavailable — the graceful fallback for the mic. */
+  const sendText = useCallback((text: string) => {
+    sendToOrchestrator(text)
+  }, [sendToOrchestrator])
+
+  /** Toggle silent/text mode. Turning it ON silences any in-flight speech now. */
+  const toggleMute = useCallback(() => {
+    setMuted((m) => {
+      const next = !m
+      try { localStorage.setItem("talk-muted", next ? "1" : "0") } catch { /* noop */ }
+      if (next) {
+        try { speakRef.current.cancel() } catch { /* noop */ }
+        playerRef.current?.reset()
+        setState((st) => (st === "speaking" ? "idle" : st))
+        stopLevelLoop()
+      }
+      return next
+    })
+  }, [stopLevelLoop])
+
   const stop = useCallback(async () => {
     turnSeqRef.current++
     const seq = turnSeqRef.current
@@ -710,29 +782,8 @@ export function useTalk(): UseTalkReturn {
       setState("thinking")
       const text = await s.stopRecording()
       if (turnSeqRef.current !== seq) return
-      const orch = orchestratorIdRef.current
-      if (text && text.trim() && orch) {
-        // Display the stripped text (STT is plain, but this is the single
-        // display invariant); the outbound message below keeps the raw text so
-        // the route hint is appended cleanly.
-        setEntries((prev) => [
-          ...prev,
-          { id: `u${Date.now()}`, role: "user", text: stripMarkdown(text) },
-        ])
-        // Switch override: if a thread is selected, prepend a machine route hint so
-        // the orchestrator CONTINUES that COO session instead of spawning a new one.
-        // The transcript keeps the clean text; only the engine sees the hint.
-        const target = targetThreadIdRef.current
-          ? threadsRef.current.find((t) => t.id === targetThreadIdRef.current)
-          : null
-        const outbound = target
-          ? `[Route this to the existing "${target.label}" COO thread: session ${target.id}. Continue that thread instead of spawning a new one.]\n${text}`
-          : text
-        try {
-          await api.sendMessage(orch, { message: outbound })
-        } catch {
-          setState("idle"); stopLevelLoop()
-        }
+      if (text && text.trim()) {
+        sendToOrchestrator(text)
       } else {
         // Empty/failed transcription — return to idle and wait for the next tap.
         setState("idle"); stopLevelLoop()
@@ -742,7 +793,7 @@ export function useTalk(): UseTalkReturn {
       playerRef.current?.reset()
       setState("idle"); stopLevelLoop()
     }
-  }, [stopLevelLoop])
+  }, [stopLevelLoop, sendToOrchestrator])
 
   // ---- Interrupt playback (Stop button while speaking) ---------------------
   // Cancels the in-flight Web-Speech sentence chain (and its caption timers) and
@@ -779,6 +830,7 @@ export function useTalk(): UseTalkReturn {
       sttError: stt.error,
       ttsStatus,
       voiceMode,
+      muted, toggleMute, sendText,
       sttState: stt.state,
       sttDownloadProgress: stt.downloadProgress,
       startSttDownload: stt.startDownload,
@@ -789,6 +841,6 @@ export function useTalk(): UseTalkReturn {
       activate, cardAction,
       startListening, stop, stopSpeaking,
     }),
-    [state, entries, threads, targetThreadId, cards, level, gateway.connected, listening, stt.available, stt.error, stt.state, stt.downloadProgress, stt.startDownload, ttsStatus, voiceMode, dismissSttDownload, engineInfo, switchEngine, switchModel, selectThread, renameThread, dismissThread, activate, cardAction, startListening, stop, stopSpeaking],
+    [state, entries, threads, targetThreadId, cards, level, gateway.connected, listening, stt.available, stt.error, stt.state, stt.downloadProgress, stt.startDownload, ttsStatus, voiceMode, muted, toggleMute, sendText, dismissSttDownload, engineInfo, switchEngine, switchModel, selectThread, renameThread, dismissThread, activate, cardAction, startListening, stop, stopSpeaking],
   )
 }

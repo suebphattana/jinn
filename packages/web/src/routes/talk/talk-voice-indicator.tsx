@@ -10,7 +10,19 @@
  */
 import type { VoiceMode } from "./use-talk"
 
-export function TalkVoiceIndicator({ voiceMode }: { voiceMode: VoiceMode }) {
+export function TalkVoiceIndicator({ voiceMode, muted }: { voiceMode: VoiceMode; muted?: boolean }) {
+  // Silent/text mode takes precedence — there is no voice to label.
+  if (muted) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[length:var(--text-caption2)] text-[var(--text-quaternary)]"
+        title="Silent mode — replies are read, not spoken"
+      >
+        <span aria-hidden className="size-1.5 rounded-full" style={{ background: "var(--text-quaternary)" }} />
+        Muted
+      </span>
+    )
+  }
   if (!voiceMode) return null
   const neural = voiceMode === "neural"
   return (

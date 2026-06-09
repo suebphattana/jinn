@@ -251,7 +251,7 @@ engines:
     mode: interactive
   codex:
     bin: codex
-    model: gpt-5.4
+    model: gpt-5.5
 # Model + capability registry — single source of truth for the UI selectors.
 # Add a model here (id + label + capability flags); no code change needed.
 # effortLevels gate the effort picker (empty = no effort support). Omit the block
@@ -265,10 +265,10 @@ models:
       - { id: claude-sonnet-4-6, label: "Sonnet 4.6", supportsEffort: true, effortLevels: [low, medium, high], contextWindow: 200000 }
       - { id: claude-haiku-4-5, label: "Haiku 4.5", supportsEffort: true, effortLevels: [low, medium, high], contextWindow: 200000 }
   codex:
-    default: gpt-5.4
+    default: gpt-5.5
     effortMechanism: codex-config
     models:
-      - { id: gpt-5.4, label: "GPT-5.4 Codex", supportsEffort: true, effortLevels: [low, medium, high, xhigh], contextWindow: 272000 }
+      - { id: gpt-5.5, label: "GPT-5.5 Codex", supportsEffort: true, effortLevels: [low, medium, high, xhigh], contextWindow: 272000 }
   antigravity:
     default: gemini-3-flash-preview
     effortMechanism: none

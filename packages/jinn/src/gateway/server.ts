@@ -274,7 +274,7 @@ export async function startGateway(
 
   // PTY-capable engines, keyed by engine name — the /ws/pty handler routes by
   // session.engine so the xterm view attaches to the right engine.
-  const ptyViewEngines: Record<string, PtyViewEngine> = {
+  const ptyViewEngines: Record<string, Engine & PtyViewEngine> = {
     claude: interactiveClaudeEngine,
     antigravity: antigravityEngine,
   };
@@ -749,6 +749,7 @@ export async function startGateway(
     hookRegistry,
     hookSecret: gatewayInfo.secret,
     interactiveClaudeEngine,
+    ptyViewEngines,
     reloadOrg,
   };
 

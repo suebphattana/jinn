@@ -40,6 +40,10 @@ describe("transcriptLineToDeltas", () => {
     expect(transcriptLineToDeltas(MODEL_DONE)).toEqual([{ type: "text", content: "alpha beta gamma" }]);
   });
 
+  it("emits a text snapshot for an in-progress model response", () => {
+    expect(transcriptLineToDeltas(MODEL_INPROGRESS)).toEqual([{ type: "text_snapshot", content: "thinking..." }]);
+  });
+
   it("emits nothing for user input, history, or junk", () => {
     expect(transcriptLineToDeltas(USER_LINE)).toEqual([]);
     expect(transcriptLineToDeltas(HISTORY_LINE)).toEqual([]);

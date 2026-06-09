@@ -137,6 +137,11 @@ export function useLiveSession(
       const sid = sessionIdRef.current
       if (!sid || p.sessionId !== sid) return
 
+      if (event === 'session:started') {
+        setLoading(true)
+        setCurrentSession((prev) => prev ? { ...prev, status: 'running' } : prev)
+      }
+
       if (event === 'session:delta') {
         lastDeltaAtRef.current = Date.now()
         // Read-only consumers have no send path to arm loading; a delta means
@@ -361,11 +366,9 @@ export function useLiveSession(
 
       const isRunning = session.status === 'running'
 
-      // Read-only consumers (the modal) have no send path that owns `loading`, so
-      // seed it from the running state here. The editable pane must NEVER set
-      // loading=true on load (a stale GET after completion would re-arm a stuck
-      // spinner), so this is gated on readOnly.
-      if (readOnlyRef.current) {
+      // Seed from authoritative running state for read-only views and for editable
+      // views that did not initiate the turn locally (reload/tab switch/reconnect).
+      if (readOnlyRef.current || (isRunning && Date.now() - justCompletedAtRef.current > 1000)) {
         setLoading(isRunning)
       }
 

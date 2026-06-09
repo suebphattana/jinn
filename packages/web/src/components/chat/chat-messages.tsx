@@ -679,8 +679,8 @@ export function ChatMessages({ messages, loading, streamingText }: ChatMessagesP
       {/* Streaming message — shows text as it arrives, always re-renders */}
       {streamingText && <StreamingBubble streamingText={streamingText} />}
 
-      {/* Thinking indicator — visible while waiting, disappears when streaming or response arrives */}
-      {loading && !streamingText && messages.length > 0 && (
+      {/* Running indicator — stays visible until the backend sends a terminal event. */}
+      {loading && messages.length > 0 && (
         // Share the assistant text gutter (space-3 mobile / space-8 @lg) so the
         // indicator lines up flush with the messages and tool cards.
         <div className="assistant-msg-row flex items-center gap-1.5 mt-[var(--space-1)]">

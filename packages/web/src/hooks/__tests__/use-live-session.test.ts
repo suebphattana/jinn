@@ -126,6 +126,27 @@ describe("useLiveSession (read-only)", () => {
 })
 
 describe("useLiveSession (editable write path)", () => {
+  it("seeds loading from a running session after reload or tab switch", async () => {
+    getSession.mockResolvedValue({ status: "running", messages: [{ id: "m1", role: "user", content: "hi" }] })
+    const { subscribe } = makeBus()
+    const { result } = renderHook(() => useLiveSession("s1", { subscribe }))
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.loading).toBe(true)
+  })
+
+  it("sets loading true when a queued turn starts", async () => {
+    getSession.mockResolvedValue({ status: "idle", messages: [] })
+    const { subscribe, emit } = makeBus()
+    const { result } = renderHook(() => useLiveSession("s1", { subscribe }))
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.loading).toBe(false)
+
+    act(() => {
+      emit("session:started", { sessionId: "s1" })
+    })
+    expect(result.current.loading).toBe(true)
+  })
+
   it("optimistic send → delta accumulation → completion replaces with result", async () => {
     getSession.mockResolvedValue({ status: "idle", messages: [] })
     const { subscribe, emit } = makeBus()

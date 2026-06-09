@@ -91,6 +91,8 @@ export interface ApiContext {
    *  prompt + response stream into the live xterm. Distinct from the headless
    *  "claude" engine in sessionManager (which chat/cron/connectors use). */
   interactiveClaudeEngine?: import("../engines/claude-interactive.js").InteractiveClaudeEngine;
+  /** PTY-capable engines keyed by engine name. Used by CLI-mode web sends. */
+  ptyViewEngines?: Record<string, Engine & import("../engines/pty-view-engine.js").PtyViewEngine>;
   /** Synchronously re-scan org/ into the gateway's in-memory employee registry
    *  (and drop warm PTYs). Called after an employee YAML write so the next session
    *  spawn sees the new persona/model immediately, rather than waiting ~800ms for
@@ -856,12 +858,10 @@ export async function handleApiRequest(
       insertMessage(session.id, "user", prompt, newSessionMedia.length > 0 ? newSessionMedia : undefined);
 
       // Run engine asynchronously — respond immediately, push result via WebSocket.
-      // CLI-mode session creation (mode: "interactive") uses the PTY-backed engine
-      // so the first turn streams into the live xterm; chat/cron/connectors use headless.
-      const wantInteractive = body.mode === "interactive" && engineName === "claude";
-      const engine = wantInteractive && context.interactiveClaudeEngine
-        ? context.interactiveClaudeEngine
-        : context.sessionManager.getEngine(engineName);
+      // CLI-mode session creation uses the engine's PTY view when one exists
+      // (Claude, Antigravity). Engines without a PTY view fall back to normal chat.
+      const ptyEngine = body.mode === "interactive" ? context.ptyViewEngines?.[engineName] : undefined;
+      const engine = ptyEngine ?? context.sessionManager.getEngine(engineName);
       if (!engine) {
         updateSession(session.id, {
           status: "error",
@@ -925,13 +925,10 @@ export async function handleApiRequest(
           : prompt;
 
       const config = context.getConfig();
-      // CLI-mode sends route to the interactive PTY engine so the user sees their
-      // prompt injected + claude's response stream in the live xterm. All other
-      // sends (chat, connectors, cron) use the headless engine.
-      const wantInteractive = body.mode === "interactive" && session.engine === "claude";
-      const engine = wantInteractive && context.interactiveClaudeEngine
-        ? context.interactiveClaudeEngine
-        : context.sessionManager.getEngine(session.engine);
+      // CLI-mode sends route to the engine's PTY view when one exists so the
+      // prompt/response are visible in xterm. Engines without a PTY view fall back.
+      const ptyEngine = body.mode === "interactive" ? context.ptyViewEngines?.[session.engine] : undefined;
+      const engine = ptyEngine ?? context.sessionManager.getEngine(session.engine);
       if (!engine) return serverError(res, `Engine "${session.engine}" not available`);
 
       // Persist the message immediately. For notifications, store the clean

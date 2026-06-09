@@ -43,10 +43,12 @@ const EFFORT_MECHANISM: Record<EngineName, EffortMechanism> = {
   pi: "pi-flag",
 };
 
+export const CODEX_DEFAULT_MODEL = "gpt-5.5";
+
 /** Conservative per-engine defaults used when synthesizing (no `models:` block). */
 const SYNTH_DEFAULTS: Record<EngineName, { supportsEffort: boolean; effortLevels: string[]; fallbackModel: string }> = {
   claude: { supportsEffort: true, effortLevels: ["low", "medium", "high"], fallbackModel: "opus" },
-  codex: { supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"], fallbackModel: "gpt-5.3-codex" },
+  codex: { supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"], fallbackModel: CODEX_DEFAULT_MODEL },
   antigravity: { supportsEffort: false, effortLevels: [], fallbackModel: "gemini-3-flash-preview" },
   // Placeholder shown only in the brief window before pi discovery completes; the
   // provider/id form keeps it well-typed for the engine's split.

@@ -8,7 +8,7 @@ function cfg(partial: Partial<JinnConfig["engines"]>, models?: JinnConfig["model
     engines: {
       default: "claude",
       claude: { bin: "claude", model: "opus" },
-      codex: { bin: "codex", model: "gpt-5.3-codex" },
+      codex: { bin: "codex", model: "gpt-5.5" },
       ...partial,
     },
     models,
@@ -23,7 +23,7 @@ describe("synthesizeFromEngineConfig (backward-compat fallback)", () => {
     const reg = synthesizeFromEngineConfig(cfg({}));
     expect(reg.claude.models[0].id).toBe("opus");
     expect(reg.claude.defaultModel).toBe("opus");
-    expect(reg.codex.models[0].id).toBe("gpt-5.3-codex");
+    expect(reg.codex.models[0].id).toBe("gpt-5.5");
     expect(reg.antigravity.models[0].id).toBe("gemini-3-flash-preview");
   });
 
@@ -50,8 +50,8 @@ describe("getModelRegistry with a models: block", () => {
       ],
     },
     codex: {
-      default: "gpt-5.3-codex",
-      models: [{ id: "gpt-5.3-codex", label: "GPT-5.3 Codex", supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"] }],
+      default: "gpt-5.5",
+      models: [{ id: "gpt-5.5", label: "GPT-5.5 Codex", supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"] }],
     },
     antigravity: {
       models: [{ id: "gemini-3-flash-preview", label: "Gemini 3 Flash", supportsEffort: false, effortLevels: [] }],

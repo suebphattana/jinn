@@ -69,6 +69,10 @@ function isModelDone(row: TranscriptRow): boolean {
   return row.source === "MODEL" && row.type === "PLANNER_RESPONSE" && row.status === "DONE";
 }
 
+function isModelInProgress(row: TranscriptRow): boolean {
+  return row.source === "MODEL" && row.type === "PLANNER_RESPONSE" && row.status === "IN_PROGRESS";
+}
+
 /** All completed assistant responses (content of MODEL/PLANNER_RESPONSE/DONE rows), in order. */
 export function extractDoneResponses(transcript: string): string[] {
   const out: string[] = [];
@@ -87,6 +91,9 @@ export function transcriptLineToDeltas(line: string): StreamDelta[] {
   if (!row) return [];
   if (isModelDone(row) && typeof row.content === "string" && row.content) {
     return [{ type: "text", content: row.content }];
+  }
+  if (isModelInProgress(row) && typeof row.content === "string" && row.content) {
+    return [{ type: "text_snapshot", content: row.content }];
   }
   return [];
 }

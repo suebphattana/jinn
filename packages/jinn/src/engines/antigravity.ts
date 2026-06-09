@@ -228,11 +228,13 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       turn.doneTimer.unref?.();
     };
 
-    const attachTail = (cid: string) => {
+    const attachTail = (cid: string, fromBeginning = false) => {
       if (turn.tailer) return;
       const tp = transcriptPathFor(cid);
       let startOffset = 0;
-      try { startOffset = fs.statSync(tp).size; } catch { /* not created yet → 0 */ }
+      if (!fromBeginning) {
+        try { startOffset = fs.statSync(tp).size; } catch { /* not created yet → 0 */ }
+      }
       turn.tailer = tailTranscript(tp, startOffset, (d) => opts.onStream?.(d), onDone);
     };
 
@@ -260,9 +262,13 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
         const fresh = [...listConvDirs()].filter((d) => !before.has(d));
         if (fresh.length > 0) {
           clearInterval(interval);
-          convId = fresh.sort()[0];
+          convId = fresh
+            .map((id) => {
+              try { return { id, mtime: fs.statSync(transcriptPathFor(id)).mtimeMs }; } catch { return { id, mtime: 0 }; }
+            })
+            .sort((a, b) => b.mtime - a.mtime || a.id.localeCompare(b.id))[0].id;
           logger.info(`AntigravityEngine discovered conversation ${convId} for session ${jinnSessionId}`);
-          attachTail(convId);
+          attachTail(convId, true);
         } else if (Date.now() - startedAt > CONV_DISCOVER_TIMEOUT_MS) {
           clearInterval(interval);
           finish({ sessionId: "", result: "", error: "Antigravity: no conversation transcript appeared" });
@@ -509,6 +515,10 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
 
   hasWarmPty(sessionId: string): boolean {
     return this.lifecycle.getWarm(sessionId) !== undefined;
+  }
+
+  isTurnRunning(sessionId: string): boolean {
+    return this.active.has(sessionId);
   }
 
   // --- InterruptibleEngine ---

@@ -21,6 +21,42 @@ export { shouldRecoverStuckTurn } from '@/hooks/use-live-session'
 
 type Listener = (event: string, payload: unknown) => void
 
+const NEW_SESSION_SELECTOR_KEY = 'jinn-chat-new-session-selector'
+const CLI_CAPABLE_ENGINES = new Set(['claude', 'antigravity'])
+
+function readNewSessionSelector(): SelectorValue {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(NEW_SESSION_SELECTOR_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as SelectorValue
+    return {
+      engine: typeof parsed.engine === 'string' ? parsed.engine : undefined,
+      model: typeof parsed.model === 'string' ? parsed.model : undefined,
+      effortLevel: typeof parsed.effortLevel === 'string' ? parsed.effortLevel : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+function writeNewSessionSelector(value: SelectorValue): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(NEW_SESSION_SELECTOR_KEY, JSON.stringify({
+    engine: value.engine,
+    model: value.model,
+    effortLevel: value.effortLevel,
+  }))
+}
+
+function supportsCli(engine: string | undefined): boolean {
+  return !!engine && CLI_CAPABLE_ENGINES.has(engine)
+}
+
+function supportsCliPreference(engine: string | undefined): boolean {
+  return !engine || supportsCli(engine)
+}
+
 interface ChatPaneProps {
   sessionId: string | null
   isActive: boolean
@@ -118,17 +154,17 @@ export function ChatPane({
 
   // Engine/Model/Effort selector state (composer). Engine is editable on a new
   // chat only; model + effort are editable in existing chats too.
-  const [selector, setSelector] = useState<SelectorValue>({})
+  const [selector, setSelector] = useState<SelectorValue>(() => readNewSessionSelector())
   const [effortPendingNote, setEffortPendingNote] = useState(false)
 
-  // Pre-fill for a NEW chat from the chosen employee's config (engine/model);
-  // COO / no employee → empty so the row shows the global default.
+  // Pre-fill for a NEW chat. Explicit employee selection uses employee config;
+  // direct/COO chats reuse the operator's last composer choice.
   useEffect(() => {
     if (sessionId) return
     const emp = selectedEmployee && Array.isArray(orgData?.employees)
       ? orgData.employees.find((e) => e.name === selectedEmployee)
       : undefined
-    setSelector(emp ? { engine: emp.engine, model: emp.model } : {})
+    setSelector(emp ? { engine: emp.engine, model: emp.model } : readNewSessionSelector())
     setEffortPendingNote(false)
   }, [selectedEmployee, sessionId, orgData])
 
@@ -150,6 +186,8 @@ export function ChatPane({
     if (sessionIdRef.current) {
       api.updateSession(sessionIdRef.current, { model: next.model, effortLevel: next.effortLevel }).catch(() => {})
       setEffortPendingNote(true)
+    } else {
+      writeNewSessionSelector(next)
     }
   }, [])
 
@@ -199,15 +237,16 @@ export function ChatPane({
             model: selector.model,
             effortLevel: selector.effortLevel,
           })
-          if (viewMode === 'cli') (params as Record<string, unknown>).mode = 'interactive'
+          if (viewMode === 'cli' && supportsCliPreference(selector.engine)) (params as Record<string, unknown>).mode = 'interactive'
           const session = (await api.createSession(params)) as Record<string, unknown>
+          writeNewSessionSelector(selector)
           sid = String(session.id)
           onSessionCreated?.(sid, userMsg)
           onRefresh?.()
         } else {
           // CLI view → route to the interactive PTY engine so the user sees the prompt
           // get injected into the live xterm + claude's streaming response.
-          const mode = viewMode === 'cli' ? 'interactive' : undefined
+          const mode = viewMode === 'cli' && supportsCli(currentSession?.engine as string | undefined) ? 'interactive' : undefined
           await api.sendMessage(sid, { message, interrupt: interrupt || undefined, attachments: attachmentIds, mode })
           onRefresh?.()
         }
@@ -218,7 +257,7 @@ export function ChatPane({
     // viewMode MUST be in deps — without it, toggling chat↔CLI keeps the stale
     // closure value and routes CLI sends to the headless engine, which is
     // exactly what made "the xterm shows stale content" reproducible.
-    [sessionId, selectedEmployee, onSessionCreated, onRefresh, viewMode, selector, beginSend, failSend]
+    [sessionId, selectedEmployee, onSessionCreated, onRefresh, viewMode, selector, currentSession?.engine, beginSend, failSend]
   )
 
   const handleStatusRequest = useCallback(async () => {

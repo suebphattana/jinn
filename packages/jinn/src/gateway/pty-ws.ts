@@ -60,6 +60,20 @@ export function attachPtyWebSocket(ws: WebSocket, sessionId: string, engine: Pty
   let pendingViewing: boolean | null = null;
   let entryReady = false;
 
+  const applyViewingWhenReady = (viewing: boolean, attempts = 20) => {
+    if (engine.hasWarmPty(sessionId)) {
+      entryReady = true;
+      applyViewing(viewing);
+      return;
+    }
+    if (attempts <= 0) {
+      pendingViewing = viewing;
+      entryReady = false;
+      return;
+    }
+    setTimeout(() => applyViewingWhenReady(viewing, attempts - 1), 100).unref?.();
+  };
+
   const applyViewing = (viewing: boolean) => {
     if (viewing && !didEnter) {
       engine.setViewing(sessionId, true);
@@ -78,14 +92,19 @@ export function attachPtyWebSocket(ws: WebSocket, sessionId: string, engine: Pty
     } else if (msg?.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
       // First resize spawns the PTY at the real client geometry; subsequent
       // resizes just forward SIGWINCH to claude.
+      const hadWarmPty = engine.hasWarmPty(sessionId);
       spawnIfNeeded(msg.cols, msg.rows);
       engine.resizePty(sessionId, msg.cols, msg.rows);
-      if (!entryReady) {
+      if (!entryReady && hadWarmPty) {
         entryReady = true;
         if (pendingViewing !== null) {
           applyViewing(pendingViewing);
           pendingViewing = null;
         }
+      } else if (!entryReady && pendingViewing !== null) {
+        const viewing = pendingViewing;
+        pendingViewing = null;
+        applyViewingWhenReady(viewing);
       }
     } else if (msg?.type === "viewing" && typeof msg.viewing === "boolean") {
       if (!entryReady) {

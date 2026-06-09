@@ -58,10 +58,10 @@ describe('buildNewSessionParams', () => {
       message: 'hi',
       selectedEmployee: null,
       engine: 'codex',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       effortLevel: 'xhigh',
     })
-    expect(params).toMatchObject({ engine: 'codex', model: 'gpt-5.4', effortLevel: 'xhigh' })
+    expect(params).toMatchObject({ engine: 'codex', model: 'gpt-5.5', effortLevel: 'xhigh' })
   })
 
   it('omits engine/model/effortLevel keys when not provided', () => {

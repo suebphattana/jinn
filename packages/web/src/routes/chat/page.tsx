@@ -508,6 +508,11 @@ function ChatPage() {
   }, [chatTabs.activeTab, selectedId])
 
   const cliModeAvailable = !sessionMeta?.engine || ['claude', 'codex', 'antigravity'].includes(sessionMeta.engine)
+  const activeSessionTab = chatTabs.activeTab?.kind === 'session' ? chatTabs.activeTab : null
+  const viewSwitchLocked = sessionMeta?.engine === 'codex' && activeSessionTab?.sessionId === selectedId && activeSessionTab.status === 'running'
+  const cliTitle = viewSwitchLocked
+    ? 'Codex view switching is locked while a turn is running'
+    : cliModeAvailable ? undefined : 'CLI view is not available for this engine'
   const effectiveViewMode: ViewMode = cliModeAvailable ? viewMode : 'chat'
 
   // More menu (shared between desktop tab bar and mobile header)
@@ -527,22 +532,25 @@ function ChatPage() {
           <>
             <div className="flex items-center gap-1 px-3 py-2 md:hidden">
               <button
-                onClick={() => { setAndPersistViewMode('chat'); setShowMoreMenu(false) }}
+                onClick={() => { if (!viewSwitchLocked) { setAndPersistViewMode('chat'); setShowMoreMenu(false) } }}
+                disabled={viewSwitchLocked}
+                title={viewSwitchLocked ? cliTitle : undefined}
                 className={cn(
                   "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                  effectiveViewMode === 'chat' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent"
+                  effectiveViewMode === 'chat' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent",
+                  viewSwitchLocked && "opacity-60 cursor-not-allowed"
                 )}
               >
                 Chat
               </button>
               <button
-                onClick={() => { if (cliModeAvailable) { setAndPersistViewMode('cli'); setShowMoreMenu(false) } }}
-                disabled={!cliModeAvailable}
-                title={cliModeAvailable ? undefined : 'CLI view is not available for this engine'}
+                onClick={() => { if (cliModeAvailable && !viewSwitchLocked) { setAndPersistViewMode('cli'); setShowMoreMenu(false) } }}
+                disabled={!cliModeAvailable || viewSwitchLocked}
+                title={cliTitle}
                 className={cn(
                   "flex-1 rounded-md px-2 py-1 font-mono text-xs font-medium transition-colors",
                   effectiveViewMode === 'cli' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent",
-                  !cliModeAvailable && "opacity-45 cursor-not-allowed"
+                  (!cliModeAvailable || viewSwitchLocked) && "opacity-45 cursor-not-allowed"
                 )}
               >
                 CLI
@@ -607,26 +615,29 @@ function ChatPage() {
     <>
       <div className="flex items-center gap-0.5 rounded-full bg-[var(--fill-tertiary)] p-0.5">
         <button
-          onClick={() => setAndPersistViewMode('chat')}
+          onClick={() => { if (!viewSwitchLocked) setAndPersistViewMode('chat') }}
+          disabled={viewSwitchLocked}
+          title={viewSwitchLocked ? cliTitle : undefined}
           className={cn(
             "rounded-full px-2.5 py-1 text-[11px] font-medium transition-all",
             effectiveViewMode === 'chat'
               ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+            viewSwitchLocked && "opacity-60 cursor-not-allowed"
           )}
         >
           Chat
         </button>
         <button
-          onClick={() => { if (cliModeAvailable) setAndPersistViewMode('cli') }}
-          disabled={!cliModeAvailable}
-          title={cliModeAvailable ? undefined : 'CLI view is not available for this engine'}
+          onClick={() => { if (cliModeAvailable && !viewSwitchLocked) setAndPersistViewMode('cli') }}
+          disabled={!cliModeAvailable || viewSwitchLocked}
+          title={cliTitle}
           className={cn(
             "rounded-full px-2.5 py-1 font-mono text-[11px] font-medium transition-all",
             effectiveViewMode === 'cli'
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
-            !cliModeAvailable && "opacity-45 cursor-not-allowed"
+            (!cliModeAvailable || viewSwitchLocked) && "opacity-45 cursor-not-allowed"
           )}
         >
           CLI

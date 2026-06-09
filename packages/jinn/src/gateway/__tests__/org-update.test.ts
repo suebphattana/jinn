@@ -294,7 +294,7 @@ describe("validateEmployeeUpdate", () => {
     // switching to codex with a valid codex model should pass
     const ok = validateEmployeeUpdate(testConfig, emp(), {
       engine: "codex",
-      model: "gpt-5.3-codex",
+      model: "gpt-5.5",
     });
     expect(ok.ok).toBe(true);
     // a claude model is invalid for codex

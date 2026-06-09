@@ -272,6 +272,7 @@ export class TurnResolver {
 
   /** Claude session id learned so far (for engineSessionId persistence on warm-PTY turns). */
   get sessionId(): string | undefined { return this.claudeSessionId; }
+  get isSettled(): boolean { return this.settled; }
   /** The StopFailure payload, if the turn ended in an API error (Task 5.3 maps it to rateLimit). */
   get stopFailure(): HookPayload | undefined { return this.stopFailurePayload; }
   /** transcript_path from whichever hook carried it. */
@@ -299,6 +300,11 @@ export class TurnResolver {
     this.settle({ sessionId: this.claudeSessionId ?? this.opts.fallbackSessionId ?? "", result: "", numTurns: 1 });
   }
 
+  completeRecovered(text: string, sessionId?: string): void {
+    if (sessionId && !this.claudeSessionId) this.claudeSessionId = sessionId;
+    this.settle({ sessionId: this.claudeSessionId ?? this.opts.fallbackSessionId ?? "", result: text, numTurns: 1 });
+  }
+
   private settle(r: EngineResult): void {
     if (this.settled) return;
     this.settled = true;
@@ -311,6 +317,8 @@ const SCROLLBACK_CAP_BYTES = 262144;
 const NATIVE_COMMAND_QUIET_MS = 1800;
 const NATIVE_COMMAND_MIN_MS = 3000;
 const NATIVE_COMMAND_MAX_MS = 90_000;
+const LOST_STOP_RECOVERY_QUIET_MS = 15_000;
+const LOST_STOP_RECOVERY_MIN_MS = 10_000;
 
 function isNativeClaudeCommand(prompt: string): boolean {
   const first = prompt.trim().split(/\s+/, 1)[0]?.toLowerCase();
@@ -480,12 +488,39 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       nativeCommandTimer.unref?.();
     }
 
+    let lostStopRecoveryTimer: NodeJS.Timeout | undefined;
+    if (!nativeCommand) {
+      const startedAt = Date.now();
+      lostStopRecoveryTimer = setInterval(() => {
+        if (resolver.isSettled) return;
+        const now = Date.now();
+        const elapsed = now - startedAt;
+        const quietFor = now - (this.lastOutputAt.get(jinnSessionId) ?? startedAt);
+        if (elapsed < LOST_STOP_RECOVERY_MIN_MS || quietFor < LOST_STOP_RECOVERY_QUIET_MS) return;
+        const sid = resolver.sessionId ?? opts.resumeSessionId;
+        const transcript = sid ? findTranscriptForSession(sid) : undefined;
+        if (!transcript) return;
+        try {
+          if (fs.statSync(transcript).mtimeMs < startedAt - 1000) return;
+        } catch {
+          return;
+        }
+        const recovered = lastAssistantTextFromTranscript(transcript);
+        if (recovered?.trim()) {
+          logger.warn(`InteractiveClaudeEngine: recovered completed turn for ${jinnSessionId} after missing Stop hook`);
+          resolver.completeRecovered(recovered, sid);
+        }
+      }, 2000);
+      lostStopRecoveryTimer.unref?.();
+    }
+
     let result: EngineResult;
     try {
       result = await resolver.promise;
     } finally {
       clearInterval(watchdog);
       if (nativeCommandTimer) clearInterval(nativeCommandTimer);
+      if (lostStopRecoveryTimer) clearInterval(lostStopRecoveryTimer);
       this.hookRegistry.unregister(jinnSessionId);
       this.active.delete(jinnSessionId);
       this.lifecycle.turnEnded(jinnSessionId); // manager decides kill vs keep-warm

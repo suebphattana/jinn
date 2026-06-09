@@ -24,7 +24,9 @@ import { neutralizeForPaste } from "../shared/skill-commands.js";
  * xterm view). `agy` has no hook system either, so unlike the Claude engine we
  * detect turn boundaries by tailing agy's own per-conversation transcript:
  *   ~/.gemini/antigravity-cli/brain/<convId>/.system_generated/logs/transcript.jsonl
- * A turn completes when a new MODEL/PLANNER_RESPONSE/status:DONE line appears.
+ * A turn completes after a MODEL/PLANNER_RESPONSE/status:DONE line and a short
+ * quiet window with no more transcript activity. agy can continue tool work
+ * after the first DONE-looking block, so "first DONE wins" is too early.
  *
  * Auth: `agy` reuses its cached Google credential (Keychain + on-disk token) on
  * a headless spawn — no re-auth prompt. Workspace trust is pre-seeded before
@@ -36,7 +38,7 @@ const SCROLLBACK_CAP_BYTES = 262144;
  *  is informational/forward-looking; selection is deferred to /model injection. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-3-flash-preview";
 const TURN_TIMEOUT_MS = 5 * 60 * 1000; // matches agy's --print-timeout default
-const DONE_DEBOUNCE_MS = 1200;         // collapse multi-step planning to the final DONE
+const TURN_QUIET_DONE_MS = 6000;       // wait for transcript quiet after the latest DONE
 const CONV_DISCOVER_TIMEOUT_MS = 30 * 1000;
 const CONV_POLL_MS = 150;
 /** Accepted by agy without a startup error (verified); harmless in chat mode,
@@ -67,6 +69,7 @@ function tailTranscript(
   startOffset: number,
   onDelta: (d: StreamDelta) => void,
   onDone: (content: string) => void,
+  onActivity?: () => void,
 ): TranscriptTailer {
   let offset = startOffset;
   let buf = "";
@@ -77,6 +80,7 @@ function tailTranscript(
 
   const processLine = (line: string) => {
     const deltas = transcriptLineToDeltas(line);
+    if (deltas.length) onActivity?.();
     for (const d of deltas) onDelta(d);
     // A model-DONE line yields exactly one text delta; treat that as turn output.
     if (deltas.length && deltas[0].type === "text") onDone(deltas[0].content);
@@ -206,6 +210,16 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     turn.interrupt = (reason: string) =>
       finish({ sessionId: convId ?? opts.resumeSessionId ?? "", result: latestAnswer ?? "", error: reason });
 
+    const scheduleDone = () => {
+      if (!latestAnswer) return;
+      if (turn.doneTimer) clearTimeout(turn.doneTimer);
+      turn.doneTimer = setTimeout(
+        () => finish({ sessionId: convId ?? "", result: latestAnswer ?? "", numTurns: 1, contextTokens: lastContextEstimate || undefined }),
+        TURN_QUIET_DONE_MS,
+      );
+      turn.doneTimer.unref?.();
+    };
+
     const onDone = (content: string) => {
       latestAnswer = content;
       // agy exposes NO token usage anywhere in its transcript, so an exact context
@@ -219,13 +233,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
           opts.onStream?.({ type: "context", content: String(est) });
         }
       }
-      // Debounce so multi-step planning (several DONE lines) collapses to the last one.
-      if (turn.doneTimer) clearTimeout(turn.doneTimer);
-      turn.doneTimer = setTimeout(
-        () => finish({ sessionId: convId ?? "", result: latestAnswer ?? "", numTurns: 1, contextTokens: lastContextEstimate || undefined }),
-        DONE_DEBOUNCE_MS,
-      );
-      turn.doneTimer.unref?.();
+      scheduleDone();
     };
 
     const attachTail = (cid: string, fromBeginning = false) => {
@@ -235,7 +243,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       if (!fromBeginning) {
         try { startOffset = fs.statSync(tp).size; } catch { /* not created yet → 0 */ }
       }
-      turn.tailer = tailTranscript(tp, startOffset, (d) => opts.onStream?.(d), onDone);
+      turn.tailer = tailTranscript(tp, startOffset, (d) => opts.onStream?.(d), onDone, scheduleDone);
     };
 
     this.active.set(jinnSessionId, turn);

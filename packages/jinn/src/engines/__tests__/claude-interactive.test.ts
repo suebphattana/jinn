@@ -58,6 +58,16 @@ describe("TurnResolver", () => {
     expect(v.numTurns).toBe(1);
     expect(r.stopFailure?.error).toBe("rate_limit");
   });
+
+  it("can recover-complete a turn when the Stop hook is missing", async () => {
+    const r = new TurnResolver({ fallbackSessionId: "old" });
+    r.onHook({ hook_event_name: "SessionStart", session_id: "c1" });
+    r.completeRecovered("transcript final", "c1");
+    const v = await r.promise;
+    expect(v.result).toBe("transcript final");
+    expect(v.sessionId).toBe("c1");
+    expect(v.numTurns).toBe(1);
+  });
 });
 
 describe("buildInteractiveArgs — system prompt + sentinel via CLI flag", () => {

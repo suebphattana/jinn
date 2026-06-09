@@ -215,6 +215,7 @@ export function ModelSelectorRow({ mode, value, onChange, pendingNote, disabled,
       {(() => {
         const cw = contextWindowFor(registry, engine, modelId)
         if (!cw || !contextTokens || contextTokens <= 0) return null
+        if (contextTokens > cw) return null
         const pct = contextTokens / cw
         const color = pct >= 0.9 ? 'var(--system-red)' : pct >= 0.75 ? 'var(--system-orange)' : undefined
         return (

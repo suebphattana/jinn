@@ -300,6 +300,15 @@ describe("CodexEngine — usage / context-token extraction", () => {
     ]);
     expect(result.contextTokens).toBeUndefined();
   });
+
+  it("omits impossible cumulative Codex usage values from contextTokens", async () => {
+    const { result } = await runWith({}, [
+      threadStarted("t1"),
+      agentMessage("a"),
+      turnCompleted({ input_tokens: 9_282_000, output_tokens: 50 }),
+    ]);
+    expect(result.contextTokens).toBeUndefined();
+  });
 });
 
 describe("CodexEngine — error / failure handling", () => {

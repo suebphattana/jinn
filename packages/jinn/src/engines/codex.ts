@@ -17,6 +17,11 @@ interface LiveProcess {
 function extractCodexContextTokens(usage: unknown): number | undefined {
   if (!usage || typeof usage !== "object") return undefined;
   const n = Number((usage as Record<string, unknown>).input_tokens ?? 0);
+  // Some Codex CLI builds report cumulative/billed input tokens here, not the
+  // active context window. A value above any supported Codex window is unusable
+  // for the UI context meter, so omit it instead of showing impossible values
+  // like 9282k/272k.
+  if (n > 1_000_000) return undefined;
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 

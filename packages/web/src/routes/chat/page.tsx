@@ -507,10 +507,10 @@ function ChatPage() {
     // instead of ChatPane, but the underlying session selection is preserved.
   }, [chatTabs.activeTab, selectedId])
 
-  // Codex has no live PTY/xterm view, so the CLI toggle is hidden for it (and the
-  // view coerced to chat) — attaching a CLI socket for codex is refused server-side.
-  const cliSupported = sessionMeta?.engine !== 'codex'
-  const effectiveViewMode: ViewMode = cliSupported ? viewMode : 'chat'
+  // Codex does not have a PTY/xterm wrapper yet. Keep the Chat/CLI control visible
+  // so the capability gap is explicit, but keep Codex sessions rendered as chat.
+  const cliModeAvailable = sessionMeta?.engine !== 'codex'
+  const effectiveViewMode: ViewMode = cliModeAvailable ? viewMode : 'chat'
 
   // More menu (shared between desktop tab bar and mobile header)
   const moreMenu = selectedId ? (
@@ -526,31 +526,32 @@ function ChatPage() {
       {showMoreMenu && (
         <div className="absolute right-0 top-full z-[200] mt-1 min-w-[220px] overflow-hidden rounded-[var(--radius-md)] border border-border bg-[var(--material-thick)] shadow-[var(--shadow-overlay)] backdrop-blur-xl">
           {/* Mobile-only Chat/CLI toggle — the desktop one lives in the tab bar's toolbarActions */}
-          {cliSupported && (
-            <>
-              <div className="flex items-center gap-1 px-3 py-2 md:hidden">
-                <button
-                  onClick={() => { setAndPersistViewMode('chat'); setShowMoreMenu(false) }}
-                  className={cn(
-                    "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                    viewMode === 'chat' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent"
-                  )}
-                >
-                  Chat
-                </button>
-                <button
-                  onClick={() => { setAndPersistViewMode('cli'); setShowMoreMenu(false) }}
-                  className={cn(
-                    "flex-1 rounded-md px-2 py-1 font-mono text-xs font-medium transition-colors",
-                    viewMode === 'cli' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent"
-                  )}
-                >
-                  CLI
-                </button>
-              </div>
-              <div className="my-0.5 border-t border-border md:hidden" />
-            </>
-          )}
+          <>
+            <div className="flex items-center gap-1 px-3 py-2 md:hidden">
+              <button
+                onClick={() => { setAndPersistViewMode('chat'); setShowMoreMenu(false) }}
+                className={cn(
+                  "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                  effectiveViewMode === 'chat' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent"
+                )}
+              >
+                Chat
+              </button>
+              <button
+                onClick={() => { if (cliModeAvailable) { setAndPersistViewMode('cli'); setShowMoreMenu(false) } }}
+                disabled={!cliModeAvailable}
+                title={cliModeAvailable ? undefined : 'Codex CLI view is not wired yet'}
+                className={cn(
+                  "flex-1 rounded-md px-2 py-1 font-mono text-xs font-medium transition-colors",
+                  effectiveViewMode === 'cli' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent",
+                  !cliModeAvailable && "opacity-45 cursor-not-allowed"
+                )}
+              >
+                CLI
+              </button>
+            </div>
+            <div className="my-0.5 border-t border-border md:hidden" />
+          </>
           <button
             onClick={() => copyToClipboard(selectedId, 'id')}
             className="block w-full px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
@@ -606,32 +607,33 @@ function ChatPage() {
   // Build toolbar actions to pass into tab bar (desktop only content)
   const toolbarActions = (
     <>
-      {cliSupported && (
-        <div className="flex items-center gap-0.5 rounded-full bg-[var(--fill-tertiary)] p-0.5">
-          <button
-            onClick={() => setAndPersistViewMode('chat')}
-            className={cn(
-              "rounded-full px-2.5 py-1 text-[11px] font-medium transition-all",
-              viewMode === 'chat'
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            Chat
-          </button>
-          <button
-            onClick={() => setAndPersistViewMode('cli')}
-            className={cn(
-              "rounded-full px-2.5 py-1 font-mono text-[11px] font-medium transition-all",
-              viewMode === 'cli'
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            CLI
-          </button>
-        </div>
-      )}
+      <div className="flex items-center gap-0.5 rounded-full bg-[var(--fill-tertiary)] p-0.5">
+        <button
+          onClick={() => setAndPersistViewMode('chat')}
+          className={cn(
+            "rounded-full px-2.5 py-1 text-[11px] font-medium transition-all",
+            effectiveViewMode === 'chat'
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Chat
+        </button>
+        <button
+          onClick={() => { if (cliModeAvailable) setAndPersistViewMode('cli') }}
+          disabled={!cliModeAvailable}
+          title={cliModeAvailable ? undefined : 'Codex CLI view is not wired yet'}
+          className={cn(
+            "rounded-full px-2.5 py-1 font-mono text-[11px] font-medium transition-all",
+            effectiveViewMode === 'cli'
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+            !cliModeAvailable && "opacity-45 cursor-not-allowed"
+          )}
+        >
+          CLI
+        </button>
+      </div>
 
       <div className="hidden lg:block">{moreMenu}</div>
 

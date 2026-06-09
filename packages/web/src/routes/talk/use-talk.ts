@@ -626,6 +626,9 @@ export function useTalk(): UseTalkReturn {
     try {
       const r = await api.talkCreateSession()
       setOrchestratorId(r.sessionId)
+      // Re-apply the current mute state to the (possibly brand-new) session id so
+      // the gateway skips synthesis from the first turn when we're in silent mode.
+      if (mutedRef.current) void api.talkSetMuted({ sessionId: r.sessionId, muted: true }).catch(() => {})
       void rehydrate(r.sessionId)
       didInitialReconnectRef.current = true
     } catch { /* surfaced via connection hint */ }
@@ -764,6 +767,9 @@ export function useTalk(): UseTalkReturn {
     setMuted((m) => {
       const next = !m
       try { localStorage.setItem("talk-muted", next ? "1" : "0") } catch { /* noop */ }
+      // Tell the gateway so it skips (or resumes) server-side Kokoro synthesis.
+      const orch = orchestratorIdRef.current
+      if (orch) void api.talkSetMuted({ sessionId: orch, muted: next }).catch(() => {})
       if (next) {
         try { speakRef.current.cancel() } catch { /* noop */ }
         playerRef.current?.reset()

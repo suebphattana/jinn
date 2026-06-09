@@ -68,6 +68,7 @@ import { handleHookPost, LOOPBACK as HOOK_LOOPBACK } from "./hook-endpoint.js";
 import { handleTalkApi } from "../talk/routes.js";
 import { getOrchestratorPersona } from "../talk/orchestrator-persona.js";
 import { feedTalkText, flushTalkSpeech, discardTalkSpeech } from "../talk/tts-stream.js";
+import { isTalkMuted } from "../talk/mute-state.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -2318,7 +2319,14 @@ async function runWebSession(
         // Voice mode: accumulate the orchestrator's spoken text so the whole
         // turn can be synthesized in one Kokoro call at completion (see flush
         // below). Only `text` deltas are spoken; tool_use/context are not.
-        if (currentSession.source === "talk" && delta.type === "text" && typeof delta.content === "string") {
+        // Skip entirely when the client is muted (silent/read mode) — there's no
+        // point buffering or synthesizing audio the browser will discard.
+        if (
+          currentSession.source === "talk" &&
+          !isTalkMuted(currentSession.id) &&
+          delta.type === "text" &&
+          typeof delta.content === "string"
+        ) {
           feedTalkText(currentSession.id, delta.content);
         }
       },
@@ -2505,9 +2513,10 @@ async function runWebSession(
 
     // Voice mode: synthesize the whole turn's spoken text in one Kokoro call
     // (streams talk:audio over the WS). Fire-and-forget so completion isn't
-    // blocked on audio. Discard instead of speaking a half-finished interrupt.
+    // blocked on audio. Discard (don't synthesize) on a half-finished interrupt
+    // OR when the client is muted — the browser plays nothing in silent mode.
     if (currentSession.source === "talk") {
-      if (wasInterrupted) discardTalkSpeech(currentSession.id);
+      if (wasInterrupted || isTalkMuted(currentSession.id)) discardTalkSpeech(currentSession.id);
       else void flushTalkSpeech(currentSession.id, config.talk?.kokoro, context.emit);
     }
 

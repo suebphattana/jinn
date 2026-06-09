@@ -312,6 +312,13 @@ export const api = {
       reason: string | null
       available: string[]
     }>("/api/talk/engine", body),
+  /**
+   * Talk: tell the gateway this talk session is muted (silent/read mode) so the
+   * run loop skips server-side Kokoro synthesis it would otherwise discard.
+   * Best-effort — the UI mutes regardless; this just saves the wasted synthesis.
+   */
+  talkSetMuted: (body: { sessionId: string; muted: boolean }) =>
+    post<{ ok: boolean; muted: boolean }>("/api/talk/mute", body),
   getSessionQueue: (id: string) =>
     get<QueueItem[]>(`/api/sessions/${id}/queue`),
   cancelQueueItem: (sessionId: string, itemId: string) =>

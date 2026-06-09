@@ -23,6 +23,7 @@ import { createSession, getSessionBySessionKey, updateSession } from "../session
 import { engineAvailable, isKnownEngine, type EngineName } from "../shared/models.js";
 import { resolveTalkEngine, type TalkEngineResolution } from "./engine-resolver.js";
 import { validateCard, validateCardPatch } from "./card-validate.js";
+import { setTalkMuted } from "./mute-state.js";
 import { TALK_EVENTS } from "./protocol.js";
 import { getTalkTts } from "./tts-stream.js";
 
@@ -380,6 +381,26 @@ export async function handleTalkApi(
       }
       context.emit(TALK_EVENTS.cardClear, { sessionId: body.sessionId });
       json(res, { ok: true });
+      return true;
+    }
+
+    // POST /api/talk/mute — the client's silent/read-mode toggle. When muted,
+    // the run loop skips Kokoro synthesis for this talk session entirely (the
+    // browser plays nothing), saving a neural-TTS call + latency per turn.
+    if (method === "POST" && pathname === "/api/talk/mute") {
+      const parsed = await readJsonBody(req, res);
+      if (!parsed.ok) return true;
+      const body = (parsed.body ?? {}) as { sessionId?: unknown; muted?: unknown };
+      if (typeof body.sessionId !== "string" || body.sessionId.length === 0) {
+        badRequest(res, "sessionId must be a non-empty string");
+        return true;
+      }
+      if (typeof body.muted !== "boolean") {
+        badRequest(res, "muted must be a boolean");
+        return true;
+      }
+      setTalkMuted(body.sessionId, body.muted);
+      json(res, { ok: true, muted: body.muted });
       return true;
     }
 

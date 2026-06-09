@@ -228,8 +228,9 @@ export default function TalkPage() {
         )}
         <div className="flex items-center gap-2">
           <p className="text-caption1 text-[var(--text-quaternary)]">{hint}</p>
-          {/* Neural-vs-fallback voice indicator (or "Muted" in silent mode). */}
-          <TalkVoiceIndicator voiceMode={talk.voiceMode} muted={talk.muted} />
+          {/* Neural-vs-fallback voice indicator (no "Muted" — the active top-right
+              mute button already conveys silent mode). */}
+          <TalkVoiceIndicator voiceMode={talk.voiceMode} />
         </div>
 
         {/* Type-to-talk: compact text input, revealed by the keyboard toggle.

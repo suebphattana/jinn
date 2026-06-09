@@ -7,26 +7,17 @@
  * Driven by useTalk's `voiceMode` (set per turn from whether talk:audio arrived).
  * Renders nothing until the first turn has been spoken, so it stays invisible
  * on the calm idle surface.
+ *
+ * Note: it deliberately does NOT show a "Muted" state — the active top-right mute
+ * button already conveys that, so a bottom chip would be redundant. When muted,
+ * `voiceMode` is null, so this renders nothing.
  */
 import type { VoiceMode } from "./use-talk"
 
-export function TalkVoiceIndicator({ voiceMode, muted }: { voiceMode: VoiceMode; muted?: boolean }) {
-  // Muted and Fallback are states the operator should NOTICE (no voice / degraded
-  // voice), so they render as a small bordered chip. Neural is the expected,
-  // calm state — kept as a quiet dot + label so it doesn't shout on the surface.
-
-  // Silent/text mode takes precedence — there is no voice to label.
-  if (muted) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 rounded-full border border-[var(--separator)] bg-[var(--fill-secondary)] px-1.5 py-0.5 text-[length:var(--text-caption2)] font-medium text-[var(--text-secondary)]"
-        title="Silent mode — replies are read, not spoken"
-      >
-        <span aria-hidden className="size-1.5 rounded-full" style={{ background: "var(--text-tertiary)" }} />
-        Muted
-      </span>
-    )
-  }
+export function TalkVoiceIndicator({ voiceMode }: { voiceMode: VoiceMode }) {
+  // Fallback is a state the operator should NOTICE (degraded voice), so it renders
+  // as a small bordered chip. Neural is the expected, calm state — a quiet dot +
+  // label so it doesn't shout on the surface.
   if (!voiceMode) return null
   const neural = voiceMode === "neural"
   if (neural) {

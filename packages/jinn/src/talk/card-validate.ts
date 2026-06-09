@@ -17,6 +17,26 @@ type Result = { ok: true; card: Card } | { ok: false; error: string };
 
 const JOB_STATUSES = new Set(["queued", "running", "done", "error"]);
 
+// The /talk voice surface is deliberately narrow: a card earns its place only
+// when there's something to DO (approval, choice) or a job to WATCH (status,
+// agent-activity), plus one compact `text` valve for the rare line that reads
+// better than it's heard. The rich-content "zoo" below belongs in /chat, not on
+// a calm, orb-dominant, often-driving surface — so it is rejected here, at the
+// same gate the orchestrator's curl hits. (The persona + card-reference.md no
+// longer advertise these, but this enforces the model even on a stray push.)
+// Kept (first-class) types are whatever the switch below validates:
+//   approval, choice (DO) · status, agent-activity (WATCH) · text (read valve).
+const DROPPED_VOICE_TYPES = new Set([
+  "list",
+  "stat",
+  "link",
+  "image",
+  "image-grid",
+  "comparison",
+  "keyvalue",
+  "diff",
+]);
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -139,31 +159,19 @@ export function validateCard(input: unknown): Result {
     return { ok: false, error: "card.badge must be a string" };
   }
 
+  // Narrowing gate: reject the rich-content types that no longer live on the
+  // voice surface, with a message that points AURA at the kept alternatives.
+  if (typeof type === "string" && DROPPED_VOICE_TYPES.has(type)) {
+    return {
+      ok: false,
+      error: `${type} cards aren't shown on the voice surface — speak the headline, or use a text/status/approval/choice card`,
+    };
+  }
+
   switch (type) {
     case "text":
       if (!isString(input.body)) return { ok: false, error: "text card requires string body" };
       break;
-
-    case "stat":
-      if (!isString(input.value)) return { ok: false, error: "stat card requires string value" };
-      if (!isString(input.label)) return { ok: false, error: "stat card requires string label" };
-      break;
-
-    case "list": {
-      const err = checkListItems(input.items);
-      if (err) return { ok: false, error: err };
-      break;
-    }
-
-    case "image":
-      if (!isString(input.src)) return { ok: false, error: "image card requires string src" };
-      break;
-
-    case "image-grid": {
-      const err = checkImages(input.images);
-      if (err) return { ok: false, error: err };
-      break;
-    }
 
     case "status":
       if (!isString(input.label)) return { ok: false, error: "status card requires string label" };
@@ -179,22 +187,8 @@ export function validateCard(input: unknown): Result {
       break;
     }
 
-    case "link":
-      if (!isString(input.url)) return { ok: false, error: "link card requires string url" };
-      if (!isString(input.label)) return { ok: false, error: "link card requires string label" };
-      break;
-
     case "choice": {
       const err = checkChoiceOptions(input.options);
-      if (err) return { ok: false, error: err };
-      break;
-    }
-
-    case "comparison": {
-      if (!Array.isArray(input.columns) || !input.columns.every(isString)) {
-        return { ok: false, error: "comparison card requires a string columns array" };
-      }
-      const err = checkComparisonRows(input.rows);
       if (err) return { ok: false, error: err };
       break;
     }
@@ -205,18 +199,6 @@ export function validateCard(input: unknown): Result {
         return { ok: false, error: "approval details must be an array of {k,v} strings" };
       }
       break;
-
-    case "keyvalue": {
-      const err = checkKeyValueRows(input.rows);
-      if (err) return { ok: false, error: err };
-      break;
-    }
-
-    case "diff": {
-      const err = checkDiffHunks(input.hunks);
-      if (err) return { ok: false, error: err };
-      break;
-    }
 
     default:
       return { ok: false, error: `unknown card type: ${String(type)}` };

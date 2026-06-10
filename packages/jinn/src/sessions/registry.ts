@@ -164,7 +164,13 @@ export function initDb(): Database.Database {
   // So any delete/update of an un-backfilled row would throw until the backfill
   // caught up. Draining here closes that window; it is chunked + idempotent and
   // measured at ~350ms for 120k rows, then a no-op on every later boot.
-  backfillFtsSync(db);
+  // On any exception: degrade gracefully — drop FTS infrastructure, reset progress
+  // flags (so the next boot retries), and disable search for this process.
+  try {
+    backfillFtsSync(db);
+  } catch (err) {
+    disableFtsForProcess(db, err);
+  }
   migrateSessionsSchema(db);
   db.exec(CREATE_SESSION_KEY_INDEX);
   db.exec(CREATE_LAST_ACTIVITY_INDEX);
@@ -305,6 +311,41 @@ export function backfillFtsSync(database: Database.Database, chunkSize = FTS_BAC
   }
 }
 
+// Set to false when the FTS boot drain fails. `searchMessages` checks this first so it
+// returns [] immediately without touching a broken or absent table.
+let ftsAvailable = true;
+
+/**
+ * Drop all FTS infrastructure from `database` and reset the backfill progress flags so
+ * the NEXT boot retries the migration + backfill from scratch. Sets `ftsAvailable =
+ * false` for the lifetime of this process so that `searchMessages` returns [] without
+ * hitting the (now-absent) table.
+ *
+ * Called automatically by `initDb()` when the boot drain throws. Also exported as a
+ * seam for tests and for callers that want to explicitly disable FTS (e.g. on detecting
+ * external corruption).
+ */
+export function disableFtsForProcess(database: Database.Database, reason?: unknown): void {
+  const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : 'explicit disable';
+  console.error(`[fts] Boot drain failed (${msg}). Disabling FTS for this process — next boot will retry.`);
+  try {
+    database.exec(`
+      DROP TRIGGER IF EXISTS messages_fts_ai;
+      DROP TRIGGER IF EXISTS messages_fts_ad;
+      DROP TRIGGER IF EXISTS messages_fts_au;
+      DROP TABLE IF EXISTS messages_fts;
+    `);
+  } catch (dropErr) {
+    console.error(`[fts] Failed to drop FTS infrastructure during disable: ${dropErr instanceof Error ? dropErr.message : dropErr}`);
+  }
+  try {
+    database.prepare("DELETE FROM meta WHERE key IN ('fts_backfill_done','fts_backfill_rowid','fts_backfill_max')").run();
+  } catch {
+    // meta table may not exist in edge cases — not a fatal error
+  }
+  ftsAvailable = false;
+}
+
 let ftsBackfillScheduled = false;
 
 /**
@@ -318,6 +359,7 @@ let ftsBackfillScheduled = false;
  * table is seeded without blocking the event loop.
  */
 function scheduleFtsBackfill(): void {
+  if (!ftsAvailable) return;
   const database = initDb();
   if (getMeta(database, 'fts_backfill_done') === '1') return;
   if (ftsBackfillScheduled) return;
@@ -367,23 +409,30 @@ function sanitizeFtsQuery(query: string): string {
  */
 export function searchMessages(query: string, limit = 50): MessageSearchResult[] {
   const db = initDb();
+  if (!ftsAvailable) return [];
   scheduleFtsBackfill();
   const match = sanitizeFtsQuery(query);
   if (!match) return [];
   const cap = Math.max(1, Math.min(Math.floor(limit) || 50, 200));
-  return db
-    .prepare(
-      `SELECT m.session_id AS sessionId,
-              snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet,
-              m.role AS role,
-              m.timestamp AS timestamp
-       FROM messages_fts
-       JOIN messages m ON m.rowid = messages_fts.rowid
-       WHERE messages_fts MATCH ?
-       ORDER BY m.timestamp DESC
-       LIMIT ?`,
-    )
-    .all(match, cap) as MessageSearchResult[];
+  try {
+    return db
+      .prepare(
+        `SELECT m.session_id AS sessionId,
+                snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet,
+                m.role AS role,
+                m.timestamp AS timestamp
+         FROM messages_fts
+         JOIN messages m ON m.rowid = messages_fts.rowid
+         WHERE messages_fts MATCH ?
+         ORDER BY m.timestamp DESC
+         LIMIT ?`,
+      )
+      .all(match, cap) as MessageSearchResult[];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('no such table')) return [];
+    throw err;
+  }
 }
 
 export function migrateSessionsSchema(database: Database.Database): void {

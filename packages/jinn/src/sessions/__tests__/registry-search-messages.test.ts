@@ -215,3 +215,128 @@ describe("FTS backfill of pre-existing rows", () => {
     db.close();
   });
 });
+
+// ── Production finalization path ──────────────────────────────────────────────
+// Reviewer-requested direct test: the real turn-end flow (wipe partials, persist
+// final) must leave exactly one FTS entry for the final message content.
+describe("production finalization path", () => {
+  it("deletePartialMessages → insertMessage final → search finds final content exactly once", () => {
+    mkSession(reg, "s-finalize-flow");
+    // Mid-turn: two partial (streaming) assistant blocks get written and indexed.
+    reg.insertPartialMessage("s-finalize-flow", "assistant", "streaming pelican draft one", 0);
+    reg.insertPartialMessage("s-finalize-flow", "assistant", "streaming pelican draft two", 1);
+    // Both partials are currently in the FTS index (AI trigger).
+    expect(reg.searchMessages("pelican").filter((r) => r.sessionId === "s-finalize-flow").length).toBeGreaterThan(0);
+
+    // Turn end: delete the partial rows (AD trigger removes them from FTS)…
+    reg.deletePartialMessages("s-finalize-flow");
+    // …and insert the single consolidated final message (AI trigger adds it).
+    reg.insertMessage("s-finalize-flow", "assistant", "final pelican answer consolidated");
+
+    // Search must find the final content exactly once — no leftover partial entries.
+    const results = reg.searchMessages("pelican").filter((r) => r.sessionId === "s-finalize-flow");
+    expect(results).toHaveLength(1);
+    expect(results[0].snippet).toContain("pelican");
+  });
+});
+
+// ── FTS degrade — fail-safe ───────────────────────────────────────────────────
+// NOTE: `disableFtsForProcess` permanently sets `ftsAvailable = false` on the
+// module-level singleton. These tests MUST run after all tests that rely on a
+// working FTS index, because `searchMessages` returns [] for the rest of the
+// process once the flag is set.
+describe("FTS degrade — fail-safe", () => {
+  it("disableFtsForProcess drops infrastructure and searchMessages returns []", () => {
+    const database = reg.initDb();
+    // Simulate what initDb() does when backfillFtsSync throws mid-drain.
+    reg.disableFtsForProcess(database, new Error("simulated disk error during backfill"));
+
+    // The ftsAvailable flag is now false — searchMessages must return [] without throwing.
+    expect(() => reg.searchMessages("anything")).not.toThrow();
+    expect(reg.searchMessages("anything")).toEqual([]);
+    expect(reg.searchMessages("")).toEqual([]);
+    expect(reg.searchMessages("  ")).toEqual([]);
+  });
+
+  it("deleteSession does not throw in degraded mode (AD trigger absent)", () => {
+    // Directly insert a session + assistant message (bypassing the trigger-dropped
+    // state — the INSERT into messages won't fire FTS AI trigger since it's gone).
+    const database = reg.initDb();
+    database
+      .prepare(
+        "INSERT INTO sessions (id, engine, source, source_ref, status, created_at, last_activity) VALUES ('s-dg-del','claude','web','web:s-dg-del','idle','t','t')",
+      )
+      .run();
+    database
+      .prepare(
+        "INSERT INTO messages (id, session_id, role, content, timestamp) VALUES ('m-dg-del','s-dg-del','assistant','degraded capybara note',99001)",
+      )
+      .run();
+
+    // deleteSession fires DELETE FROM messages (AD trigger absent) — must not throw.
+    expect(() => reg.deleteSession("s-dg-del")).not.toThrow();
+    // Session is gone.
+    expect(reg.getSession("s-dg-del")).toBeUndefined();
+  });
+
+  it("updatePartialMessage does not throw in degraded mode (AU trigger absent)", () => {
+    const database = reg.initDb();
+    database
+      .prepare(
+        "INSERT INTO sessions (id, engine, source, source_ref, status, created_at, last_activity) VALUES ('s-dg-upd','claude','web','web:s-dg-upd','running','t','t')",
+      )
+      .run();
+    const partialId = reg.insertPartialMessage("s-dg-upd", "assistant", "initial degraded streaming", 0);
+    // UPDATE messages (AU trigger absent) — must not throw.
+    expect(() => reg.updatePartialMessage(partialId, "updated degraded content")).not.toThrow();
+    reg.deletePartialMessages("s-dg-upd");
+  });
+
+  it("next boot: migrateFtsSchema + backfillFtsSync recreates and indexes after degrade", () => {
+    // Simulate what happens when a fresh gateway process opens the same DB file after
+    // a previous boot triggered the degrade handler. disableFtsForProcess clears the
+    // meta progress flags and drops the FTS table/triggers. On the next boot,
+    // migrateFtsSchema sees no watermark → re-sets it; backfillFtsSync seeds everything.
+    const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "jinn-fts-recovery-")), "recovery.db");
+    const db = new Database(dbPath);
+    db.exec(
+      "CREATE TABLE messages (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, timestamp INTEGER NOT NULL)",
+    );
+    db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+    const ins = db.prepare("INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)");
+    ins.run("r1", "leg-recovery", "user", "recovery mongoose question", 1);
+    ins.run("r2", "leg-recovery", "assistant", "recovery mongoose answer found", 2);
+
+    // First "boot": create FTS + backfill.
+    reg.migrateFtsSchema(db);
+    reg.backfillFtsSync(db);
+    const hitsBefore = db
+      .prepare(
+        `SELECT m.session_id AS sessionId FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid WHERE messages_fts MATCH 'mongoose'`,
+      )
+      .all() as Array<{ sessionId: string }>;
+    expect(hitsBefore.length).toBe(2);
+
+    // Simulate degrade: drop FTS infrastructure + clear meta flags
+    // (exactly what disableFtsForProcess does to the module db in the previous tests).
+    db.exec(`
+      DROP TRIGGER IF EXISTS messages_fts_ai;
+      DROP TRIGGER IF EXISTS messages_fts_ad;
+      DROP TRIGGER IF EXISTS messages_fts_au;
+      DROP TABLE IF EXISTS messages_fts;
+    `);
+    db.prepare("DELETE FROM meta WHERE key IN ('fts_backfill_done','fts_backfill_rowid','fts_backfill_max')").run();
+
+    // "Next boot" recovery: migrateFtsSchema sees no watermark → recreates everything.
+    reg.migrateFtsSchema(db);
+    reg.backfillFtsSync(db);
+
+    const hitsAfter = db
+      .prepare(
+        `SELECT m.session_id AS sessionId FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid WHERE messages_fts MATCH 'mongoose'`,
+      )
+      .all() as Array<{ sessionId: string }>;
+    expect(hitsAfter.length).toBe(2);
+    db.close();
+  });
+});

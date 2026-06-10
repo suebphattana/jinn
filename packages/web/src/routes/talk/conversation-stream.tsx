@@ -26,7 +26,11 @@ import "./conversation-stream.css"
 
 export interface ConversationStreamProps {
   rows: StreamRow[]
-  /** Avatar state — at "idle" the stream dims (only recent content matters). */
+  /**
+   * Avatar state — exposed on the root as `data-state`. Currently a styling
+   * hook with no CSS consumers (the idle-dim rule was removed); kept for
+   * debugging and future state-targeted styling.
+   */
   state: AvatarState
   /** Open a child session's chat (clicking a chip that carries a threadId). */
   onOpenThread?: (sessionId: string) => void

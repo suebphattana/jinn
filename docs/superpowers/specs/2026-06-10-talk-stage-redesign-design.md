@@ -136,3 +136,9 @@ Backend, persona, TTS pipeline, graph/store logic, search/attach APIs, card data
 ## Error handling
 
 Stage derivation is pure and total — unknown states fall back to `conversing` (transcript visible is the safest default). FLIP measurement failures (element not mounted) skip animation and snap to final layout — layout correctness never depends on the animation running.
+
+## Post-review deviations (2026-06-10)
+
+1. **Stagger choreography partially wired.** The content enter/exit stagger choreography (spec §"one mover" timings; tokens `--motion-enter/exit/ambient`) is wired only for the orb dim + dock-row transition. Existing per-component entrances (stream rows, cards) keep their current timings deliberately — changing them sight-unseen overnight risks regressing a look that works. The tokens stay as the target vocabulary for a follow-up pass.
+2. **Content-stage orb treatment = CSS opacity dim.** The orb canvas keeps animating beneath; a scoped `opacity: 0.45` on `.talk-orb-layer` does the quieting (no prop/JS changes).
+3. **Focal ring on the newest pinned card only** (was: every pinned card). New cards append to the source array, so the newest is the last live card in the pinned deck; exiting cards are skipped via an `:nth-last-child(... of ...)` selector so a card mid-exit never transiently takes the ring.

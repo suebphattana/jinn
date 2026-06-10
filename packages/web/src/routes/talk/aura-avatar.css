@@ -68,7 +68,6 @@
 
 /* Short muted hint of the orchestrator's current tool_use while it thinks. */
 .talk-whisper {
-  margin-top: 0.25rem;
   font-variant: small-caps;
   letter-spacing: 0.04em;
   opacity: 0.85;

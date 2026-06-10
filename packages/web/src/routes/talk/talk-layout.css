@@ -12,7 +12,11 @@
   grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
   height: 100dvh;
   width: 100%;
-  overflow: hidden;
+  /* Controls must always be reachable — if the auto rows ever exceed a
+     pathologically short viewport, the page scrolls rather than clipping
+     the mic off-screen. Normal viewports never overflow (unchanged). */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ---- row 1: top bar ---- */
@@ -149,10 +153,37 @@
 .talk-root[data-stage="content"] .cstream {
   opacity: 0.5;
 }
-.talk-root[data-stage="content"] .talk-pinned .jt-card {
+/* Content stage: a blocking card is the focal point — the orb recedes to a
+   dim status light (canvas keeps running; opacity does the quieting). */
+.talk-root[data-stage="content"] .talk-orb-layer {
+  opacity: 0.45;
+  transition: opacity var(--motion-enter);
+}
+/* Focal ring on the NEWEST pinned card only. New cards append to the end of
+   the source array, so the newest is the last *live* card in the deck; exiting
+   cards are appended after the live ones while they animate out, so plain
+   :last-child could transiently ring a card mid-exit — the `of` selector skips
+   them. */
+.talk-root[data-stage="content"]
+  .talk-pinned
+  .jt-card:nth-last-child(1 of .jt-card:not(.jt-card--exiting)) {
   box-shadow:
     var(--shadow-overlay),
     0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Short viewports (landscape phone): the 64px dock + 46dvh pinned cap are too
+   greedy — shrink both so the controls row keeps its place on screen. The orb
+   dock anchor stays 56px while the row is 48px, so the docked orb slightly
+   overhangs the row; that's acceptable (glow is clamped, pointer-events none).
+   The OrbLayer re-measures via the stage-cell ResizeObserver automatically. */
+@media (max-height: 560px) {
+  .talk-orbdock[data-active="true"] {
+    height: 48px;
+  }
+  .talk-pinned {
+    max-height: 30dvh;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

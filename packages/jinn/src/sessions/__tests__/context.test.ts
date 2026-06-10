@@ -242,6 +242,59 @@ describe("buildContext — compact org roster", () => {
   });
 });
 
+describe("buildContext — audience scoping", () => {
+  const worker: Employee = { ...minimalEmployee, name: "writer", displayName: "Writer", rank: "employee" };
+  const hierarchy = {
+    nodes: {
+      "content-lead": { employee: minimalEmployee, parentName: null, directReports: ["writer"], depth: 0, chain: [] },
+      writer: { employee: worker, parentName: "content-lead", directReports: [], depth: 1, chain: ["content-lead"] },
+    },
+    sorted: ["content-lead", "writer"],
+  } as any;
+
+  it("employee sessions get NO org roster and NO cron list", () => {
+    const out = buildContext({ ...baseOpts, employee: worker, hierarchy });
+    expect(out).not.toContain("## Organization");
+    expect(out).not.toContain("## Scheduled cron");
+    // Chain of command (their slice of the org) stays.
+    expect(out).toContain("## Chain of command");
+  });
+
+  it("COO sessions still get the org roster", () => {
+    const out = buildContext({ ...baseOpts, hierarchy });
+    expect(out).toContain("## Organization (2 employee(s))");
+  });
+
+  it("COO API section is a pointer at CLAUDE.md, not the full table", () => {
+    const out = buildContext({ ...baseOpts });
+    expect(out).toContain("Gateway API");
+    expect(out).not.toContain("| `/api/cron` | GET |"); // table rows gone
+    expect(out).toContain("CLAUDE.md");
+  });
+
+  it("manager employees get the delegation mini-reference", () => {
+    const out = buildContext({ ...baseOpts, employee: minimalEmployee, hierarchy });
+    expect(out).toContain("Delegate to another employee");
+    expect(out).toContain("/api/sessions/:id/message");
+    expect(out).toContain("/attachments");
+    expect(out).not.toContain("| `/api/cron` | GET |");
+  });
+
+  it("non-manager employees get attachments only — no delegation endpoints", () => {
+    const out = buildContext({ ...baseOpts, employee: worker, hierarchy });
+    expect(out).toContain("/attachments");
+    expect(out).not.toContain("Delegate to another employee");
+  });
+
+  it("connector section is slim — recipe details live in CLAUDE.md", () => {
+    const out = buildContext({ ...baseOpts, connectors: ["slack"] });
+    expect(out).toContain("## Available connectors: slack");
+    expect(out).toContain("/api/connectors/<name>/send");
+    // The old per-connector recipe block is gone:
+    expect(out).not.toContain("**Send threaded reply**");
+  });
+});
+
 describe("buildContext — maxChars trimming", () => {
   it("stays within a configured maxChars cap by trimming optional/standard sections", () => {
     const cap = 1200;

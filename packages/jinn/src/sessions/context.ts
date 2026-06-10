@@ -145,26 +145,30 @@ export function buildContext(opts: {
     });
   }
 
-  // ── STANDARD: Organization ──────────────────────────────────
-  const orgCtx = buildOrgContext(opts.hierarchy);
-  if (orgCtx) {
-    sections.push({
-      tier: Tier.STANDARD,
-      marker: "## Organization",
-      content: orgCtx,
-      summary: `## Organization\nEmployee files are in \`${ORG_DIR}/\`. Read them directly when needed.`,
-    });
+  // ── STANDARD: Organization (COO only — employees get their chain of command) ──
+  if (!opts.employee) {
+    const orgCtx = buildOrgContext(opts.hierarchy);
+    if (orgCtx) {
+      sections.push({
+        tier: Tier.STANDARD,
+        marker: "## Organization",
+        content: orgCtx,
+        summary: `## Organization\nEmployee files are in \`${ORG_DIR}/\`. Read them directly when needed.`,
+      });
+    }
   }
 
-  // ── STANDARD: Cron jobs (only enabled, with disabled count) ─
-  const cronCtx = buildCronContext();
-  if (cronCtx) {
-    sections.push({
-      tier: Tier.STANDARD,
-      marker: "## Scheduled cron",
-      content: cronCtx,
-      summary: "## Scheduled cron jobs\nCron definitions are in `~/.jinn/cron/jobs.json`. Read directly when needed.",
-    });
+  // ── STANDARD: Cron jobs (COO only — employees don't manage the schedule) ──
+  if (!opts.employee) {
+    const cronCtx = buildCronContext();
+    if (cronCtx) {
+      sections.push({
+        tier: Tier.STANDARD,
+        marker: "## Scheduled cron",
+        content: cronCtx,
+        summary: "## Scheduled cron jobs\nCron definitions are in `~/.jinn/cron/jobs.json`. Read directly when needed.",
+      });
+    }
   }
 
   // ── OPTIONAL: Knowledge / docs (filenames only, never inlined)
@@ -193,7 +197,7 @@ export function buildContext(opts: {
     sections.push({
       tier: Tier.STANDARD,
       marker: "## Available connectors",
-      content: buildConnectorContext(opts.connectors, gatewayUrl, portalName),
+      content: buildConnectorContext(opts.connectors, gatewayUrl),
       summary: `## Available connectors: ${opts.connectors.join(", ")}\nUse \`curl POST ${gatewayUrl}/api/connectors/<name>/send\` to send messages.`,
     });
   }
@@ -213,12 +217,12 @@ export function buildContext(opts: {
   // gateway URL + the /api/sessions endpoints needed to delegate are emitted
   // in the Gateway API reference section below, so nothing is lost here.
 
-  // ── STANDARD: Gateway API reference ─────────────────────────
+  // ── STANDARD: Gateway API reference (audience-scoped; full table in CLAUDE.md) ──
   sections.push({
     tier: Tier.STANDARD,
     marker: `## ${portalName} Gateway API`,
-    content: buildApiReference(gatewayUrl, portalName),
-    summary: `## ${portalName} Gateway API (${gatewayUrl})\nEndpoints: /api/status, /api/sessions, /api/cron, /api/org, /api/skills, /api/config, /api/connectors, /api/logs`,
+    content: buildApiReference(gatewayUrl, portalName, opts.employee),
+    summary: `## ${portalName} Gateway API (${gatewayUrl})\nFull endpoint reference: CLAUDE.md / AGENTS.md.`,
   });
 
   // ── Assemble with progressive trimming by tier ──────────────
@@ -526,21 +530,12 @@ function buildKnowledgeContext(): string | null {
   return lines.join("\n");
 }
 
-function buildConnectorContext(connectors: string[], gatewayUrl: string, portalName: string): string {
-  const lines: string[] = [`## Available connectors: ${connectors.join(", ")}`];
-  lines.push(`You can send messages and interact with external services via the ${portalName} gateway API.`);
-  lines.push(`Use bash with curl to call these endpoints:\n`);
-
-  for (const name of connectors) {
-    lines.push(`### ${name}`);
-    lines.push(`- **Send message**: \`curl -X POST ${gatewayUrl}/api/connectors/${name}/send -H 'Content-Type: application/json' -d '{"channel":"CHANNEL_ID","text":"message"}'\``);
-    lines.push(`- **Send threaded reply**: add \`"thread":"THREAD_TS"\` to the JSON body`);
-    lines.push(`- You can proactively send messages without being asked — e.g., to notify about completed tasks, errors, or status updates`);
-  }
-
-  lines.push(`\n- **List all connectors**: \`curl ${gatewayUrl}/api/connectors\``);
-  lines.push(`- Channel IDs and connector config can be found in \`~/.jinn/config.yaml\``);
-  return lines.join("\n");
+function buildConnectorContext(connectors: string[], gatewayUrl: string): string {
+  return [
+    `## Available connectors: ${connectors.join(", ")}`,
+    `Send a message: \`curl -X POST ${gatewayUrl}/api/connectors/<name>/send -H 'Content-Type: application/json' -d '{"channel":"CHANNEL_ID","text":"message"}'\` (add \`"thread":"THREAD_TS"\` for a threaded reply).`,
+    `Channel IDs are in \`~/.jinn/config.yaml\`. You may send proactively (completed tasks, errors, status updates). Details: CLAUDE.md / AGENTS.md.`,
+  ].join("\n");
 }
 
 function buildEnvironmentContext(): string | null {
@@ -617,42 +612,30 @@ function buildEvolutionContext(portalName: string): string | null {
   ].join("\n");
 }
 
-function buildApiReference(gatewayUrl: string, portalName: string): string {
-  return `## ${portalName} Gateway API (${gatewayUrl})
-
-You can call these endpoints with curl to inspect and manage the gateway:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| \`/api/status\` | GET | Gateway status, uptime, engine info |
-| \`/api/sessions\` | GET | List all sessions |
-| \`/api/sessions/:id\` | GET | Session detail (includes messages) |
-| \`/api/sessions\` | POST | Create new session (\`{prompt, engine?, employee?, parentSessionId?}\`) |
-| \`/api/sessions/:id/message\` | POST | Send follow-up message to existing session (\`{message}\`) |
-| \`/api/sessions/:id/attachments\` | POST | Push a file/image into THIS chat so the web UI renders it (\`{path}\` or \`{url}\` or \`{content}\` base64, optional \`text\`) |
-| \`/api/sessions/:id/children\` | GET | List child sessions of a parent |
-
-**Sending a file/image back into the chat** — when you produce a file (chart, screenshot, PDF, export) and want it to appear in the web dashboard, POST its local path to your own session. Only the path is read server-side; the file is copied into \`~/.jinn/uploads/\` and rendered inline (images/audio inline, other types as a download card):
-
-\`\`\`bash
-curl -s -X POST ${gatewayUrl}/api/sessions/<your-session-id>/attachments \\
-  -H 'Content-Type: application/json' \\
-  -d '{"path":"/tmp/chart.png","text":"Here is the revenue chart"}'
-\`\`\`
-
-Note: attachments render in the web **chat view** only — they cannot appear in the raw CLI/xterm terminal stream.
-| \`/api/cron\` | GET | List cron jobs |
-| \`/api/cron/:id\` | PUT | Update cron job (toggle enabled, etc.) |
-| \`/api/cron/:id/runs\` | GET | Cron run history |
-| \`/api/org\` | GET | Organization structure |
-| \`/api/org/employees/:name\` | GET | Employee details |
-| \`/api/skills\` | GET | List skills |
-| \`/api/skills/:name\` | GET | Skill content |
-| \`/api/config\` | GET | Current config |
-| \`/api/config\` | PUT | Update config |
-| \`/api/connectors\` | GET | List connectors |
-| \`/api/connectors/:name/send\` | POST | Send message via connector |
-| \`/api/logs\` | GET | Recent log lines |`;
+/**
+ * Audience-scoped Gateway API reference. The FULL endpoint table lives in
+ * CLAUDE.md/AGENTS.md (auto-loaded by every engine) — injecting it here too
+ * was pure duplication. What remains dynamic is the live base URL and the
+ * short list of calls each audience actually makes.
+ */
+function buildApiReference(gatewayUrl: string, portalName: string, employee?: Employee): string {
+  const header = `## ${portalName} Gateway API (base URL: ${gatewayUrl})`;
+  const attachmentsLine =
+    `- Push a file/image into this chat (web view): \`curl -X POST ${gatewayUrl}/api/sessions/<your-session-id>/attachments -H 'Content-Type: application/json' -d '{"path":"/abs/path","text":"caption"}'\``;
+  if (!employee) {
+    return `${header}\nThe full endpoint reference is in CLAUDE.md / AGENTS.md (auto-loaded). Substitute the base URL above.\n${attachmentsLine}`;
+  }
+  if (employee.rank === "manager" || employee.rank === "executive") {
+    return [
+      header,
+      `- Delegate to another employee: \`POST ${gatewayUrl}/api/sessions\` with \`{prompt, employee, parentSessionId}\``,
+      `- Follow up on a child session: \`POST ${gatewayUrl}/api/sessions/:id/message\` with \`{message}\``,
+      `- Read a child's latest replies: \`GET ${gatewayUrl}/api/sessions/:id?last=N\``,
+      attachmentsLine,
+      `Full endpoint table: CLAUDE.md / AGENTS.md.`,
+    ].join("\n");
+  }
+  return [header, attachmentsLine, `Full endpoint table: CLAUDE.md / AGENTS.md.`].join("\n");
 }
 
 /**

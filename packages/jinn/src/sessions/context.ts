@@ -633,7 +633,7 @@ function buildApiReference(gatewayUrl: string, portalName: string, employee?: Em
       `- Delegate to another employee: \`POST ${gatewayUrl}/api/sessions\` with \`{prompt, employee, parentSessionId}\``,
       `- Follow up on a child session: \`POST ${gatewayUrl}/api/sessions/:id/message\` with \`{message}\``,
       `- Read a child's latest replies: \`GET ${gatewayUrl}/api/sessions/:id?last=N\``,
-      `- Valid \`employee\` values are the slugs in your chain of command, \`GET ${gatewayUrl}/api/org\`, or \`ls ~/.jinn/org/\``,
+      `- Valid \`employee\` values are the slugs in your chain of command, \`GET ${gatewayUrl}/api/org\`, or \`ls ${ORG_DIR}/\``,
       attachmentsLine,
       `Full endpoint table: CLAUDE.md / AGENTS.md.`,
     ].join("\n");

@@ -88,6 +88,7 @@ export const TALK_EVENTS = {
   cardClear: "talk:card:clear",
   task: "talk:task",
   focus: "talk:focus",
+  graph: "talk:graph",
   threadLabel: "talk:thread:label",
   engine: "talk:engine",
   turnDone: "talk:turn:done",

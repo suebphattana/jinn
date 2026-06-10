@@ -34,6 +34,7 @@ import { validateCard, validateCardPatch } from "./card-validate.js";
 import { delegateToThread } from "./delegate.js";
 import { setTalkMuted } from "./mute-state.js";
 import { TALK_EVENTS } from "./protocol.js";
+import { buildGraphSnapshot } from "./graph.js";
 import { getTalkTts } from "./tts-stream.js";
 
 /** Stable session key for the single hands-free orchestrator surface. */
@@ -185,6 +186,19 @@ export async function handleTalkApi(
         liveSessionEngine:
           existing && existing.source === "talk" ? existing.engine : null,
       });
+      return true;
+    }
+
+    // GET /api/talk/graph?root=<talkSessionId> — full delegation-tree snapshot
+    // for (re)connect rehydration; live deltas stream as talk:graph WS events.
+    if (method === "GET" && pathname === "/api/talk/graph") {
+      const rootId = url.searchParams.get("root") || "";
+      const root = rootId ? getSession(rootId) : undefined;
+      if (!root || root.source !== "talk") {
+        badRequest(res, "root must be an existing talk session id");
+        return true;
+      }
+      json(res, { rootId: root.id, nodes: buildGraphSnapshot(root.id, listChildSessions) });
       return true;
     }
 

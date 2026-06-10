@@ -74,6 +74,7 @@ import { handleTalkApi } from "../talk/routes.js";
 import { getOrchestratorPersona } from "../talk/orchestrator-persona.js";
 import { feedTalkText, flushTalkSpeech, discardTalkSpeech } from "../talk/tts-stream.js";
 import { isTalkMuted } from "../talk/mute-state.js";
+import { maybeEmitTalkGraph } from "../talk/graph.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -593,6 +594,7 @@ export async function handleApiRequest(
         engine.kill(params.id, "Interrupted: session deleted");
       }
 
+      maybeEmitTalkGraph(params.id, "removed", { getSession, emit: context.emit });
       const deleted = deleteSession(params.id);
       if (!deleted) return notFound(res);
       logger.info(`Session deleted: ${params.id}`);
@@ -767,6 +769,9 @@ export async function handleApiRequest(
         }
       }
 
+      for (const id of ids) {
+        maybeEmitTalkGraph(id, "removed", { getSession, emit: context.emit });
+      }
       const count = deleteSessions(ids);
       for (const id of ids) {
         context.emit("session:deleted", { sessionId: id });
@@ -838,6 +843,7 @@ export async function handleApiRequest(
           context.emit("talk:focus", { cooId: session.id, label, parentId: talkParent.id });
         }
       }
+      maybeEmitTalkGraph(session.id, "added", { getSession, emit: context.emit });
       // First-message attachments were uploaded before the session existed (FILES_DIR).
       // Re-home them under uploads/<date>/<sessionId>/ now that we have an id, then persist
       // the media on the user message so the bubble renders chips/thumbnails on reload.
@@ -901,6 +907,7 @@ export async function handleApiRequest(
           context.emit("talk:focus", { cooId: session.id, label: session.title || "", parentId: talkParent.id });
         }
       }
+      maybeEmitTalkGraph(session.id, "status", { getSession, emit: context.emit });
 
       // Allow internal callers (e.g. child session callbacks) to specify a non-user role
       const messageRole: string = body.role === "notification" ? "notification" : "user";
@@ -2107,6 +2114,7 @@ async function runWebSession(
       lastError: errMsg,
     });
     context.emit("session:completed", { sessionId: currentSession.id, result: null, error: errMsg });
+    maybeEmitTalkGraph(currentSession.id, "completed", { getSession, emit: context.emit });
     // Wake the parent COO if this was a delegated child session (parity with
     // the normal error path; no-op for top-level sessions).
     if (erroredSession) {
@@ -2425,6 +2433,7 @@ async function runWebSession(
               cost: fallbackResult.cost,
               durationMs: fallbackResult.durationMs,
             });
+            maybeEmitTalkGraph(currentSession.id, "completed", { getSession, emit: context.emit });
           },
           onWaitingStart: ({ resumeAt }) => {
             const resumeText = resumeAt
@@ -2489,6 +2498,7 @@ async function runWebSession(
               cost: retryResult.cost,
               durationMs: retryResult.durationMs,
             });
+            maybeEmitTalkGraph(currentSession.id, "completed", { getSession, emit: context.emit });
           },
           onTimeout: () => {
             notifyDiscordChannel(
@@ -2507,6 +2517,7 @@ async function runWebSession(
               result: null,
               error: "Claude usage limit did not clear in time",
             });
+            maybeEmitTalkGraph(currentSession.id, "completed", { getSession, emit: context.emit });
           },
         },
       });
@@ -2569,6 +2580,7 @@ async function runWebSession(
       cost: result.cost,
       durationMs: result.durationMs,
     });
+    maybeEmitTalkGraph(currentSession.id, "completed", { getSession, emit: context.emit });
 
     logger.info(
       `Web session ${currentSession.id} completed` +
@@ -2596,6 +2608,7 @@ async function runWebSession(
       result: null,
       error: errMsg,
     });
+    maybeEmitTalkGraph(currentSession.id, "completed", { getSession, emit: context.emit });
     logger.error(`Web session ${currentSession.id} error: ${errMsg}`);
   }
 }

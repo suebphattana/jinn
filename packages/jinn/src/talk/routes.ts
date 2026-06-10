@@ -21,10 +21,17 @@ import type { JinnConfig } from "../shared/types.js";
 import { CONFIG_PATH } from "../shared/paths.js";
 import { saveConfigAtomic } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
-import { createSession, getSessionBySessionKey, updateSession } from "../sessions/registry.js";
+import {
+  createSession,
+  getSession,
+  getSessionBySessionKey,
+  listChildSessions,
+  updateSession,
+} from "../sessions/registry.js";
 import { engineAvailable, isKnownEngine, type EngineName } from "../shared/models.js";
 import { resolveTalkEngine, type TalkEngineResolution } from "./engine-resolver.js";
 import { validateCard, validateCardPatch } from "./card-validate.js";
+import { delegateToThread } from "./delegate.js";
 import { setTalkMuted } from "./mute-state.js";
 import { TALK_EVENTS } from "./protocol.js";
 import { getTalkTts } from "./tts-stream.js";
@@ -383,6 +390,43 @@ export async function handleTalkApi(
       }
       context.emit(TALK_EVENTS.cardClear, { sessionId: body.sessionId });
       json(res, { ok: true });
+      return true;
+    }
+
+    // POST /api/talk/delegate — server-owned spawn-vs-continue for COO threads.
+    // The orchestrator's ONLY delegation surface: thread:"new" spawns a COO child,
+    // thread:"<id>" continues that child. Goes through the normal /api/sessions
+    // routes internally so queueing/talk:focus/parent-callbacks behave identically.
+    if (method === "POST" && pathname === "/api/talk/delegate") {
+      const parsed = await readJsonBody(req, res);
+      if (!parsed.ok) return true;
+      const config = context.getConfig();
+      const base = `http://127.0.0.1:${config.gateway?.port || 7777}`;
+      const result = await delegateToThread(parsed.body, {
+        getSession,
+        listChildSessions,
+        updateSession: (id, updates) => updateSession(id, updates),
+        emit: context.emit,
+        spawnChild: async ({ prompt, parentSessionId }) => {
+          const r = await fetch(`${base}/api/sessions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt, parentSessionId }),
+          });
+          if (!r.ok) throw new Error(`spawn failed (${r.status})`);
+          return (await r.json()) as { id: string };
+        },
+        continueThread: async (id, message) => {
+          const r = await fetch(`${base}/api/sessions/${encodeURIComponent(id)}/message`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message }),
+          });
+          if (!r.ok) throw new Error(`continue failed (${r.status})`);
+        },
+      });
+      if (result.ok) json(res, result);
+      else json(res, { error: result.error, threads: result.threads }, result.status);
       return true;
     }
 

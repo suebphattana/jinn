@@ -70,6 +70,31 @@ describe("per-sentence streaming", () => {
   })
 })
 
+describe("speech sanitization in queueSentence", () => {
+  const speak = vi.fn(async (_sid: string, _text: string, _emit: unknown, _opts?: unknown) => 1)
+  beforeEach(() => {
+    speak.mockClear()
+    __setTalkTtsForTest({ speak } as never)
+  })
+
+  it("sanitizes markdown before speaking: **Done.** → Done.", async () => {
+    const emit = vi.fn()
+    // No trailing whitespace after the period → stays buffered → spoken via flush
+    feedTalkText("san1", "**Done.**", undefined, emit)
+    await flushTalkSpeech("san1", undefined, emit)
+    expect(speak).toHaveBeenCalledTimes(1)
+    expect(speak.mock.calls[0][1]).toBe("Done.")
+  })
+
+  it("sanitizes sentence to empty (UUID remainder) → zero speak calls", async () => {
+    const emit = vi.fn()
+    // A bare UUID with no terminator stays in the buffer as remainder.
+    feedTalkText("san2", "94f97239-b6ab-4101-8e37-48814246d7c1", undefined, emit)
+    await flushTalkSpeech("san2", undefined, emit)
+    expect(speak).not.toHaveBeenCalled()
+  })
+})
+
 describe("per-turn serialization (audio-death race)", () => {
   // Record (text, opts, started-at, resolved-at) for every speak call. The first
   // call is SLOW (50ms) so a second turn fired before it resolves would, without

@@ -15,6 +15,7 @@
 import { createKokoroTts } from "./kokoro.js";
 import type { Tts, Emit } from "./protocol.js";
 import { logger } from "../shared/logger.js";
+import { toSpeakable } from "./speakable.js";
 
 type KokoroOpts = Parameters<typeof createKokoroTts>[0];
 
@@ -98,8 +99,10 @@ function queueSentence(sessionId: string, t: TurnState, text: string, opts: Koko
       try { await prevTail; } catch { /* predecessor failure must not strand us */ }
     }
     if (t.epoch !== epoch || t.failed) return;
+    const speakable = toSpeakable(text);
+    if (!speakable) return; // nothing worth speaking — do NOT bump seq
     try {
-      const n = await getTalkTts(opts).speak(sessionId, text, emit, { seqStart: t.seq, final });
+      const n = await getTalkTts(opts).speak(sessionId, speakable, emit, { seqStart: t.seq, final });
       t.seq += n;
     } catch (err) {
       t.failed = true;

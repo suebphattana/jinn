@@ -21,6 +21,14 @@
   transition: opacity 480ms var(--ease-smooth, cubic-bezier(0.4, 0, 0.2, 1));
 }
 
+/* Input-open modifier: when the type-to-talk bar is visible the stream's scroll
+   viewport must reserve space equal to the bar height (h-10 = 40px) plus the
+   gap-3 gutter (12px) that the flex layout adds above it, so the last row
+   stays fully above the input instead of sliding behind it. */
+.cstream.cstream--input-open {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 202px);
+}
+
 /* At idle the conversation recedes — the orb is the focus. */
 .cstream[data-state="idle"] {
   opacity: 0.6;

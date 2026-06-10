@@ -191,6 +191,7 @@ export default function TalkPage() {
         inlineCards={inlineCards}
         cardAnchorFor={talk.cardAnchorFor}
         onCardAction={talk.cardAction}
+        className={typing ? "cstream--input-open" : undefined}
       />
 
       {/* The orchestrator orb sits centered, morphing toward the focused (most-
@@ -228,7 +229,7 @@ export default function TalkPage() {
         <div
           className="pointer-events-none absolute inset-x-0 z-20 flex items-end justify-center overflow-hidden px-4"
           style={{
-            bottom: "calc(max(env(safe-area-inset-bottom), 22px) + 96px)",
+            bottom: `calc(max(env(safe-area-inset-bottom), 22px) + ${typing ? 148 : 96}px)`,
             maxHeight: "46dvh",
           }}
         >

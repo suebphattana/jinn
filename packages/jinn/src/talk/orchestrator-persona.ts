@@ -22,8 +22,8 @@
  * fallback used when the file is absent/empty/unreadable.
  */
 import { readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { JINN_HOME } from "../shared/paths.js";
 
 export const DEFAULT_ORCHESTRATOR_PERSONA = `# AURA — the hands-free voice orchestrator
 
@@ -81,8 +81,10 @@ Stay terse. Speak the headline, card the detail, route the depth.`;
  */
 export const ORCHESTRATOR_PERSONA = DEFAULT_ORCHESTRATOR_PERSONA;
 
-/** The hot-reloadable persona file, editable without a rebuild/restart. */
-export const PERSONA_FILE = join(homedir(), ".jinn", "talk", "orchestrator-persona.md");
+/** The hot-reloadable persona file, editable without a rebuild/restart.
+ *  Resolved via JINN_HOME (not a hardcoded ~/.jinn) so isolated/test gateways
+ *  never hot-load the production persona. */
+export const PERSONA_FILE = join(JINN_HOME, "talk", "orchestrator-persona.md");
 
 let cached: { mtimeMs: number; text: string } | null = null;
 

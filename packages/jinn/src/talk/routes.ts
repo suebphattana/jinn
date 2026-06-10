@@ -19,6 +19,7 @@ import type { ApiContext } from "../gateway/api.js";
 import { readJsonBody } from "../gateway/http-helpers.js";
 import type { JinnConfig } from "../shared/types.js";
 import { CONFIG_PATH } from "../shared/paths.js";
+import { saveConfigAtomic } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
 import { createSession, getSessionBySessionKey, updateSession } from "../sessions/registry.js";
 import { engineAvailable, isKnownEngine, type EngineName } from "../shared/models.js";
@@ -231,7 +232,7 @@ export async function handleTalkApi(
         const talkCfg = cfg.talk as Record<string, unknown>;
         if (engine !== undefined) talkCfg.engine = engine;
         if (model !== undefined) talkCfg.orchestratorModel = model;
-        fs.writeFileSync(CONFIG_PATH, yaml.dump(cfg, { lineWidth: -1 }));
+        saveConfigAtomic(cfg, { lineWidth: -1 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         json(res, { ok: false, error: `Failed to persist talk engine: ${msg}` }, 500);

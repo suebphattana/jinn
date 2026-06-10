@@ -49,6 +49,7 @@ import {
   TMP_DIR,
   FILES_DIR,
 } from "../shared/paths.js";
+import { saveConfigAtomic } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
 import { getSttStatus, downloadModel, transcribe as sttTranscribe, resolveLanguages, WHISPER_LANGUAGES } from "../stt/stt.js";
 import { JINN_HOME } from "../shared/paths.js";
@@ -67,7 +68,7 @@ import { readJsonBody, readBodyRaw } from "./http-helpers.js";
 import { readJsonlTail } from "./jsonl-tail.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "../sessions/callbacks.js";
 import { loadInstances } from "../cli/instances.js";
-import { handleHookPost, LOOPBACK as HOOK_LOOPBACK } from "./hook-endpoint.js";
+import { handleHookPost, isLoopback } from "./hook-endpoint.js";
 import { handleTalkApi } from "../talk/routes.js";
 import { getOrchestratorPersona } from "../talk/orchestrator-persona.js";
 import { feedTalkText, flushTalkSpeech, discardTalkSpeech } from "../talk/tts-stream.js";
@@ -1003,18 +1004,13 @@ export async function handleApiRequest(
     // GET /api/cron
     if (method === "GET" && pathname === "/api/cron") {
       const jobs = loadJobs();
-      // Enrich with last run status
-      const enriched = jobs.map((job) => {
+      // Enrich with last run status — tail-read only the newest entry, the
+      // run logs are append-only JSONL that grows forever.
+      const enriched = await Promise.all(jobs.map(async (job) => {
         const runFile = path.join(CRON_RUNS, `${job.id}.jsonl`);
-        let lastRun = null;
-        if (fs.existsSync(runFile)) {
-          const lines = fs.readFileSync(runFile, "utf-8").trim().split("\n").filter(Boolean);
-          if (lines.length > 0) {
-            try { lastRun = JSON.parse(lines[lines.length - 1]); } catch {}
-          }
-        }
-        return { ...job, lastRun };
-      });
+        const { entries } = await readJsonlTail(runFile, 1);
+        return { ...job, lastRun: entries[0] ?? null };
+      }));
       return json(res, enriched);
     }
 
@@ -1357,8 +1353,7 @@ export async function handleApiRequest(
         existing = yaml.load(fs.readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown> || {};
       } catch { /* start fresh if unreadable */ }
       const merged = deepMerge(existing, body);
-      const yamlStr = yaml.dump(merged);
-      fs.writeFileSync(CONFIG_PATH, yamlStr);
+      saveConfigAtomic(merged);
       context.reloadConfig?.(); // refresh in-memory config now (don't wait on the watcher)
       invalidateModelRegistry(); // models/engines may have changed — rebuild on next read
       logger.info("Config updated via API");
@@ -1601,8 +1596,7 @@ export async function handleApiRequest(
       // Write updated config, then refresh the in-memory copy synchronously so
       // GET /api/onboarding reflects onboarded:true immediately (not after the
       // debounced file-watcher fires ~1s later).
-      const yamlStr = yaml.dump(updated, { lineWidth: -1 });
-      fs.writeFileSync(CONFIG_PATH, yamlStr);
+      saveConfigAtomic(updated, { lineWidth: -1 });
       context.reloadConfig?.();
       logger.info(`Onboarding: portal name="${portalName}", operator="${operatorName}", language="${language}"`);
 
@@ -1665,7 +1659,7 @@ export async function handleApiRequest(
           sttCfg.enabled = true;
           sttCfg.model = model;
           if (!sttCfg.languages) sttCfg.languages = ["en"];
-          fs.writeFileSync(CONFIG_PATH, yaml.dump(cfg, { lineWidth: -1 }));
+          saveConfigAtomic(cfg, { lineWidth: -1 });
         } catch (err) {
           logger.error(`Failed to update config after STT download: ${err}`);
         }
@@ -1737,7 +1731,7 @@ export async function handleApiRequest(
         sttCfg.languages = langs;
         // Remove deprecated language field if present
         delete sttCfg.language;
-        fs.writeFileSync(CONFIG_PATH, yaml.dump(cfg, { lineWidth: -1 }));
+        saveConfigAtomic(cfg, { lineWidth: -1 });
         return json(res, { status: "ok", languages: langs });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1765,7 +1759,7 @@ export async function handleApiRequest(
       // Loopback check FIRST — before reading the body — so a non-loopback
       // caller can't force unbounded body buffering by sending a huge POST.
       const remote = req.socket.remoteAddress;
-      if (!remote || !HOOK_LOOPBACK.has(remote)) {
+      if (!isLoopback(remote)) {
         return json(res, { message: "forbidden" }, 403);
       }
       // Reject oversized bodies up front via Content-Length, then enforce

@@ -7,8 +7,6 @@ export interface HookEndpointCtx {
   remoteAddress: string | undefined;
 }
 
-export const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-
 /**
  * True if `addr` is a loopback address. Normalizes before comparing: lowercase,
  * strips the IPv4-mapped `::ffff:` prefix, and accepts `::1` plus the whole

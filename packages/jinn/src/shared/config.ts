@@ -79,3 +79,15 @@ export function loadConfig(): JinnConfig {
   config.engines.claude = normalizeClaudeEngineConfig(config.engines.claude);
   return config;
 }
+
+/**
+ * Atomically persist a config object to config.yaml. The live gateway
+ * hot-reloads config.yaml via a file watcher, so a torn write would be
+ * consumed mid-write — write to a tmp file in the same directory, then rename.
+ * `dumpOptions` is forwarded to yaml.dump so call sites keep their formatting.
+ */
+export function saveConfigAtomic(config: unknown, dumpOptions?: yaml.DumpOptions): void {
+  const tmpPath = `${CONFIG_PATH}.tmp-${process.pid}`;
+  fs.writeFileSync(tmpPath, yaml.dump(config, dumpOptions), "utf-8");
+  fs.renameSync(tmpPath, CONFIG_PATH);
+}

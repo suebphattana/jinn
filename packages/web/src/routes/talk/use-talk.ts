@@ -98,6 +98,9 @@ export interface TalkEngineInfo {
 
 export interface UseTalkReturn {
   state: AvatarState
+  /** This talk session's id (orchestratorId) — the `sessionId` for talkDelegate
+   *  calls. Null until the orchestrator session is bootstrapped. */
+  orchestratorId: string | null
   /** The persistent conversation: user lines, AURA replies, delegation chips. */
   rows: StreamRow[]
   /**
@@ -942,7 +945,7 @@ export function useTalk(): UseTalkReturn {
 
   return useMemo(
     () => ({
-      state, rows, graph, sideState, focusHue, targetThreadId, cards, level,
+      state, orchestratorId, rows, graph, sideState, focusHue, targetThreadId, cards, level,
       resolvedCardIds, cardAnchorFor,
       connected: gateway.connected,
       listening,
@@ -961,6 +964,6 @@ export function useTalk(): UseTalkReturn {
       activate, cardAction,
       startListening, stop, stopSpeaking,
     }),
-    [state, rows, graph, sideState, focusHue, targetThreadId, cards, level, resolvedCardIds, cardAnchorFor, gateway.connected, listening, stt.available, stt.error, stt.state, stt.downloadProgress, stt.startDownload, ttsStatus, voiceMode, muted, toggleMute, sendText, dismissSttDownload, engineInfo, switchEngine, switchModel, selectThread, renameThread, dismissThread, activate, cardAction, startListening, stop, stopSpeaking],
+    [state, orchestratorId, rows, graph, sideState, focusHue, targetThreadId, cards, level, resolvedCardIds, cardAnchorFor, gateway.connected, listening, stt.available, stt.error, stt.state, stt.downloadProgress, stt.startDownload, ttsStatus, voiceMode, muted, toggleMute, sendText, dismissSttDownload, engineInfo, switchEngine, switchModel, selectThread, renameThread, dismissThread, activate, cardAction, startListening, stop, stopSpeaking],
   )
 }

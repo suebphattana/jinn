@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { ArrowLeft, Mic, Square, Sun, Moon, Keyboard, Volume2, VolumeX, Send } from "lucide-react"
+import { ArrowLeft, Mic, Square, Sun, Moon, Keyboard, Volume2, VolumeX, Send, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { mainButtonMode } from "./main-button"
 import { useTheme } from "@/routes/providers"
@@ -17,7 +17,10 @@ import { ConversationStream } from "./conversation-stream"
 import { PinnedCards, selectInlineCards, selectPinnedCards } from "./cards/card-stack"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { WorkDock } from "./work-dock"
-import { ChildSessionModal } from "./child-session-modal"
+import { SessionPeek } from "./session-peek"
+import { SessionSearchSheet } from "./session-search-sheet"
+import { AttachBanner } from "./attach-banner"
+import { hasEngageAttachment } from "./session-search"
 import { TalkEnginePicker } from "./talk-engine-picker"
 import { TalkVoiceIndicator } from "./talk-voice-indicator"
 import { WhisperDownloadModal } from "@/components/stt/whisper-download-modal"
@@ -40,8 +43,11 @@ export default function TalkPage() {
     () => selectPinnedCards(talk.cards, talk.resolvedCardIds),
     [talk.cards, talk.resolvedCardIds],
   )
-  // Which COO child session's chat the modal is showing (null → closed).
+  // Which session's chat the peek popup is showing (null → closed).
   const [chatSessionId, setChatSessionId] = useState<string | null>(null)
+  // Session-search sheet (opened from the top-bar search icon).
+  const [searchOpen, setSearchOpen] = useState(false)
+  const showAttachBanner = useMemo(() => hasEngageAttachment(talk.graph), [talk.graph])
   // Type-to-talk: a tucked-away text input for when you can't (or don't want to)
   // speak. Sends via the same path as a voice turn. Works without the mic/STT.
   const [typing, setTyping] = useState(false)
@@ -128,6 +134,15 @@ export default function TalkPage() {
           Jinn · Talk <span className="text-[var(--accent)]">// AURA</span>
         </span>
         <div className="flex items-center gap-2">
+          {/* Session search — opens the search sheet (title + message FTS). */}
+          <button
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search sessions"
+            title="Search sessions"
+            className="inline-flex size-9 items-center justify-center rounded-full border border-[var(--separator)] bg-[var(--material-regular)] text-[var(--text-secondary)] backdrop-blur-md transition-colors active:bg-[var(--fill-secondary)]"
+          >
+            <Search size={16} />
+          </button>
           {/* Engine/model picker — tiny gear, tucked beside the theme toggle. */}
           <TalkEnginePicker
             engineInfo={talk.engineInfo}
@@ -158,6 +173,12 @@ export default function TalkPage() {
           </button>
         </div>
       </div>
+
+      {/* Engage-attachment banner(s) — one slim strip per live engage soft link,
+          just under the top bar. Mounts only when an engage attachment exists. */}
+      {showAttachBanner && (
+        <AttachBanner graph={talk.graph} orchestratorId={talk.orchestratorId} />
+      )}
 
       {/* Persistent conversation — user lines, AURA karaoke replies, delegation
           chips. Replaces the old single-exchange transcript + hidden history rail.
@@ -306,11 +327,19 @@ export default function TalkPage() {
         </div>
       </div>
 
-      {/* Read-only chat popup for a tapped COO child session (chip or orb). */}
-      <ChildSessionModal
+      {/* Peek popup for a tapped session (chip, orb, or search row) — now with
+          attach controls + engage composer. */}
+      <SessionPeek
         sessionId={chatSessionId}
         open={!!chatSessionId}
         onClose={() => setChatSessionId(null)}
+      />
+
+      {/* Session-search sheet (title + message FTS), opened from the top bar. */}
+      <SessionSearchSheet
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onPeek={setChatSessionId}
       />
 
       {/* Whisper STT model-download — shown when the mic is tapped on a fresh

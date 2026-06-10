@@ -177,6 +177,44 @@ export interface EnginesResponse {
   engines: Record<string, EngineRegistryEntry>;
 }
 
+// --- Talk: session search + delegate (Mission Control) ---
+export interface TalkSearchHit {
+  snippet: string
+  role: string
+  ts: number
+}
+export interface TalkSearchResult {
+  sessionId: string
+  title: string | null
+  employee: string | null
+  source: string
+  lastActivity: string
+  status: string
+  isTalkChild: boolean
+  hits: TalkSearchHit[]
+}
+export interface TalkSearchResponse {
+  ok: true
+  results: TalkSearchResult[]
+}
+/** POST /api/talk/delegate body — see talkDelegate() / the server delegate.ts. */
+export interface TalkDelegateBody {
+  /** The caller's own talk session id (orchestratorId). Required. */
+  sessionId: string
+  /** "new" to spawn, or a session id to continue / attach / detach. */
+  thread: string
+  attach?: boolean
+  detach?: boolean
+  mode?: "observe" | "engage"
+  brief?: string
+  label?: string
+  utterance?: string
+}
+export type TalkDelegateResult =
+  | { ok: true; threadId: string; created: boolean }
+  | { ok: true; threadId: string; attached: true; mode: "observe" | "engage" }
+  | { ok: true; threadId: string; detached: true }
+
 export const api = {
   getStatus: () => get<Record<string, unknown>>("/api/status"),
   /** Resolved model + capability registry (engines, their models, effort levels). */
@@ -335,6 +373,25 @@ export const api = {
    */
   talkSetMuted: (body: { sessionId: string; muted: boolean }) =>
     post<{ ok: boolean; muted: boolean }>("/api/talk/mute", body),
+  /**
+   * Talk: search sessions by title/metadata + message content (FTS). Returns
+   * merged, de-duped results (≤20, ≤3 hits each); snippets carry «» highlight
+   * markers. Throws on 4xx with the backend `error` message.
+   */
+  talkSearch: (q: string, limit?: number) =>
+    get<TalkSearchResponse>(
+      `/api/talk/search?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ""}`,
+    ),
+  /**
+   * Talk: server-owned delegate surface — spawn (thread:"new"), continue an
+   * owned COO thread (thread:"<id>"), or attach/detach a soft link
+   * (attach:true / detach:true, optional mode:"observe"|"engage" + brief).
+   * NOTE: a follow-up to an ALREADY-attached engage session does NOT go here
+   * (both delegate paths 400 — see session-peek's composer, which uses
+   * sendMessage instead). Throws on 4xx with the backend `error` message.
+   */
+  talkDelegate: (body: TalkDelegateBody) =>
+    post<TalkDelegateResult>("/api/talk/delegate", body),
   getSessionQueue: (id: string) =>
     get<QueueItem[]>(`/api/sessions/${id}/queue`),
   cancelQueueItem: (sessionId: string, itemId: string) =>

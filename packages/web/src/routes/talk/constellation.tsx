@@ -51,10 +51,11 @@ export function Constellation({ state, level, threads, graph, onOpenSession }: C
   const { shown: sats, overflow } = visibleThreads(threads)
   const hasKids = sats.length > 0
 
-  // The channel in focus = the most recently active orbiting thread still
-  // working (non-idle). The main orb morphs toward its hue; its satellite +
+  // The channel in focus = the most recently active thread still working
+  // (non-idle). visibleThreads already sorts working-first, newest-first, so a
+  // plain find yields it. The main orb morphs toward its hue; its satellite +
   // link are highlighted, the others recede. Null → pure AURA identity.
-  const activeChild = [...sats].reverse().find((c) => c.state !== "idle") ?? null
+  const activeChild = sats.find((c) => c.state !== "idle") ?? null
   const activeId = activeChild?.id ?? null
   const mainHue = activeChild?.hue
 
@@ -167,9 +168,19 @@ export function Constellation({ state, level, threads, graph, onOpenSession }: C
                     <span
                       key={d.id}
                       className={`cst-mini${isWorking(d) ? " cst-mini-working" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open sub-agent: ${d.label}`}
                       title={`${d.label}${d.employee ? ` (${d.employee})` : ""} — ${d.status}`}
                       style={{ background: `hsl(${c.hue} 64% ${isWorking(d) ? 62 : 38}%)` }}
                       onClick={(e) => { e.stopPropagation(); onOpenSession?.(d.id) }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          onOpenSession?.(d.id)
+                        }
+                      }}
                     />
                   ))}
                 </div>

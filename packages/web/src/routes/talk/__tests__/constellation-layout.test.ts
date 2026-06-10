@@ -24,6 +24,17 @@ describe("visibleThreads", () => {
     expect(v.shown).toHaveLength(MAX_SATELLITES)
     expect(v.overflow).toBe(3)
   })
+  it("orders concurrent working threads newest-first (focus = shown[0])", () => {
+    // The constellation derives the focused channel as the FIRST non-idle entry,
+    // so with several COOs running the newest-active one must lead.
+    const threads = [
+      t("older-working", { ts: 10, state: "thinking" }),
+      t("idle", { ts: 99 }),
+      t("newer-working", { ts: 20, state: "thinking" }),
+    ]
+    const v = visibleThreads(threads)
+    expect(v.shown.map((x) => x.id)).toEqual(["newer-working", "older-working", "idle"])
+  })
 })
 
 describe("miniDotsFor", () => {

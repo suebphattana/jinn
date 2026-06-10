@@ -40,14 +40,29 @@ interface TurnState {
   epoch: number;
   /** A synth failure stops mid-turn streaming for the rest of the turn. */
   failed: boolean;
+  /** flushTalkSpeech sets this; the next feed then starts a fresh turn. */
+  finalized: boolean;
+  /** True once this turn's first sentence has chained after the predecessor tail. */
+  waited: boolean;
 }
 
 const turns = new Map<string, TurnState>();
+/**
+ * Last (or in-flight) synth chain per session. A NEW turn chains its first
+ * sentence after this so all of turn N's audio events — including its `last:true`
+ * — are emitted strictly before any of turn N+1's. Without it, a turn that begins
+ * while the previous turn's synth is still pending interleaves their audio events,
+ * and turn N's `last:true` can land after turn N+1's first chunks (the frontend
+ * reads that as stream-end → silence until the next user gesture resumes audio).
+ */
+const tails = new Map<string, Promise<void>>();
 
 function getTurn(sessionId: string): TurnState {
   let t = turns.get(sessionId);
-  if (!t) {
-    t = { buffer: "", seq: 0, chain: Promise.resolve(), epoch: 0, failed: false };
+  // A finalized turn is awaiting its own tail; the next feed starts a fresh turn
+  // (which will chain after that tail) rather than appending to the closed one.
+  if (!t || t.finalized) {
+    t = { buffer: "", seq: 0, chain: Promise.resolve(), epoch: 0, failed: false, finalized: false, waited: false };
     turns.set(sessionId, t);
   }
   return t;
@@ -73,7 +88,15 @@ export function extractSentences(buffer: string): { complete: string[]; rest: st
 
 function queueSentence(sessionId: string, t: TurnState, text: string, opts: KokoroOpts | undefined, emit: Emit, final: boolean): void {
   const epoch = t.epoch;
+  // The turn's FIRST sentence waits for the previous turn's tail so this turn's
+  // events never interleave with the predecessor's (later sentences chain off
+  // t.chain and inherit the wait). Cleared after one use so we wait at most once.
+  const prevTail = t.waited ? undefined : tails.get(sessionId);
+  t.waited = true;
   t.chain = t.chain.then(async () => {
+    if (prevTail) {
+      try { await prevTail; } catch { /* predecessor failure must not strand us */ }
+    }
     if (t.epoch !== epoch || t.failed) return;
     try {
       const n = await getTalkTts(opts).speak(sessionId, text, emit, { seqStart: t.seq, final });
@@ -117,9 +140,17 @@ export async function flushTalkSpeech(
   const rest = t.buffer.trim();
   t.buffer = "";
   if (rest && !t.failed) queueSentence(sessionId, t, rest, opts, emit, true);
+  // Mark finalized (the next feed starts a fresh turn) and publish this turn's
+  // chain as the tail the next turn must wait for. We do NOT delete the state
+  // up front: a back-to-back next turn needs the tail to remain resolvable.
+  t.finalized = true;
   const chain = t.chain;
-  turns.delete(sessionId);
+  tails.set(sessionId, chain);
   await chain;
+  // Only clean up if a successor turn hasn't already taken our slots (never
+  // delete a successor's state or retarget its tail).
+  if (turns.get(sessionId) === t) turns.delete(sessionId);
+  if (tails.get(sessionId) === chain) tails.delete(sessionId);
 }
 
 /** Drop any buffered/queued text for a session without speaking (interrupt). */
@@ -129,4 +160,6 @@ export function discardTalkSpeech(sessionId: string): void {
   t.epoch++;
   t.buffer = "";
   turns.delete(sessionId);
+  // Don't let the next turn chain after interrupted work.
+  tails.delete(sessionId);
 }

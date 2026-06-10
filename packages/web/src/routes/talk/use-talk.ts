@@ -541,7 +541,7 @@ export function useTalk(): UseTalkReturn {
           if (mutedRef.current) break
           const ev = payload as TalkAudioEvent
           audioThisTurnRef.current = true
-          player.enqueue(ev.seq, ev.mime, ev.dataBase64)
+          player.enqueue(ev.seq, ev.mime, ev.dataBase64, ev.last)
           setState("speaking")
           startLevelLoop("output")
           break

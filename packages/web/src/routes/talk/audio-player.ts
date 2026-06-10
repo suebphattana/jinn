@@ -8,11 +8,13 @@
  *
  * Design:
  *  - One shared AudioContext (created lazily, resumed on the first user gesture).
- *  - Each `talk:audio` frame is a SELF-CONTAINED WAV. The backend speaks one
- *    sentence per call, so the per-frame `seq` resets to 0 each sentence — it is
- *    NOT a turn-global counter and must not be used to gate playback. Frames
- *    arrive in order over a single WS connection, so we simply play them in
- *    arrival order.
+ *  - Each `talk:audio` frame is a SELF-CONTAINED WAV. `seq` is monotonic WITHIN a
+ *    turn (it counts up from each speak's `seqStart`), and `last:true` rides only
+ *    the turn's FINAL frame. We don't gate playback on `seq` — frames arrive in
+ *    order over a single WS connection, so we play them in arrival order — but we
+ *    DO watch `last` to re-arm cleanly at the turn boundary (a frame after a
+ *    `last:true` is turn N+1's first frame: reset the drained-run latch and
+ *    resume a suspended context before scheduling it).
  *  - Decode + schedule is serialized on a promise chain so the moving "playhead"
  *    clock stays correct and chunks are scheduled back-to-back with no gaps,
  *    clicks, or overlaps — regardless of how fast each chunk decodes.
@@ -50,6 +52,8 @@ export class TalkAudioPlayer {
   private inFlight = 0
   /** True between the first enqueue and the queue fully draining. */
   private _playing = false
+  /** Set when a `last:true` frame is accepted; the next frame re-arms a fresh run. */
+  private ended = false
 
   private idleCb: (() => void) | null = null
   /** Reused RMS scratch buffer for the level getter. */
@@ -80,37 +84,64 @@ export class TalkAudioPlayer {
 
   /**
    * Resume the AudioContext. Must be called from a user gesture (e.g. mic click)
-   * so browsers permit playback. Safe to call repeatedly.
+   * so browsers permit playback. Safe to call repeatedly. Returns a promise that
+   * settles when the context is running (callers may ignore it).
    */
-  resume(): void {
+  resume(): Promise<void> {
     const ctx = this.ensureContext()
-    if (ctx.state === "suspended") void ctx.resume()
+    return ctx.state === "suspended" ? ctx.resume() : Promise.resolve()
+  }
+
+  /** Resume a suspended context, awaiting it — used inside the schedule chain. */
+  private async ensureResumed(): Promise<void> {
+    const ctx = this.ctx
+    if (ctx && ctx.state === "suspended") {
+      try {
+        await ctx.resume()
+      } catch {
+        /* a failed resume must not stall the chain — scheduling will no-op safely */
+      }
+    }
   }
 
   /**
    * Enqueue a base64-encoded audio chunk. Each chunk is a standalone WAV and is
-   * played in ARRIVAL ORDER (the `seq` arg is intentionally ignored — see the
-   * file header). Decode+schedule is serialized so timing stays correct.
+   * played in ARRIVAL ORDER (the `seq` arg is not used to gate — see the file
+   * header). `last` marks the final frame of a turn; the FIRST frame after a
+   * `last` re-arms a fresh playback run so subsequent turns are never stuck
+   * behind the previous turn's drained/suspended state. Decode+schedule is
+   * serialized so timing stays correct.
    */
-  enqueue(_seq: number, _mime: string, dataBase64: string): void {
-    const ctx = this.ensureContext()
-    if (ctx.state === "suspended") void ctx.resume()
+  enqueue(_seq: number, _mime: string, dataBase64: string, last = false): void {
+    this.ensureContext()
+
+    // A frame after a completed turn (`last:true`) is the next turn's first
+    // frame: re-arm so the playhead re-anchors and a suspended context resumes.
+    if (this.ended) {
+      this.ended = false
+      this.started = false
+    }
 
     let data: ArrayBuffer
     try {
       data = base64ToArrayBuffer(dataBase64)
     } catch {
+      if (last) this.ended = true // still close the turn so the next frame re-arms
       return // bad base64 — skip
     }
 
-    if (!this.started) {
-      this.started = true
-      this.playhead = ctx.currentTime
-      this._playing = true
-    }
+    this._playing = true
+    if (last) this.ended = true
 
     this.inFlight++
-    this.chain = this.chain.then(() => this.decodeAndSchedule(data))
+    // Resume BEFORE scheduling (awaited): a browser may have auto-suspended the
+    // context after the previous turn drained; a fire-and-forget resume would let
+    // source.start() race a still-suspended clock and the turn plays silently
+    // until the next user gesture. Anchoring the playhead is deferred to the
+    // schedule step so it reads a live (resumed) currentTime, not a frozen one.
+    this.chain = this.chain
+      .then(() => this.ensureResumed())
+      .then(() => this.decodeAndSchedule(data))
   }
 
   private async decodeAndSchedule(data: ArrayBuffer): Promise<void> {
@@ -130,6 +161,13 @@ export class TalkAudioPlayer {
       this.inFlight = Math.max(0, this.inFlight - 1)
       this.checkIdle()
       return
+    }
+
+    // Anchor the playhead on the first scheduled frame of a run, AFTER the
+    // context has resumed (currentTime is frozen while a context is suspended).
+    if (!this.started) {
+      this.started = true
+      this.playhead = ctx.currentTime
     }
 
     const source = ctx.createBufferSource()
@@ -199,6 +237,7 @@ export class TalkAudioPlayer {
     this.inFlight = 0
     this._playing = false
     this.activeSources = 0
+    this.ended = false
     if (this.ctx) this.playhead = this.ctx.currentTime
   }
 

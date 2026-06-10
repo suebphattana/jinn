@@ -69,3 +69,56 @@ describe("per-sentence streaming", () => {
     expect(speak.mock.calls[0][3]).toEqual({ seqStart: 0, final: true })
   })
 })
+
+describe("per-turn serialization (audio-death race)", () => {
+  // Record (text, opts, started-at, resolved-at) for every speak call. The first
+  // call is SLOW (50ms) so a second turn fired before it resolves would, without
+  // serialization, start its own chain and interleave audio events.
+  interface Rec { text: string; opts: { seqStart?: number; final?: boolean }; start: number; end: number }
+  let recs: Rec[]
+  const speak = vi.fn(
+    async (_sid: string, text: string, _emit: unknown, opts?: { seqStart?: number; final?: boolean }) => {
+      const rec: Rec = { text, opts: opts ?? {}, start: performance.now(), end: 0 }
+      recs.push(rec)
+      const delay = recs.length === 1 ? 50 : 1
+      await new Promise((r) => setTimeout(r, delay))
+      rec.end = performance.now()
+      return 1
+    },
+  )
+  beforeEach(() => {
+    recs = []
+    speak.mockClear()
+    __setTalkTtsForTest({ speak } as never)
+  })
+
+  it("turn N's last:true resolves before turn N+1's first speak starts", async () => {
+    const emit = vi.fn()
+    // Turn 1 (no trailing whitespace → stays buffered → spoken with final:true on flush).
+    feedTalkText("t", "First sentence.", undefined, emit)
+    const flush1 = flushTalkSpeech("t", undefined, emit) // do NOT await
+    // Turn 2 fires immediately, while turn 1's slow synth is still pending.
+    feedTalkText("t", "Second sentence.", undefined, emit)
+    await flushTalkSpeech("t", undefined, emit)
+    await flush1
+
+    // (a) call order is exactly First then Second.
+    expect(recs.map((r) => r.text)).toEqual(["First sentence.", "Second sentence."])
+    // (a) the second call STARTS only after the first RESOLVES.
+    expect(recs[1].start).toBeGreaterThanOrEqual(recs[0].end)
+    // (b) turn 1's call carried final:true (it was the turn's last chunk).
+    expect(recs[0].opts.final).toBe(true)
+    // both turns are fresh → each restarts seq at 0.
+    expect(recs[0].opts.seqStart).toBe(0)
+    expect(recs[1].opts.seqStart).toBe(0)
+
+    // (c) state is empty afterwards: a fresh feed+flush works normally from seq 0.
+    recs = []
+    speak.mockClear()
+    feedTalkText("t", "Third.", undefined, emit)
+    await flushTalkSpeech("t", undefined, emit)
+    expect(speak).toHaveBeenCalledTimes(1)
+    expect(recs[0].text).toBe("Third.")
+    expect(recs[0].opts).toEqual({ seqStart: 0, final: true })
+  })
+})

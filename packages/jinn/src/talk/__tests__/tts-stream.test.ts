@@ -44,7 +44,20 @@ describe("per-sentence streaming", () => {
     feedTalkText("s2", "One. Two", undefined, emit)
     discardTalkSpeech("s2")
     await flushTalkSpeech("s2", undefined, emit)
-    expect(speak.mock.calls.filter((c) => c[0] === "s2" && c[3]?.final === true)).toHaveLength(0)
+    // Let the stranded chain task (queued "One.") run — the epoch guard must drop it.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(speak.mock.calls.filter((c) => c[0] === "s2")).toHaveLength(0)
+  })
+
+  it("advances seq by the actual chunk count when kokoro re-splits a sentence", async () => {
+    const emit = vi.fn()
+    speak.mockImplementationOnce(async () => 2) // first sentence yields 2 chunks
+    feedTalkText("s4", "Hello\nthere. Next one. Tail", undefined, emit)
+    await flushTalkSpeech("s4", undefined, emit)
+    expect(speak).toHaveBeenCalledTimes(3)
+    expect(speak.mock.calls[0][3]).toEqual({ seqStart: 0, final: false })
+    expect(speak.mock.calls[1][3]).toEqual({ seqStart: 2, final: false }) // +2, not +1
+    expect(speak.mock.calls[2][3]).toEqual({ seqStart: 3, final: true })
   })
 
   it("without emit (legacy buffering) everything speaks on flush", async () => {

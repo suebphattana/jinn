@@ -10,6 +10,8 @@ export class SessionQueue {
   private cancelled = new Set<string>();
   /** Track which session keys are paused - queued tasks wait until resumed. */
   private paused = new Set<string>();
+  /** Resolvers for tasks blocked on a paused session key, woken on resume. */
+  private pauseWaiters = new Map<string, Array<() => void>>();
 
   /**
    * Check if a session is currently running.
@@ -54,6 +56,11 @@ export class SessionQueue {
 
   resumeQueue(sessionKey: string): void {
     this.paused.delete(sessionKey);
+    const waiters = this.pauseWaiters.get(sessionKey);
+    if (waiters) {
+      this.pauseWaiters.delete(sessionKey);
+      for (const wake of waiters) wake();
+    }
   }
 
   isPaused(sessionKey: string): boolean {
@@ -69,9 +76,13 @@ export class SessionQueue {
     const runTask = async () => {
       this.running.add(sessionKey);
       try {
-        // Wait while paused (500ms poll)
+        // Wait while paused — blocks until resumeQueue() wakes us (no polling)
         while (this.paused.has(sessionKey)) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise<void>(resolve => {
+            const waiters = this.pauseWaiters.get(sessionKey) ?? [];
+            waiters.push(resolve);
+            this.pauseWaiters.set(sessionKey, waiters);
+          });
         }
         if (queueItemId) markQueueItemRunning(queueItemId);
         if (!this.cancelled.has(sessionKey)) {

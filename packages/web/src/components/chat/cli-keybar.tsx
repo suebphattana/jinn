@@ -18,10 +18,17 @@ export const CLI_KEYS: readonly CliKey[] = [
   { label: 'Down', aria: 'Arrow down', data: '\x1b[B', icon: ArrowDown },
   { label: 'Left', aria: 'Arrow left', data: '\x1b[D', icon: ArrowLeft },
   { label: 'Right', aria: 'Arrow right', data: '\x1b[C', icon: ArrowRight },
-  { label: '^C', aria: 'Ctrl-C', data: '\x03', icon: X },
 ] as const
 
-export function CliKeybar({ onKey, disabled = false }: { onKey: (data: string) => void; disabled?: boolean }) {
+export function CliKeybar({
+  onKey,
+  disabled = false,
+  variant = 'icon',
+}: {
+  onKey: (data: string) => void
+  disabled?: boolean
+  variant?: 'icon' | 'hint'
+}) {
   const ref = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
 
@@ -50,20 +57,38 @@ export function CliKeybar({ onKey, disabled = false }: { onKey: (data: string) =
 
   return (
     <div ref={ref} className="relative flex justify-end">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={() => setOpen((v) => !v)}
-        disabled={disabled}
-        title="Terminal keys"
-        aria-label="Terminal keys"
-        aria-expanded={open}
-        className="text-[var(--text-quaternary)] hover:text-[var(--text-tertiary)]"
-      >
-        <Keyboard className="size-3.5" />
-      </Button>
+      {variant === 'hint' ? (
+        <button
+          type="button"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => setOpen((v) => !v)}
+          disabled={disabled}
+          title="Terminal keys"
+          aria-label="Terminal keys"
+          aria-expanded={open}
+          className="flex items-center gap-1 bg-transparent border-none cursor-pointer p-0 font-[inherit] text-[length:var(--text-caption2)] text-[var(--text-quaternary)] transition-colors hover:text-[var(--text-tertiary)] disabled:pointer-events-none disabled:opacity-50"
+        >
+          <kbd className="flex size-4 items-center justify-center rounded bg-[var(--fill-tertiary)] text-[var(--text-quaternary)]">
+            <Keyboard className="size-2.5" />
+          </kbd>
+          <span>terminal</span>
+        </button>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => setOpen((v) => !v)}
+          disabled={disabled}
+          title="Terminal keys"
+          aria-label="Terminal keys"
+          aria-expanded={open}
+          className="size-5 rounded-[var(--radius-sm)] text-[var(--text-quaternary)] opacity-70 hover:bg-[var(--fill-tertiary)] hover:text-[var(--text-tertiary)] hover:opacity-100"
+        >
+          <Keyboard className="size-3" />
+        </Button>
+      )}
 
       {open && (
         <div
@@ -90,6 +115,18 @@ export function CliKeybar({ onKey, disabled = false }: { onKey: (data: string) =
               </Button>
             )
           })}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => setOpen(false)}
+            title="Close terminal keys"
+            aria-label="Close terminal keys"
+            className="font-mono text-[length:var(--text-caption2)] text-[var(--text-secondary)]"
+          >
+            <X className="size-3.5" />
+          </Button>
         </div>
       )}
     </div>

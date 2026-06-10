@@ -461,9 +461,15 @@ export function ChatPane({
         }
         terminalActionsSlot={
           viewMode === 'cli' && sessionId ? (
+            <CliKeybar variant="hint" onKey={(data) => cliTerminalRef.current?.sendKey(data)} />
+          ) : undefined
+        }
+        mobileTerminalActionsSlot={
+          viewMode === 'cli' && sessionId ? (
             <CliKeybar onKey={(data) => cliTerminalRef.current?.sendKey(data)} />
           ) : undefined
         }
+        reserveTerminalActions={Boolean(sessionId)}
       />
     </div>
   )

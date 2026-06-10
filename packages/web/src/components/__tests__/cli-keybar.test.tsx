@@ -28,6 +28,14 @@ describe('CliKeybar', () => {
     }
   })
 
+  it('can render as a compact hint control', () => {
+    render(<CliKeybar variant="hint" onKey={vi.fn()} />)
+    const trigger = screen.getByRole('button', { name: 'Terminal keys' })
+    expect(trigger.textContent).toContain('terminal')
+    fireEvent.click(trigger)
+    expect(screen.getByRole('toolbar', { name: 'Terminal keys' })).toBeTruthy()
+  })
+
   it('every emitted sequence is in the backend allowlist (parity guard)', () => {
     for (const k of CLI_KEYS) {
       expect(BACKEND_ALLOWLIST.has(k.data)).toBe(true)
@@ -55,13 +63,6 @@ describe('CliKeybar', () => {
     expect(onKey).toHaveBeenCalledWith('\t')
   })
 
-  it('emits Ctrl-C as \\x03', () => {
-    const onKey = vi.fn()
-    openKeybar(onKey)
-    fireEvent.click(screen.getByRole('button', { name: /Ctrl-C/ }))
-    expect(onKey).toHaveBeenCalledWith('\x03')
-  })
-
   it('emits the four arrow escape sequences', () => {
     const onKey = vi.fn()
     openKeybar(onKey)
@@ -70,6 +71,14 @@ describe('CliKeybar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Arrow left' }))
     fireEvent.click(screen.getByRole('button', { name: 'Arrow right' }))
     expect(onKey.mock.calls.map((c) => c[0])).toEqual(['\x1b[A', '\x1b[B', '\x1b[D', '\x1b[C'])
+  })
+
+  it('uses the X button to close the toolbar without sending Ctrl-C', () => {
+    const onKey = vi.fn()
+    openKeybar(onKey)
+    fireEvent.click(screen.getByRole('button', { name: 'Close terminal keys' }))
+    expect(screen.queryByRole('toolbar', { name: 'Terminal keys' })).toBeNull()
+    expect(onKey).not.toHaveBeenCalled()
   })
 
   it('exposes a labelled toolbar for assistive tech', () => {

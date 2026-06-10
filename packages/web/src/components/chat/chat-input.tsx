@@ -49,8 +49,12 @@ interface ChatInputProps {
   onShortcutsClick?: () => void
   /** Optional Engine/Model/Effort selector row, rendered just above the input. */
   selectorSlot?: React.ReactNode
-  /** Optional compact controls rendered on the right side of the hint strip. */
+  /** Optional compact terminal controls rendered with the helper hints on desktop. */
   terminalActionsSlot?: React.ReactNode
+  /** Optional compact terminal controls rendered as a tucked icon on mobile. */
+  mobileTerminalActionsSlot?: React.ReactNode
+  /** Keeps the terminal hint footprint reserved when inactive to avoid mode-switch shifts. */
+  reserveTerminalActions?: boolean
 }
 
 /* ── File to MediaAttachment ─────────────────────────────── */
@@ -125,6 +129,8 @@ export function ChatInput({
   onShortcutsClick,
   selectorSlot,
   terminalActionsSlot,
+  mobileTerminalActionsSlot,
+  reserveTerminalActions,
 }: ChatInputProps) {
   const [value, setValue] = useState('')
   const [employees, setEmployees] = useState<Employee[]>([])
@@ -632,12 +638,14 @@ export function ChatInput({
         </button>
       </div>
 
-      {/* Meta strip: Engine·Model·Effort selector LEFT, hints CENTER, terminal actions RIGHT. */}
+      {/* Meta strip: Engine·Model·Effort selector LEFT, hints CENTER. */}
       <div className="flex sm:grid sm:grid-cols-[1fr_auto_1fr] items-center gap-[var(--space-2)] mt-[var(--space-1)] min-w-0">
         {/* Selector — quiet inline metadata, left, with breathing room from the edge.
             Mobile: takes the full strip width (no 1fr spacer stealing half) and
             scrolls horizontally if the pills overflow rather than wrapping. */}
-        <div className="min-w-0 ml-[10px] justify-self-start flex-1 sm:flex-initial overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{selectorSlot}</div>
+        <div className="min-w-0 ml-[10px] justify-self-start flex flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] sm:flex-initial [&::-webkit-scrollbar]:hidden">
+          {selectorSlot}
+        </div>
         {/* Hints — centered, hidden on mobile for space */}
         <div className="hidden sm:flex justify-self-center text-[length:var(--text-caption2)] text-[var(--text-quaternary)] items-center gap-[var(--space-3)]">
           <span>/ - commands</span>
@@ -651,8 +659,25 @@ export function ChatInput({
               <span>shortcuts</span>
             </button>
           )}
+          {(terminalActionsSlot || reserveTerminalActions) && (
+            <span className={terminalActionsSlot ? 'flex items-center' : 'invisible flex items-center pointer-events-none'} aria-hidden={!terminalActionsSlot}>
+              {terminalActionsSlot ?? (
+                <span className="flex items-center gap-1">
+                  <kbd className="flex size-4 items-center justify-center rounded bg-[var(--fill-tertiary)] text-[10px] leading-none">⌨</kbd>
+                  <span>terminal</span>
+                </span>
+              )}
+            </span>
+          )}
         </div>
-        <div className="justify-self-end mr-[10px] flex items-center">{terminalActionsSlot}</div>
+        <div
+          className={mobileTerminalActionsSlot ? 'mr-[10px] flex shrink-0 items-center justify-self-end sm:mr-0' : 'hidden sm:block'}
+          aria-hidden={!mobileTerminalActionsSlot}
+        >
+          {mobileTerminalActionsSlot && (
+            <div className="flex items-center sm:hidden">{mobileTerminalActionsSlot}</div>
+          )}
+        </div>
       </div>
 
       {/* STT error banner */}

@@ -48,9 +48,13 @@ const attachmentsByTalk = new Map<string, Map<string, Attachment>>();
 // Talk sessions whose meta we've already read in — prevents re-hydration from
 // clobbering in-memory writes made after the first touch.
 const hydrated = new Set<string>();
+// Set once a full cross-session scan (hydrateAllAttachments) has succeeded, so
+// the wake path can find attachments on talk sessions nobody touched this process
+// (e.g. after a gateway restart). Distinct from per-session `hydrated` markers.
+let allHydrated = false;
 
 /** Read persisted attachments into the in-memory map once per talk session. */
-function hydrate(talkId: string, deps: AttachmentDeps): void {
+function hydrate(talkId: string, deps: Pick<AttachmentDeps, "getSession">): void {
   if (hydrated.has(talkId)) return;
   hydrated.add(talkId);
   const raw = deps.getSession(talkId)?.transportMeta?.talkAttachments;
@@ -135,7 +139,8 @@ export function listAttachments(talkId: string, deps: AttachmentDeps): Attachmen
  * Reverse map: which talk sessions are attached to `targetId`. Importable with no
  * deps (in-memory scan) so T8 can wake talk sessions on a target's completion
  * without a circular dep. Only reflects talk sessions already hydrated/touched in
- * this process.
+ * this process — call hydrateAllAttachments first on the wake path so restarts
+ * don't lose wakes.
  */
 export function talkSessionsAttachedTo(targetId: string): string[] {
   const out: string[] = [];
@@ -145,8 +150,41 @@ export function talkSessionsAttachedTo(targetId: string): string[] {
   return out;
 }
 
+/** The mode a talk session holds on a target, if attached (in-memory scan, no deps). */
+export function attachmentMode(talkId: string, targetId: string): AttachMode | undefined {
+  return attachmentsByTalk.get(talkId)?.get(targetId)?.mode;
+}
+
+/** Deps for the one-time global hydration scan: read recent talk sessions + their meta. */
+export interface HydrateAllDeps {
+  getSession: (id: string) => Session | undefined;
+  /** Recent talk sessions (newest first) whose attachment meta should be loaded. */
+  listTalkSessions: () => Session[];
+}
+
+/**
+ * One-time global hydration: load attachments from EVERY recent talk session's
+ * persisted meta into the in-memory map. Guarded by a once-flag so it scans at
+ * most once per process — the lazy fix for the restart-survival gap, where an
+ * attached session could complete before anyone touched its talk session, losing
+ * the wake. Best-effort: a listing failure leaves the flag clear so a later call
+ * retries. Cheap thereafter (every subsequent call is a flag check).
+ */
+export function hydrateAllAttachments(deps: HydrateAllDeps): void {
+  if (allHydrated) return;
+  let talks: Session[];
+  try {
+    talks = deps.listTalkSessions();
+  } catch {
+    return; // leave allHydrated false so the next wake retries the scan
+  }
+  allHydrated = true;
+  for (const t of talks) hydrate(t.id, deps);
+}
+
 /** Test seam: clear all in-memory attachment state + hydration markers. */
 export function __resetAttachmentsForTest(): void {
   attachmentsByTalk.clear();
   hydrated.clear();
+  allHydrated = false;
 }

@@ -499,11 +499,13 @@ export function useTalk(): UseTalkReturn {
         const ev = payload as TalkGraphEvent
         if (ev.rootId === orchestratorIdRef.current) {
           threadIdsRef.current.add(ev.node.id)
-          if (ev.change === "removed") dispatchGraph({ type: "remove", id: ev.node.id })
+          if (ev.change === "removed" || ev.change === "detached")
+            dispatchGraph({ type: "remove", id: ev.node.id })
           else dispatchGraph({ type: "upsert", node: ev.node })
           // Depth-1 graph changes also drive the legacy thread chips so the
           // panel/constellation stay in sync without a second event source.
-          if (ev.node.depth === 1) {
+          // Attachments are soft links, not owned threads — they never become chips.
+          if (ev.node.depth === 1 && !ev.node.attached) {
             if (ev.change === "added" || ev.change === "status") {
               dispatchThread({ type: "focus", id: ev.node.id, label: ev.node.label, ts: Date.now() })
             } else if (ev.change === "completed") {

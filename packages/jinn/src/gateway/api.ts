@@ -66,7 +66,7 @@ import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, handleSessionAttachment, fileIdsToMedia, rehomeAttachmentsToSession, ensureFilesDir } from "./files.js";
 import { readJsonBody, readBodyRaw } from "./http-helpers.js";
 import { readJsonlTail } from "./jsonl-tail.js";
-import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "../sessions/callbacks.js";
+import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel, notifyAttachedTalkSessions } from "../sessions/callbacks.js";
 import { loadInstances } from "../cli/instances.js";
 import { handleHookPost, isLoopback } from "./hook-endpoint.js";
 import { scheduleOnLoadTailSync, transcriptEntryText } from "./external-turns.js";
@@ -216,7 +216,7 @@ function dispatchWebSessionRun(
     run().catch((err) => {
       const errMsg = err instanceof Error ? err.message : String(err);
       logger.error(`Web session ${session.id} dispatch error: ${errMsg}`);
-      updateSession(session.id, {
+      const erroredOnDispatch = updateSession(session.id, {
         status: "error",
         lastActivity: new Date().toISOString(),
         lastError: errMsg,
@@ -226,6 +226,10 @@ function dispatchWebSessionRun(
         result: null,
         error: errMsg,
       });
+      // This outer dispatch-error path bypasses notifyParentSession (run() failed
+      // before its own completion handling), so wake any attached talk sessions
+      // here too — otherwise an attachment wake is silently lost on a hard failure.
+      if (erroredOnDispatch) notifyAttachedTalkSessions(erroredOnDispatch, { error: errMsg });
       maybeEmitTalkGraph(session.id, "completed", { getSession, emit: context.emit });
     });
   };

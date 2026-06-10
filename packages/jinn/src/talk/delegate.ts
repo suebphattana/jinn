@@ -27,6 +27,17 @@ export interface DelegateDeps {
     detach: (talkId: string, targetId: string) => boolean;
     list: (talkId: string) => Attachment[];
   };
+  /**
+   * Emit an attachment lifecycle delta to the talk graph (attached / detached).
+   * Injected (graph.ts) so the constellation reflects the soft link immediately.
+   * Optional — delegation works without it.
+   */
+  emitAttachmentChange?: (
+    talkRootId: string,
+    target: Session,
+    change: "attached" | "detached",
+    mode: AttachMode,
+  ) => void;
 }
 
 export type DelegateResult =
@@ -117,7 +128,8 @@ export async function delegateToThread(
     }
     const targetId = b.thread.trim();
     const roster = deps.attachments.list(talk.id);
-    if (!roster.some((a) => a.targetId === targetId)) {
+    const existing = roster.find((a) => a.targetId === targetId);
+    if (!existing) {
       return {
         ok: false,
         status: 400,
@@ -126,6 +138,10 @@ export async function delegateToThread(
       };
     }
     deps.attachments.detach(talk.id, targetId);
+    const detachedTarget = deps.getSession(targetId);
+    if (detachedTarget) {
+      deps.emitAttachmentChange?.(talk.id, detachedTarget, "detached", existing.mode);
+    }
     return { ok: true, threadId: targetId, detached: true };
   }
 
@@ -169,6 +185,7 @@ export async function delegateToThread(
     if (!reg.ok) {
       return { ok: false, status: 400, error: reg.error };
     }
+    deps.emitAttachmentChange?.(talk.id, target, "attached", mode);
     // engage + brief → relay a provenance-stamped message to the adopted session.
     if (mode === "engage" && brief) {
       await deps.continueThread(targetId, relayMessage(brief, utterance));

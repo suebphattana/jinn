@@ -319,4 +319,40 @@ describe("delegateToThread", () => {
     }
     expect(d.attachments.detach).not.toHaveBeenCalled();
   });
+
+  // ── graph delta emission (attached / detached) ──────────────────────────
+  it("emits an 'attached' graph delta on a successful attach", async () => {
+    const emitAttachmentChange = vi.fn();
+    const d = attachDeps({ emitAttachmentChange });
+    await delegateToThread({ sessionId: "t1", attach: true, thread: "emp", mode: "engage" }, d);
+    expect(emitAttachmentChange).toHaveBeenCalledTimes(1);
+    const [rootId, target, change, mode] = emitAttachmentChange.mock.calls[0];
+    expect(rootId).toBe("t1");
+    expect(target.id).toBe("emp");
+    expect(change).toBe("attached");
+    expect(mode).toBe("engage");
+  });
+
+  it("emits a 'detached' graph delta (with the prior mode) on a successful detach", async () => {
+    const emitAttachmentChange = vi.fn();
+    const d = attachDeps({
+      attachments: fakeAttachments([{ targetId: "emp", mode: "engage", since: 1 }]),
+      emitAttachmentChange,
+    });
+    await delegateToThread({ sessionId: "t1", detach: true, thread: "emp" }, d);
+    expect(emitAttachmentChange).toHaveBeenCalledTimes(1);
+    const [rootId, target, change, mode] = emitAttachmentChange.mock.calls[0];
+    expect(rootId).toBe("t1");
+    expect(target.id).toBe("emp");
+    expect(change).toBe("detached");
+    expect(mode).toBe("engage");
+  });
+
+  it("does not emit a graph delta when attach is rejected (cap reached)", async () => {
+    const emitAttachmentChange = vi.fn();
+    const five = [0, 1, 2, 3, 4].map((i) => ({ targetId: `x${i}`, mode: "observe" as const, since: 1 }));
+    const d = attachDeps({ attachments: fakeAttachments(five), emitAttachmentChange });
+    await delegateToThread({ sessionId: "t1", attach: true, thread: "emp" }, d);
+    expect(emitAttachmentChange).not.toHaveBeenCalled();
+  });
 });

@@ -1,7 +1,8 @@
-import { getSession } from "./registry.js";
+import { getSession, listSessionsBySource } from "./registry.js";
 import { loadConfig } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
 import type { Session } from "../shared/types.js";
+import { hydrateAllAttachments, talkSessionsAttachedTo } from "../talk/attachments.js";
 
 /**
  * Notify the parent session that a child session has replied.
@@ -13,6 +14,12 @@ export function notifyParentSession(
   result: { result?: string | null; error?: string | null; cost?: number; durationMs?: number },
   options?: { alwaysNotify?: boolean },
 ): void {
+  // Attachment wakes are a SEPARATE relationship from parent ownership: a talk
+  // session can soft-link any session and must be woken when it finishes, even if
+  // that session has no parent (or its parent is elsewhere). So this runs before
+  // the parent early-returns and is independent of alwaysNotify.
+  notifyAttachedTalkSessions(childSession, result);
+
   if (!childSession.parentSessionId) return;
   if (options?.alwaysNotify === false) return;
 
@@ -20,6 +27,81 @@ export function notifyParentSession(
   _sendNotification(childSession, result).catch((err) => {
     logger.warn(`[callbacks] Failed to notify parent session ${childSession.parentSessionId}: ${err instanceof Error ? err.message : String(err)}`);
   });
+}
+
+/** Label for a talk wake: title → employee → "a thread". */
+function talkLabel(s: Session): string {
+  return s.title || s.employee || "a thread";
+}
+
+/**
+ * Talk-tailored wake (voice-friendly): no UUIDs/URLs in the engine `message`, a
+ * clean banner in `displayMessage`. Shared by owned-thread callbacks and
+ * attached-session wakes so both speak in the same voice.
+ */
+export function buildTalkWake(
+  label: string,
+  result: { result?: string | null; error?: string | null },
+): { message: string; displayMessage: string } {
+  if (result.error) {
+    const raw = result.error.trim();
+    const errPreview = raw.length > 500 ? raw.slice(0, 500) + "…" : raw;
+    return {
+      message:
+        `⚠️ Thread "${label}" hit an error.\n\n` +
+        `${errPreview}\n\n` +
+        `Tell the operator plainly in one short sentence — no IDs, no URLs — and offer a next step.`,
+      displayMessage: `⚠️ Thread "${label}" hit an error\n${_clean(raw, 220)}`,
+    };
+  }
+  const raw = (result.result || "").trim() || "(no output)";
+  const llmPreview = raw.length > 500 ? raw.slice(0, 500) + "…" : raw;
+  return {
+    message:
+      `📩 Thread "${label}" reported back.\n\n` +
+      `Reply preview:\n${llmPreview}\n\n` +
+      `Narrate the outcome aloud in 1–2 short sentences — no IDs, no URLs, no markdown. ` +
+      `If there is a link or detail worth seeing, push a card. ` +
+      `To follow up, delegate to this thread via /api/talk/delegate (its id is in your roster).`,
+    displayMessage: `📩 Thread "${label}" reported back\n${_clean(raw, 220)}`,
+  };
+}
+
+/**
+ * Wake every talk session that has ATTACHED the just-finished session. Fire-and-
+ * forget. De-dup: an owned child (parent IS the talk session) is already woken by
+ * the parent-callback path, so it's skipped here to avoid a double notification.
+ */
+export function notifyAttachedTalkSessions(
+  completedSession: Session,
+  result: { result?: string | null; error?: string | null },
+): void {
+  _notifyAttached(completedSession, result).catch((err) => {
+    logger.warn(`[callbacks] Failed to wake attached talk sessions: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+
+async function _notifyAttached(
+  completedSession: Session,
+  result: { result?: string | null; error?: string | null },
+): Promise<void> {
+  // Lazy one-time scan so attachments persisted before a restart are visible
+  // (this is the first/primary talkSessionsAttachedTo consumer on the wake path).
+  hydrateAllAttachments({
+    getSession,
+    listTalkSessions: () => listSessionsBySource("talk", 50),
+  });
+  const talkIds = talkSessionsAttachedTo(completedSession.id);
+  if (talkIds.length === 0) return;
+
+  const { message, displayMessage } = buildTalkWake(talkLabel(completedSession), result);
+  for (const talkId of talkIds) {
+    if (talkId === completedSession.parentSessionId) continue; // owned child — already notified
+    const talk = getSession(talkId);
+    if (!talk || talk.source !== "talk") continue;
+    if (talk.status === "error") continue;
+    await _sendRaw(talkId, message, displayMessage);
+  }
 }
 
 /**
@@ -54,7 +136,7 @@ export function notifyRateLimitResumed(
 
   let message: string;
   if (isTalkParent) {
-    const label = childSession.title || childSession.employee || "a thread";
+    const label = talkLabel(childSession);
     message = `🔄 Thread "${label}" has resumed after rate limit cleared.`;
   } else {
     const employeeName = childSession.employee || "Unknown";
@@ -90,26 +172,7 @@ async function _sendNotification(
   let message: string;
   let displayMessage: string;
   if (isTalkParent) {
-    const label = childSession.title || childSession.employee || "a thread";
-    if (result.error) {
-      const raw = result.error.trim();
-      const errPreview = raw.length > 500 ? raw.slice(0, 500) + "…" : raw;
-      message =
-        `⚠️ Thread "${label}" hit an error.\n\n` +
-        `${errPreview}\n\n` +
-        `Tell the operator plainly in one short sentence — no IDs, no URLs — and offer a next step.`;
-      displayMessage = `⚠️ Thread "${label}" hit an error\n${_clean(raw, 220)}`;
-    } else {
-      const raw = (result.result || "").trim() || "(no output)";
-      const llmPreview = raw.length > 500 ? raw.slice(0, 500) + "…" : raw;
-      message =
-        `📩 Thread "${label}" reported back.\n\n` +
-        `Reply preview:\n${llmPreview}\n\n` +
-        `Narrate the outcome aloud in 1–2 short sentences — no IDs, no URLs, no markdown. ` +
-        `If there is a link or detail worth seeing, push a card. ` +
-        `To follow up, delegate to this thread via /api/talk/delegate (its id is in your roster).`;
-      displayMessage = `📩 Thread "${label}" reported back\n${_clean(raw, 220)}`;
-    }
+    ({ message, displayMessage } = buildTalkWake(talkLabel(childSession), result));
   } else if (result.error) {
     message = `⚠️ Employee "${employeeName}" (child session ${childId}) hit an error and could not finish: ${result.error}`;
     displayMessage = `⚠️ ${employeeName} couldn't finish`;

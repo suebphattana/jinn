@@ -37,7 +37,7 @@ import { delegateToThread } from "./delegate.js";
 import { attach, detach, listAttachments } from "./attachments.js";
 import { setTalkMuted } from "./mute-state.js";
 import { TALK_EVENTS } from "./protocol.js";
-import { buildGraphSnapshot, resolveTalkRoot } from "./graph.js";
+import { buildGraphSnapshot, emitAttachmentChange, resolveTalkRoot } from "./graph.js";
 import { searchTalkSessions } from "./search.js";
 import { getTalkTts } from "./tts-stream.js";
 
@@ -202,7 +202,18 @@ export async function handleTalkApi(
         badRequest(res, "root must be an existing talk session id");
         return true;
       }
-      json(res, { rootId: root.id, nodes: buildGraphSnapshot(root.id, listChildSessions) });
+      const graphAttachmentDeps = {
+        getSession,
+        updateSessionMeta: (id: string, transportMeta: JsonObject | null) =>
+          updateSession(id, { transportMeta }),
+      };
+      json(res, {
+        rootId: root.id,
+        nodes: buildGraphSnapshot(root.id, listChildSessions, {
+          getSession,
+          listAttachments: (talkId) => listAttachments(talkId, graphAttachmentDeps),
+        }),
+      });
       return true;
     }
 
@@ -460,6 +471,8 @@ export async function handleTalkApi(
           detach: (talkId, targetId) => detach(talkId, targetId, attachmentDeps),
           list: (talkId) => listAttachments(talkId, attachmentDeps),
         },
+        emitAttachmentChange: (talkRootId, target, change, mode) =>
+          emitAttachmentChange(talkRootId, target, change, mode, context.emit),
         spawnChild: async ({ prompt, parentSessionId }) => {
           const r = await fetch(`${base}/api/sessions`, {
             method: "POST",

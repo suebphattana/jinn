@@ -19,6 +19,10 @@ export interface GraphNode {
   employee: string | null
   status: string
   lastActivity: string
+  /** Present (true) when this node is an attachment (soft link), not an owned descendant. */
+  attached?: true
+  /** Attachment mode — only on attached nodes. */
+  mode?: "observe" | "engage"
 }
 
 export type GraphAction =

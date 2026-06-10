@@ -34,6 +34,21 @@ describe("graphReducer", () => {
   })
 })
 
+describe("attachment nodes", () => {
+  it("upserts an attached node (carrying attached + mode) and removes it on detach", () => {
+    const att = n("ext", { attached: true, mode: "engage", parentId: "root", depth: 1 })
+    const added = graphReducer([n("a")], { type: "upsert", node: att })
+    const stored = added.find((x) => x.id === "ext")!
+    expect(stored.attached).toBe(true)
+    expect(stored.mode).toBe("engage")
+    expect(depth1Of(added).map((x) => x.id).sort()).toEqual(["a", "ext"])
+
+    // A "detached" delta maps to a remove action — the attachment node drops out.
+    const removed = graphReducer(added, { type: "remove", id: "ext" })
+    expect(removed.map((x) => x.id)).toEqual(["a"])
+  })
+})
+
 describe("selectors", () => {
   const nodes = [n("a"), n("b", { status: "idle" }), n("e1", { parentId: "a", depth: 2 })]
   it("graphIds returns every id at every depth", () => {

@@ -84,9 +84,13 @@ export interface SessionCompletedEvent { sessionId: string; result?: string | nu
 export interface TalkGraphNodeWire {
   id: string; parentId: string | null; depth: number; label: string
   employee: string | null; status: string; lastActivity: string
+  /** Present (true) when the node is an attachment (soft link), not an owned descendant. */
+  attached?: true
+  /** Attachment mode — only on attached nodes. */
+  mode?: "observe" | "engage"
 }
 export interface TalkGraphEvent {
   rootId: string
-  change: "added" | "status" | "completed" | "removed"
+  change: "added" | "status" | "completed" | "removed" | "attached" | "detached"
   node: TalkGraphNodeWire
 }

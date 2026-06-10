@@ -754,6 +754,15 @@ export function searchSessions(query: string, limit = 100): Session[] {
   return rows.map(rowToSession);
 }
 
+/** Recent sessions for a given source, newest first (bounded). */
+export function listSessionsBySource(source: string, limit: number): Session[] {
+  const db = initDb();
+  const rows = db
+    .prepare(`SELECT * FROM sessions WHERE source = ? ORDER BY last_activity DESC LIMIT ?`)
+    .all(source, limit) as Record<string, unknown>[];
+  return rows.map(rowToSession);
+}
+
 /** Child sessions of a parent — backed by idx_sessions_parent. */
 export function listChildSessions(parentSessionId: string): Session[] {
   const db = initDb();

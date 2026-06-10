@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Mock dependencies before importing the module under test
 vi.mock("../registry.js", () => ({
   getSession: vi.fn(),
+  listSessionsBySource: vi.fn(() => []),
 }));
 
 vi.mock("../../shared/config.js", () => ({
@@ -19,7 +20,8 @@ vi.mock("../../shared/logger.js", () => ({
 }));
 
 import { notifyParentSession, notifyRateLimitResumed } from "../callbacks.js";
-import { getSession } from "../registry.js";
+import { getSession, listSessionsBySource } from "../registry.js";
+import { attach, __resetAttachmentsForTest } from "../../talk/attachments.js";
 import type { Session } from "../../shared/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -417,6 +419,102 @@ describe("notifyRateLimitResumed — talk parent (no UUID leak)", () => {
     expect(body.message).toBe(
       `🔄 Employee "test-employee" (session child-001) has resumed after rate limit cleared.`,
     );
+  });
+});
+
+describe("notifyParentSession — attached talk-session wakes", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    __resetAttachmentsForTest();
+    fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    vi.mocked(listSessionsBySource).mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __resetAttachmentsForTest();
+    globalThis.fetch = originalFetch as typeof fetch;
+  });
+
+  const talkSession = makeSession({
+    id: "talk-1",
+    parentSessionId: null,
+    status: "idle",
+    source: "talk",
+  });
+
+  it("wakes an attaching talk session when an attached session completes (parent elsewhere)", async () => {
+    // Seed an attachment in the (real) attachments module.
+    attach("talk-1", "child-001", "observe", {
+      getSession: () => talkSession,
+      updateSessionMeta: () => {},
+    });
+    // Parent ('elsewhere') resolves to nothing; only talk-1 is a live talk session.
+    vi.mocked(getSession).mockImplementation((id: string) =>
+      id === "talk-1" ? talkSession : undefined,
+    );
+
+    const child = makeSession({ id: "child-001", parentSessionId: "elsewhere", title: "Audit job" });
+    notifyParentSession(child, { result: "All clear" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Exactly one fetch — the attachment wake to talk-1 (parent 'elsewhere' had no session).
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, opts] = fetchSpy.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:7777/api/sessions/talk-1/message");
+    const body = JSON.parse(opts.body);
+    expect(body.role).toBe("notification");
+    expect(body.message).toContain('📩 Thread "Audit job" reported back');
+    expect(body.message).toContain("All clear");
+    expect(body.message).not.toContain("child-001");
+  });
+
+  it("does NOT double-wake an owned child (parent IS the talk session)", async () => {
+    attach("talk-1", "child-001", "observe", {
+      getSession: () => talkSession,
+      updateSessionMeta: () => {},
+    });
+    vi.mocked(getSession).mockImplementation((id: string) =>
+      id === "talk-1" ? talkSession : undefined,
+    );
+
+    // parentSessionId === the talk session → the parent-callback path notifies it.
+    const child = makeSession({ id: "child-001", parentSessionId: "talk-1", title: "Owned" });
+    notifyParentSession(child, { result: "done" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Only ONE fetch (the parent callback). The attachment path skips talk-1.
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy.mock.calls[0][0]).toBe("http://127.0.0.1:7777/api/sessions/talk-1/message");
+  });
+
+  it("restart-survival: finds the attachment via global hydration of persisted meta", async () => {
+    // Simulate a fresh process: nothing attached in-memory, but a talk session's
+    // persisted meta carries the attachment. The global scan must hydrate it.
+    const talkWithMeta = makeSession({
+      id: "talk-1",
+      parentSessionId: null,
+      status: "idle",
+      source: "talk",
+      transportMeta: {
+        talkAttachments: [{ targetId: "child-001", mode: "observe", since: 1 }],
+      } as unknown as Session["transportMeta"],
+    });
+    vi.mocked(listSessionsBySource).mockReturnValue([talkWithMeta]);
+    vi.mocked(getSession).mockImplementation((id: string) =>
+      id === "talk-1" ? talkWithMeta : undefined,
+    );
+
+    const child = makeSession({ id: "child-001", parentSessionId: "elsewhere", title: "Audit job" });
+    notifyParentSession(child, { result: "All clear" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy.mock.calls[0][0]).toBe("http://127.0.0.1:7777/api/sessions/talk-1/message");
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    expect(body.message).toContain('📩 Thread "Audit job" reported back');
   });
 });
 

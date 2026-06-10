@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
-import { resolveTalkRoot, buildGraphSnapshot, maybeEmitTalkGraph } from "../graph.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  resolveTalkRoot,
+  buildGraphSnapshot,
+  maybeEmitTalkGraph,
+  emitAttachmentChange,
+} from "../graph.js";
+import { attach, __resetAttachmentsForTest } from "../attachments.js";
 import type { Session } from "../../shared/types.js";
 
 function s(id: string, over: Partial<Session> = {}): Session {
@@ -96,5 +102,126 @@ describe("maybeEmitTalkGraph", () => {
     const emit = vi.fn();
     maybeEmitTalkGraph("loner", "completed", { getSession, emit });
     expect(emit).not.toHaveBeenCalled();
+  });
+});
+
+// In-memory attachment deps for seeding the real attachments module.
+const attachDeps = {
+  getSession,
+  updateSessionMeta: () => {},
+};
+
+describe("attachment nodes in buildGraphSnapshot", () => {
+  beforeEach(() => __resetAttachmentsForTest());
+
+  it("appends an attachment as a depth-1 node with attached/mode + label", () => {
+    seedTree();
+    // An external session (parent goes elsewhere), attached to the talk root.
+    sessions.set("ext", s("ext", { parentSessionId: "elsewhere", title: "Audit job" }));
+    attach("root", "ext", "engage", attachDeps);
+
+    const nodes = buildGraphSnapshot("root", listChildSessions, {
+      getSession,
+      listAttachments: (talkId) => (talkId === "root" ? [{ targetId: "ext", mode: "engage" }] : []),
+    });
+    const att = nodes.find((n) => n.id === "ext")!;
+    expect(att).toBeDefined();
+    expect(att.depth).toBe(1);
+    expect(att.attached).toBe(true);
+    expect(att.mode).toBe("engage");
+    expect(att.parentId).toBe("root"); // renders as a satellite of the talk root
+    expect(att.label).toBe("Audit job");
+    // Owned descendants still present.
+    expect(nodes.some((n) => n.id === "coo1")).toBe(true);
+    expect(nodes.some((n) => n.id === "emp1")).toBe(true);
+  });
+
+  it("falls back to employee label when an attached session has no title", () => {
+    seedTree();
+    sessions.set("ext", s("ext", { parentSessionId: "elsewhere", title: null, employee: "auditor" }));
+    const nodes = buildGraphSnapshot("root", listChildSessions, {
+      getSession,
+      listAttachments: () => [{ targetId: "ext", mode: "observe" }],
+    });
+    expect(nodes.find((n) => n.id === "ext")!.label).toBe("auditor");
+  });
+
+  it("does NOT duplicate an attachment that is also a descendant (descendant wins)", () => {
+    seedTree();
+    // emp1 is a descendant (under coo1) AND attached to root.
+    const nodes = buildGraphSnapshot("root", listChildSessions, {
+      getSession,
+      listAttachments: () => [{ targetId: "emp1", mode: "observe" }],
+    });
+    const emp = nodes.filter((n) => n.id === "emp1");
+    expect(emp).toHaveLength(1);
+    expect(emp[0].depth).toBe(2); // true descendant depth, not an attachment node
+    expect(emp[0].attached).toBeUndefined();
+  });
+});
+
+describe("maybeEmitTalkGraph — attachment membership", () => {
+  beforeEach(() => __resetAttachmentsForTest());
+
+  it("emits a talk:graph delta to the attaching root when an ATTACHED (non-descendant) session changes", () => {
+    seedTree();
+    sessions.set("ext", s("ext", { parentSessionId: "elsewhere", title: "Audit job" }));
+    attach("root", "ext", "engage", attachDeps);
+
+    const emit = vi.fn();
+    maybeEmitTalkGraph("ext", "status", { getSession, emit });
+    expect(emit).toHaveBeenCalledTimes(1);
+    const [event, payload] = emit.mock.calls[0];
+    expect(event).toBe("talk:graph");
+    expect(payload.rootId).toBe("root");
+    expect(payload.change).toBe("status");
+    expect(payload.node.id).toBe("ext");
+    expect(payload.node.depth).toBe(1);
+    expect(payload.node.attached).toBe(true);
+    expect(payload.node.mode).toBe("engage");
+  });
+
+  it("emits BOTH a descendant delta and attachment deltas to OTHER roots", () => {
+    seedTree();
+    // A second talk root attaches emp1 (which is a descendant of root via coo1).
+    sessions.set("root2", s("root2", { source: "talk" }));
+    attach("root2", "emp1", "observe", attachDeps);
+
+    const emit = vi.fn();
+    maybeEmitTalkGraph("emp1", "status", { getSession, emit });
+    expect(emit).toHaveBeenCalledTimes(2);
+    const roots = emit.mock.calls.map((c) => c[1].rootId).sort();
+    expect(roots).toEqual(["root", "root2"]);
+    const root2Delta = emit.mock.calls.find((c) => c[1].rootId === "root2")![1];
+    expect(root2Delta.node.attached).toBe(true);
+    const rootDelta = emit.mock.calls.find((c) => c[1].rootId === "root")![1];
+    expect(rootDelta.node.attached).toBeUndefined(); // descendant node
+    expect(rootDelta.node.depth).toBe(2);
+  });
+
+  it("does NOT double-emit when a session is attached to its own descendant root (descendant wins)", () => {
+    seedTree();
+    attach("root", "emp1", "observe", attachDeps); // emp1 already a descendant of root
+    const emit = vi.fn();
+    maybeEmitTalkGraph("emp1", "status", { getSession, emit });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit.mock.calls[0][1].node.attached).toBeUndefined();
+  });
+});
+
+describe("emitAttachmentChange", () => {
+  it("emits an attached/detached delta with an attachment node", () => {
+    seedTree();
+    const target = s("ext", { parentSessionId: "elsewhere", title: "Audit job" });
+    const emit = vi.fn();
+    emitAttachmentChange("root", target, "attached", "engage", emit);
+    expect(emit).toHaveBeenCalledTimes(1);
+    const [event, payload] = emit.mock.calls[0];
+    expect(event).toBe("talk:graph");
+    expect(payload).toMatchObject({
+      rootId: "root",
+      change: "attached",
+      node: { id: "ext", depth: 1, attached: true, mode: "engage", parentId: "root" },
+    });
   });
 });

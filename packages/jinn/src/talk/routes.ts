@@ -17,7 +17,7 @@ import yaml from "js-yaml";
 import type { IncomingMessage as HttpRequest, ServerResponse } from "node:http";
 import type { ApiContext } from "../gateway/api.js";
 import { readJsonBody } from "../gateway/http-helpers.js";
-import type { JinnConfig } from "../shared/types.js";
+import type { JinnConfig, JsonObject } from "../shared/types.js";
 import { CONFIG_PATH } from "../shared/paths.js";
 import { saveConfigAtomic } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
@@ -34,6 +34,7 @@ import { engineAvailable, isKnownEngine, type EngineName } from "../shared/model
 import { resolveTalkEngine, type TalkEngineResolution } from "./engine-resolver.js";
 import { validateCard, validateCardPatch } from "./card-validate.js";
 import { delegateToThread } from "./delegate.js";
+import { attach, detach, listAttachments } from "./attachments.js";
 import { setTalkMuted } from "./mute-state.js";
 import { TALK_EVENTS } from "./protocol.js";
 import { buildGraphSnapshot, resolveTalkRoot } from "./graph.js";
@@ -442,11 +443,23 @@ export async function handleTalkApi(
       if (!parsed.ok) return true;
       const config = context.getConfig();
       const base = `http://127.0.0.1:${config.gateway?.port || 7777}`;
+      // Attachments persist by merging into the talk session's transport_meta;
+      // updateSessionMeta wraps the generic updateSession meta writer.
+      const attachmentDeps = {
+        getSession,
+        updateSessionMeta: (id: string, transportMeta: JsonObject | null) =>
+          updateSession(id, { transportMeta }),
+      };
       const result = await delegateToThread(parsed.body, {
         getSession,
         listChildSessions,
         updateSession: (id, updates) => updateSession(id, updates),
         emit: context.emit,
+        attachments: {
+          attach: (talkId, targetId, mode) => attach(talkId, targetId, mode, attachmentDeps),
+          detach: (talkId, targetId) => detach(talkId, targetId, attachmentDeps),
+          list: (talkId) => listAttachments(talkId, attachmentDeps),
+        },
         spawnChild: async ({ prompt, parentSessionId }) => {
           const r = await fetch(`${base}/api/sessions`, {
             method: "POST",
@@ -466,7 +479,12 @@ export async function handleTalkApi(
         },
       });
       if (result.ok) json(res, result);
-      else json(res, { error: result.error, threads: result.threads }, result.status);
+      else
+        json(
+          res,
+          { error: result.error, threads: result.threads, attachments: result.attachments },
+          result.status,
+        );
       return true;
     }
 

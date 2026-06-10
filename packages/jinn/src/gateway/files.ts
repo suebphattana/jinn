@@ -283,9 +283,9 @@ async function saveFile(result: UploadResult, context: ApiContext): Promise<File
   const storageDir = sessionScoped
     ? uploadDir(result.sessionId!)
     : path.join(FILES_DIR, result.id);
-  fs.mkdirSync(storageDir, { recursive: true });
+  await fs.promises.mkdir(storageDir, { recursive: true });
   const storagePath = path.join(storageDir, safeName);
-  fs.writeFileSync(storagePath, result.buffer);
+  await fs.promises.writeFile(storagePath, result.buffer);
 
   const mimetype = mimeFromFilename(safeName);
   const meta = insertFile({
@@ -300,8 +300,8 @@ async function saveFile(result: UploadResult, context: ApiContext): Promise<File
   // Write to custom path if provided
   if (result.customPath) {
     const expanded = expandPath(result.customPath);
-    fs.mkdirSync(path.dirname(expanded), { recursive: true });
-    fs.writeFileSync(expanded, result.buffer);
+    await fs.promises.mkdir(path.dirname(expanded), { recursive: true });
+    await fs.promises.writeFile(expanded, result.buffer);
   }
 
   // Open file if requested

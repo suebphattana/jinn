@@ -112,7 +112,7 @@ afterAll(() => {
 });
 
 describe("GET /api/cron/:id/runs — corrupt-line tolerance", () => {
-  it("skips a dangling/corrupt JSONL line and returns the good rows", async () => {
+  it("skips a dangling/corrupt JSONL line and returns the good rows, newest first", async () => {
     const good1 = JSON.stringify({ ts: "2026-01-01T00:00:00Z", ok: true });
     const good2 = JSON.stringify({ ts: "2026-01-02T00:00:00Z", ok: false });
     // A crash mid-write can leave a half-written final line.
@@ -125,9 +125,20 @@ describe("GET /api/cron/:id/runs — corrupt-line tolerance", () => {
     expect(cap.status).toBe(200);
     expect(Array.isArray(cap.body)).toBe(true);
     expect(cap.body).toEqual([
-      { ts: "2026-01-01T00:00:00Z", ok: true },
       { ts: "2026-01-02T00:00:00Z", ok: false },
+      { ts: "2026-01-01T00:00:00Z", ok: true },
     ]);
+  });
+
+  it("honors ?limit=N, returning only the newest N runs", async () => {
+    const lines = [1, 2, 3, 4].map((n) => JSON.stringify({ n }));
+    fs.writeFileSync(path.join(cronRunsDir, "my-job.jsonl"), lines.join("\n") + "\n");
+
+    const cap = makeRes();
+    await handleApiRequest(makeReq("GET", "/api/cron/my-job/runs?limit=2"), cap.res, ctx);
+
+    expect(cap.status).toBe(200);
+    expect(cap.body).toEqual([{ n: 4 }, { n: 3 }]);
   });
 
   it("returns [] when the run file does not exist", async () => {

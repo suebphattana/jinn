@@ -153,6 +153,12 @@ describe("validateCard — restored rich types (mission control)", () => {
     expect(validateCard({ id: "i1", type: "image" }).ok).toBe(false) // no src
     expect(validateCard({ id: "c1", type: "comparison", columns: "A", rows: [] }).ok).toBe(false)
   })
+  it("validates the optional stat delta shape", () => {
+    const base = { id: "s1", type: "stat", value: "42", label: "Users" }
+    expect(validateCard({ ...base, delta: { dir: "up", value: "+3" } }).ok).toBe(true)
+    expect(validateCard({ ...base, delta: { dir: "up", value: { nested: true } } }).ok).toBe(false)
+    expect(validateCard({ ...base, delta: { dir: "sideways", value: "+3" } }).ok).toBe(false)
+  })
 })
 
 describe("validateCardPatch", () => {

@@ -176,6 +176,14 @@ export function validateCard(input: unknown): Result {
     case "stat":
       if (!isString(input.value)) return { ok: false, error: "stat card requires string value" };
       if (!isString(input.label)) return { ok: false, error: "stat card requires string label" };
+      if (
+        input.delta !== undefined &&
+        (!isObject(input.delta) ||
+          !isString(input.delta.value) ||
+          !["up", "down", "flat"].includes(input.delta.dir as string))
+      ) {
+        return { ok: false, error: "stat delta must be { dir: up|down|flat, value: string }" };
+      }
       break;
 
     case "list": {

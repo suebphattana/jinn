@@ -70,6 +70,36 @@ CREATE TABLE IF NOT EXISTS files (
 )
 `;
 
+// Generic key/value store for one-off migration progress flags (e.g. the FTS
+// backfill watermark). Keep entries tiny — this is not a config table.
+const CREATE_META_TABLE = `
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+)
+`;
+
+// Full-text search over message bodies. External-content FTS5 table (the index
+// lives here; `content` is read back from `messages` via rowid for snippets), so
+// it stays in lockstep with `messages` through the AI/AD/AU triggers below. Only
+// user/assistant rows are indexed — notification/tool rows are deliberately
+// excluded (they're machine chatter, not conversation). Pre-existing rows (rows
+// that predate this table) are seeded once by the chunked backfill; the triggers
+// own every write from here on.
+const CREATE_FTS = `
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content='messages', content_rowid='rowid', tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages WHEN new.role IN ('user','assistant') BEGIN
+  INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages WHEN old.role IN ('user','assistant') BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages WHEN new.role IN ('user','assistant') BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+  INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+`;
+
 function parseJsonObject(value: unknown, label?: string): JsonObject | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   try {
@@ -123,7 +153,18 @@ export function initDb(): Database.Database {
   db.exec(CREATE_TABLE);
   db.exec(CREATE_MESSAGES_TABLE);
   db.exec(CREATE_MESSAGES_INDEX);
+  db.exec(CREATE_META_TABLE);
   migrateMessagesSchema(db);
+  migrateFtsSchema(db);
+  // Seed the FTS index for pre-existing rows synchronously at boot — BEFORE the
+  // gateway serves any request. The AD/AU sync triggers issue an FTS `'delete'`
+  // for every user/assistant row they touch, and on an external-content table a
+  // delete of a not-yet-indexed rowid raises "database disk image is malformed"
+  // (it rolls back cleanly — no real corruption — but the delete/update fails).
+  // So any delete/update of an un-backfilled row would throw until the backfill
+  // caught up. Draining here closes that window; it is chunked + idempotent and
+  // measured at ~350ms for 120k rows, then a no-op on every later boot.
+  backfillFtsSync(db);
   migrateSessionsSchema(db);
   db.exec(CREATE_SESSION_KEY_INDEX);
   db.exec(CREATE_LAST_ACTIVITY_INDEX);
@@ -173,6 +214,176 @@ export function migrateMessagesSchema(database: Database.Database): void {
   if (!colNames.has('tool_call')) {
     database.exec('ALTER TABLE messages ADD COLUMN tool_call TEXT');
   }
+}
+
+function getMeta(database: Database.Database, key: string): string | null {
+  const row = database.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
+  return row ? row.value : null;
+}
+
+function setMeta(database: Database.Database, key: string, value: string): void {
+  database
+    .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, value);
+}
+
+/**
+ * Create the FTS5 search index + sync triggers, and record the backfill watermark.
+ *
+ * The triggers keep the index current for every message written from now on. Rows
+ * that already existed before this table did are NOT seen by the triggers, so they
+ * are seeded separately by the chunked backfill (`scheduleFtsBackfill`). To stop
+ * the backfill from double-indexing rows the triggers also handle, we snapshot the
+ * current MAX(rowid) here — synchronously, before any new insert can race in — and
+ * the backfill only ever touches `rowid <= fts_backfill_max`. Anything above that
+ * watermark is a brand-new row and belongs to the triggers.
+ *
+ * Idempotent: safe to run on every boot. On a DB where the backfill already
+ * completed it is a no-op.
+ */
+export function migrateFtsSchema(database: Database.Database): void {
+  database.exec(CREATE_META_TABLE);
+  database.exec(CREATE_FTS);
+  // First time we see this DB and the backfill hasn't run: pin the watermark.
+  if (getMeta(database, 'fts_backfill_done') !== '1' && getMeta(database, 'fts_backfill_max') === null) {
+    const row = database.prepare('SELECT MAX(rowid) AS m FROM messages').get() as { m: number | null };
+    setMeta(database, 'fts_backfill_max', String(row.m ?? 0));
+    setMeta(database, 'fts_backfill_rowid', '0');
+  }
+}
+
+const FTS_BACKFILL_CHUNK = 1000;
+
+/**
+ * Seed one chunk of pre-existing user/assistant rows into the FTS index, in a
+ * single transaction. Resumable: progress is persisted in `meta.fts_backfill_rowid`
+ * so a mid-backfill restart picks up where it left off. Returns true once there is
+ * no more work (and stamps `fts_backfill_done`).
+ */
+function ftsBackfillStep(database: Database.Database, chunkSize = FTS_BACKFILL_CHUNK): boolean {
+  if (getMeta(database, 'fts_backfill_done') === '1') return true;
+  const max = Number(getMeta(database, 'fts_backfill_max') ?? '0');
+  const progress = Number(getMeta(database, 'fts_backfill_rowid') ?? '0');
+  if (progress >= max) {
+    setMeta(database, 'fts_backfill_done', '1');
+    return true;
+  }
+  const rows = database
+    .prepare(
+      `SELECT rowid, content FROM messages
+       WHERE role IN ('user','assistant') AND rowid > ? AND rowid <= ?
+       ORDER BY rowid ASC LIMIT ?`,
+    )
+    .all(progress, max, chunkSize) as Array<{ rowid: number; content: string }>;
+  if (rows.length === 0) {
+    // No indexable rows left in (progress, max] — we're done.
+    setMeta(database, 'fts_backfill_done', '1');
+    return true;
+  }
+  const insert = database.prepare('INSERT INTO messages_fts(rowid, content) VALUES (?, ?)');
+  const txn = database.transaction((items: Array<{ rowid: number; content: string }>) => {
+    for (const r of items) insert.run(r.rowid, r.content);
+  });
+  txn(rows);
+  const lastRowid = rows[rows.length - 1].rowid;
+  setMeta(database, 'fts_backfill_rowid', String(lastRowid));
+  if (lastRowid >= max) {
+    setMeta(database, 'fts_backfill_done', '1');
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Run the FTS backfill to completion synchronously. Exposed for tests and for
+ * callers that genuinely want to block; the request path uses
+ * `scheduleFtsBackfill` (which yields between chunks) instead.
+ */
+export function backfillFtsSync(database: Database.Database, chunkSize = FTS_BACKFILL_CHUNK): void {
+  while (!ftsBackfillStep(database, chunkSize)) {
+    /* keep draining chunks */
+  }
+}
+
+let ftsBackfillScheduled = false;
+
+/**
+ * Kick the one-time FTS backfill off the hot path. Normally a no-op because
+ * `initDb` already drained it synchronously at boot; this is the resumable
+ * fallback for the case where a boot drain was interrupted (process killed
+ * mid-migration → `fts_backfill_done` never stamped). Guarded by the persistent
+ * `fts_backfill_done` flag (runs at most once across the DB's lifetime) and an
+ * in-process latch (concurrent searches don't double-schedule). Each chunk is its
+ * own transaction with a `setImmediate` yield in between, so a months-old 100k-row
+ * table is seeded without blocking the event loop.
+ */
+function scheduleFtsBackfill(): void {
+  const database = initDb();
+  if (getMeta(database, 'fts_backfill_done') === '1') return;
+  if (ftsBackfillScheduled) return;
+  ftsBackfillScheduled = true;
+  const pump = (): void => {
+    try {
+      if (ftsBackfillStep(database)) {
+        ftsBackfillScheduled = false;
+        return;
+      }
+      setImmediate(pump);
+    } catch (err) {
+      logger.warn(`FTS backfill failed: ${err instanceof Error ? err.message : err}`);
+      ftsBackfillScheduled = false;
+    }
+  };
+  setImmediate(pump);
+}
+
+export interface MessageSearchResult {
+  sessionId: string;
+  snippet: string;
+  role: string;
+  timestamp: number;
+}
+
+/**
+ * Turn arbitrary user text into a safe FTS5 MATCH expression. Each whitespace
+ * token becomes a double-quoted phrase (any embedded `"` stripped first), so FTS5
+ * operators (`*`, `(`, `)`, `-`, `NEAR`, `"`) are treated as literal text and can
+ * never throw a syntax error. Space-separated phrases AND together implicitly, so
+ * a multi-word query requires all words. Returns '' when nothing indexable remains.
+ */
+function sanitizeFtsQuery(query: string): string {
+  return query
+    .split(/\s+/)
+    .map((tok) => tok.replace(/"/g, ''))
+    .filter(Boolean)
+    .map((tok) => `"${tok}"`)
+    .join(' ');
+}
+
+/**
+ * Full-text search over user/assistant message bodies, newest-first. `snippet`
+ * wraps matched terms in «»; results are capped by `limit` (default 50). Triggers
+ * the one-time backfill on first call so older history becomes searchable.
+ */
+export function searchMessages(query: string, limit = 50): MessageSearchResult[] {
+  const db = initDb();
+  scheduleFtsBackfill();
+  const match = sanitizeFtsQuery(query);
+  if (!match) return [];
+  const cap = Math.max(1, Math.min(Math.floor(limit) || 50, 200));
+  return db
+    .prepare(
+      `SELECT m.session_id AS sessionId,
+              snippet(messages_fts, 0, '«', '»', '…', 12) AS snippet,
+              m.role AS role,
+              m.timestamp AS timestamp
+       FROM messages_fts
+       JOIN messages m ON m.rowid = messages_fts.rowid
+       WHERE messages_fts MATCH ?
+       ORDER BY m.timestamp DESC
+       LIMIT ?`,
+    )
+    .all(match, cap) as MessageSearchResult[];
 }
 
 export function migrateSessionsSchema(database: Database.Database): void {

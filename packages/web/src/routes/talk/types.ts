@@ -187,3 +187,19 @@ export interface TrackerTask {
   /** Short result line shown when done. */
   result?: string
 }
+
+// ============================================================================
+// Talk transcript — system notification entries (delegation events).
+// Consumed by ConversationStream (Task 9); not yet rendered by Transcript.
+// ============================================================================
+
+export type SystemEventKind = "reported" | "error" | "info"
+
+/** A persisted delegation-notification row (`role:"notification"`) rehydrated
+ *  as a typed system entry so the transcript survives a page reload. */
+export interface SystemEntry {
+  id: string
+  kind: "system"
+  event: SystemEventKind
+  label: string
+}

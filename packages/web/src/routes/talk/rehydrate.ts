@@ -8,25 +8,33 @@
  */
 import type { TranscriptEntry } from "./transcript"
 import type { TalkThread } from "./thread-store"
+import type { SystemEntry } from "./types"
 import { deriveLabel } from "./thread-store"
 import { channelHue } from "./channel-identity"
 import { stripMarkdown } from "@/lib/strip-markdown"
 
 /**
- * Map a persisted session's messages to FINALIZED transcript entries. Only
- * user/assistant roles are kept (the transcript shows the latest of each);
- * notifications and empty bodies are dropped. Text is markdown-stripped to match
- * the live display invariant.
+ * Map a persisted session's messages to FINALIZED transcript entries.
+ * User/assistant roles become TranscriptEntry objects (markdown-stripped).
+ * Notification rows become SystemEntry objects so delegation history survives
+ * a page reload — the ConversationStream component (Task 9) renders them;
+ * empty bodies are dropped for user/assistant but never for notifications.
  */
 export function messagesToEntries(
   session: Record<string, unknown> | undefined,
-): TranscriptEntry[] {
+): Array<TranscriptEntry | SystemEntry> {
   if (!session) return []
   const history = (session.messages ?? session.history) as unknown
   if (!Array.isArray(history)) return []
-  const out: TranscriptEntry[] = []
+  const out: Array<TranscriptEntry | SystemEntry> = []
   for (const raw of history) {
     const m = raw as Record<string, unknown>
+    if (m.role === "notification") {
+      const content = String(m.content ?? m.text ?? "")
+      const id = typeof m.id === "string" && m.id ? m.id : `notification-${out.length}`
+      out.push(_parseNotification(id, content))
+      continue
+    }
     const role = m.role === "user" ? "user" : m.role === "assistant" ? "assistant" : null
     if (!role) continue
     const text = stripMarkdown(String(m.content ?? m.text ?? "")).trim()
@@ -35,6 +43,22 @@ export function messagesToEntries(
     out.push({ id, role, text, partial: false, full: text })
   }
   return out
+}
+
+/**
+ * Parse a notification content string into a SystemEntry.
+ * Classifies by leading emoji: 📩/🔄 → "reported", ⚠️ → "error", other → "info".
+ * Extracts the label from the first quoted segment, falling back to first 60 chars.
+ */
+function _parseNotification(id: string, content: string): SystemEntry {
+  const emojiMatch = content.match(/^(📩|⚠️|🔄)/)
+  const quotedMatch = content.match(/"([^"]+)"/)
+  const label = quotedMatch ? quotedMatch[1] : content.slice(0, 60)
+  let event: SystemEntry["event"] = "info"
+  if (emojiMatch) {
+    event = emojiMatch[1] === "⚠️" ? "error" : "reported"
+  }
+  return { id, kind: "system", event, label }
 }
 
 /**

@@ -602,7 +602,13 @@ export function useTalk(): UseTalkReturn {
         api.getTalkGraph(orchId).catch(() => undefined),
       ])
       if (orchestratorIdRef.current !== orchId) return // superseded
-      const mapped = messagesToEntries(session as Record<string, unknown> | undefined)
+      const allEntries = messagesToEntries(session as Record<string, unknown> | undefined)
+      // Filter out system entries before setting transcript state — system
+      // entries are consumed by ConversationStream (Task 9) which reads the
+      // full allEntries array directly once that component lands.
+      const mapped = allEntries.filter(
+        (e): e is TranscriptEntry => !("kind" in e),
+      )
       if (mapped.length) setEntries((cur) => (cur.length ? cur : mapped))
 
       const rebuilt = childrenToThreads(

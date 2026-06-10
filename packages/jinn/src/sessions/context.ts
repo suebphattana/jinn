@@ -479,8 +479,23 @@ function buildCronContext(): string | null {
 /**
  * Knowledge context: lists filenames and sizes only — never inlines content.
  * The AI reads files on demand. This saves ~200K+ chars compared to full inlining.
+ *
+ * The listing (readdir + per-file stat over ~100 files) runs on every session
+ * turn, so the built section is cached with a short TTL.
  */
+const KNOWLEDGE_CACHE_TTL_MS = 30_000;
+let knowledgeCache: { builtAt: number; value: string | null } | null = null;
+
 function buildKnowledgeContext(): string | null {
+  if (knowledgeCache && Date.now() - knowledgeCache.builtAt < KNOWLEDGE_CACHE_TTL_MS) {
+    return knowledgeCache.value;
+  }
+  const value = buildKnowledgeContextUncached();
+  knowledgeCache = { builtAt: Date.now(), value };
+  return value;
+}
+
+function buildKnowledgeContextUncached(): string | null {
   const dirs = [
     { dir: DOCS_DIR, label: "docs" },
     { dir: path.join(JINN_HOME, "knowledge"), label: "knowledge" },

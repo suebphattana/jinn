@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import * as pty from "node-pty";
@@ -9,26 +8,19 @@ import { JINN_HOME } from "../shared/paths.js";
 import { resolveBin } from "../shared/resolve-bin.js";
 import { neutralizeForPaste } from "../shared/skill-commands.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
+import { PtyStreamManager, createPtyHandle, setCapped } from "./pty-stream.js";
+import { tailTranscriptLines, type TranscriptTailer } from "./transcript-tailer.js";
 import type { PtyControlEvent, PtyIdleSpawnOpts, PtyViewEngine } from "./pty-view-engine.js";
 import { codexCliFlags, extractCodexContextTokens } from "./codex.js";
 
-const SCROLLBACK_CAP_BYTES = 262144;
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 // FALLBACK ONLY: task_complete (below) is the primary completion signal; this
 // quiet-window debounce settles turns whose transcript misses the marker.
 const DONE_DEBOUNCE_MS = 3000;
+const TAIL_POLL_MS = 250;
 const DISCOVER_POLL_MS = 200;
 const DISCOVER_TIMEOUT_MS = 30 * 1000;
-
-interface TranscriptTailer { stop(): void }
-
-interface StreamEntry {
-  chunks: Buffer[];
-  totalBytes: number;
-  subscribers: Set<{ data: (d: Buffer) => void; control?: (e: PtyControlEvent) => void }>;
-  hasSeenPty: boolean;
-}
 
 interface ActiveTurn {
   interrupt: (reason: string) => void;
@@ -163,70 +155,19 @@ export function codexTranscriptLineToDeltas(line: string): {
   return { deltas: [] };
 }
 
-function tailTranscript(
-  filePath: string,
-  startOffset: number,
-  onLine: (parsed: ReturnType<typeof codexTranscriptLineToDeltas>) => void,
-): TranscriptTailer {
-  let offset = startOffset;
-  let buf = "";
-  let stopped = false;
-  let fh: fsp.FileHandle | undefined;
-  let reading = false;
-
-  const readNew = async (): Promise<void> => {
-    if (stopped || reading) return;
-    reading = true;
-    try {
-      let stat: fs.Stats;
-      try { stat = await fsp.stat(filePath); } catch { return; }
-      if (stat.size <= offset) return;
-      if (!fh) {
-        try { fh = await fsp.open(filePath, "r"); } catch { return; }
-      }
-      const chunk = Buffer.alloc(stat.size - offset);
-      const { bytesRead } = await fh.read(chunk, 0, chunk.length, offset);
-      offset += bytesRead;
-      buf += chunk.subarray(0, bytesRead).toString("utf-8");
-      const lines = buf.split("\n");
-      buf = lines.pop() ?? "";
-      for (const line of lines) onLine(codexTranscriptLineToDeltas(line));
-    } catch (err) {
-      logger.warn(`Codex transcript tail failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
-      try { await fh?.close(); } catch { /* ignore */ }
-      fh = undefined;
-    } finally {
-      reading = false;
-    }
-  };
-
-  let watcher: fs.FSWatcher | undefined;
-  try { watcher = fs.watch(filePath, () => { void readNew(); }); } catch { /* file may not exist yet */ }
-  const poll = setInterval(() => { void readNew(); }, 250);
-  poll.unref?.();
-  const initialDrain = setTimeout(() => { void readNew(); }, 30);
-  initialDrain.unref?.();
-
-  return {
-    stop() {
-      stopped = true;
-      watcher?.close();
-      clearInterval(poll);
-      clearTimeout(initialDrain);
-      void fh?.close().catch(() => {});
-      fh = undefined;
-    },
-  };
-}
-
 export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngine {
   name = "codex" as const;
   private active = new Map<string, ActiveTurn>();
-  private streams = new Map<string, StreamEntry>();
+  private streams: PtyStreamManager;
   private lastGeom = new Map<string, { cols: number; rows: number }>();
   private spawnParams = new Map<string, { model?: string; effortLevel?: string }>();
 
-  constructor(private lifecycle: PtyLifecycleManager) {}
+  constructor(private lifecycle: PtyLifecycleManager) {
+    this.streams = new PtyStreamManager("Codex PTY", (id) => this.lifecycle.getWarm(id) !== undefined);
+    // spawnParams describes the LIVE PTY's spawn args — purge it on every release
+    // (kill, eviction, sweep reap, cold respawn) so the map doesn't grow forever.
+    this.lifecycle.onRelease((id) => this.spawnParams.delete(id));
+  }
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
     const jinnSessionId = opts.sessionId;
@@ -316,7 +257,12 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
       if (!fromBeginning) {
         try { offset = fs.statSync(filePath).size; } catch { /* not created yet */ }
       }
-      turn.tailer = tailTranscript(filePath, offset, onParsed);
+      turn.tailer = tailTranscriptLines(
+        filePath,
+        offset,
+        (line) => onParsed(codexTranscriptLineToDeltas(line)),
+        { pollMs: TAIL_POLL_MS, label: "Codex" },
+      );
     };
 
     this.active.set(jinnSessionId, turn);
@@ -331,8 +277,7 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
 
     let warm = this.lifecycle.getWarm(jinnSessionId);
     if (warm && this.spawnParamsChanged(jinnSessionId, opts)) {
-      this.lifecycle.releaseSession(jinnSessionId);
-      this.spawnParams.delete(jinnSessionId);
+      this.lifecycle.releaseSession(jinnSessionId); // onRelease purges spawnParams
       warm = undefined;
     }
     if (codexSessionId) {
@@ -429,68 +374,26 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
     return this.wireProcToStream(jinnSessionId, proc);
   }
 
-  private streamFor(sessionId: string): StreamEntry {
-    let stream = this.streams.get(sessionId);
-    if (!stream) {
-      stream = { chunks: [], totalBytes: 0, subscribers: new Set(), hasSeenPty: false };
-      this.streams.set(sessionId, stream);
-    }
-    return stream;
-  }
-
   private wireProcToStream(jinnSessionId: string, proc: pty.IPty): PtyHandle {
-    const handle = {
-      pid: proc.pid,
-      get killed() { return (proc as any)._exitCode != null; },
-      kill: (signal?: string) => { try { proc.kill(signal); } catch { /* gone */ } },
-    } as PtyHandle;
-    const stream = this.streamFor(jinnSessionId);
-    if (!stream.hasSeenPty) stream.hasSeenPty = true;
-    else if (stream.subscribers.size > 0) {
-      for (const sub of stream.subscribers) {
-        try { sub.control?.({ type: "reset" }); } catch { /* ignore */ }
-      }
-    }
-    (proc as any).on?.("error", (err: Error) => logger.warn(`Codex PTY socket error for session ${jinnSessionId}: ${err.message}`));
-    proc.onData((d) => {
-      const chunk = Buffer.from(d, "utf-8");
-      stream.chunks.push(chunk);
-      stream.totalBytes += chunk.length;
-      while (stream.totalBytes > SCROLLBACK_CAP_BYTES && stream.chunks.length > 1) {
-        const head = stream.chunks.shift()!;
-        stream.totalBytes -= head.length;
-      }
-      if (stream.totalBytes > SCROLLBACK_CAP_BYTES && stream.chunks.length === 1) {
-        const only = stream.chunks[0]!;
-        stream.chunks[0] = only.subarray(only.length - SCROLLBACK_CAP_BYTES);
-        stream.totalBytes = stream.chunks[0]!.length;
-      }
-      for (const sub of stream.subscribers) {
-        try { sub.data(chunk); } catch { /* ignore */ }
-      }
-    });
+    const handle = createPtyHandle(proc);
+    this.streams.attach(jinnSessionId, proc);
     proc.onExit(() => {
+      // Identity-gated: only clean up if this PTY is still the session's current
+      // warm handle (a stale PTY from a kill->respawn race must not poison the new one).
       const isCurrent = this.lifecycle.getWarm(jinnSessionId) === handle;
       if (isCurrent) {
-        const s = this.streams.get(jinnSessionId);
-        if (s) {
-          s.chunks = [];
-          s.totalBytes = 0;
-          if (s.subscribers.size === 0) this.streams.delete(jinnSessionId);
-        }
-        this.lifecycle.releaseSession(jinnSessionId);
-        this.spawnParams.delete(jinnSessionId);
+        this.streams.onPtyExit(jinnSessionId);
+        this.lifecycle.releaseSession(jinnSessionId); // onRelease purges spawnParams
       }
       const e = this.active.get(jinnSessionId);
       if (e && e.boundProc === proc) e.interrupt("Interrupted: codex process exited");
     });
-    (handle as any)._proc = proc;
     return handle;
   }
 
   ensureIdleSpawn(jinnSessionId: string, opts: PtyIdleSpawnOpts): void {
     if (this.active.has(jinnSessionId)) return;
-    if (opts.cols && opts.rows) this.lastGeom.set(jinnSessionId, { cols: opts.cols, rows: opts.rows });
+    if (opts.cols && opts.rows) setCapped(this.lastGeom, jinnSessionId, { cols: opts.cols, rows: opts.rows });
     const warm = this.lifecycle.getWarm(jinnSessionId);
     const nextOpts: EngineRunOpts = {
       prompt: "",
@@ -510,19 +413,11 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
   }
 
   getScrollback(sessionId: string): Buffer {
-    const s = this.streams.get(sessionId);
-    if (!s || s.chunks.length === 0) return Buffer.alloc(0);
-    return Buffer.concat(s.chunks, s.totalBytes);
+    return this.streams.getScrollback(sessionId);
   }
 
   subscribeOutput(sessionId: string, cb: (data: Buffer) => void, onControl?: (event: PtyControlEvent) => void): () => void {
-    const stream = this.streamFor(sessionId);
-    const sub = { data: cb, control: onControl };
-    stream.subscribers.add(sub);
-    return () => {
-      stream.subscribers.delete(sub);
-      if (stream.subscribers.size === 0 && !this.lifecycle.getWarm(sessionId)) this.streams.delete(sessionId);
-    };
+    return this.streams.subscribe(sessionId, cb, onControl);
   }
 
   writeStdin(sessionId: string, text: string): void {
@@ -536,7 +431,7 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
   }
 
   resizePty(sessionId: string, cols: number, rows: number): void {
-    this.lastGeom.set(sessionId, { cols, rows });
+    setCapped(this.lastGeom, sessionId, { cols, rows });
     const proc = (this.lifecycle.getWarm(sessionId) as any)?._proc as pty.IPty | undefined;
     try { proc?.resize(cols, rows); } catch { /* gone */ }
   }

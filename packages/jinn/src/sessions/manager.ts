@@ -256,14 +256,6 @@ export class SessionManager {
       await connector.setTypingStatus(target.channel, threadTs, "is thinking...").catch(() => {});
     }
 
-    updateSession(session.id, {
-      status: "running",
-      replyContext: msg.replyContext,
-      messageId: msg.messageId ?? null,
-      transportMeta: mergeTransportMeta(session.transportMeta, msg.transportMeta),
-      lastActivity: new Date().toISOString(),
-    });
-
     // Resolve MCP config before try block so it's accessible in catch for cleanup
     let mcpConfigPath: string | undefined;
 
@@ -307,6 +299,17 @@ export class SessionManager {
         employee,
         effortLevelsForModel(this.config, session.engine, session.model ?? undefined),
       );
+
+      // Mark running only after preflight (system prompt / engine config / effort)
+      // succeeded — and inside the try, so any failure transitions to "error" in the
+      // catch below instead of leaving the session stuck looking "running".
+      updateSession(session.id, {
+        status: "running",
+        replyContext: msg.replyContext,
+        messageId: msg.messageId ?? null,
+        transportMeta: mergeTransportMeta(session.transportMeta, msg.transportMeta),
+        lastActivity: new Date().toISOString(),
+      });
 
       // If we previously switched to GPT while Claude was rate-limited, inject a sync transcript
       // so Claude can resume with full context when it comes back online.

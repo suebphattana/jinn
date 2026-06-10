@@ -23,8 +23,9 @@ added to packages/jinn deps. `tool(name, desc, zodRawShape, async handler)` retu
 
 ## HTTP routing  — packages/jinn/src/gateway/api.ts → `handleApiRequest(req,res,context)`
 Add routes by string match: `if (method==="POST" && pathname==="/api/talk/turn") {...}`.
-Helpers in that file: `readJsonBody(req,res)` → `{ok,body}`; `readBodyRaw(req)` → Buffer
-(raw audio); `json(res, obj, status?)`; `badRequest(res,msg)`. Register a single
+Body helpers live in src/gateway/http-helpers.ts: `readJsonBody(req,res)` → `{ok,body}`;
+`readBodyRaw(req)` → Buffer (raw audio). Response helpers in api.ts: `json(res, obj, status?)`;
+`badRequest(res,msg)`. Register a single
 `handleTalkApi(req,res,context)` dispatcher (in src/talk/routes.ts) and call it near the
 STT routes. `context` exposes `emit(event,payload)` and `getConfig()`.
 

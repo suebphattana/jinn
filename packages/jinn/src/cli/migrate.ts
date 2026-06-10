@@ -70,7 +70,11 @@ function stampVersion(version: string): void {
   if (!config.jinn) config.jinn = {};
   config.jinn.version = version;
 
-  fs.writeFileSync(CONFIG_PATH, yaml.dump(config, { lineWidth: -1 }), "utf-8");
+  // Atomic write: the live gateway hot-reloads config.yaml, so a partial write
+  // would corrupt it. Write to a tmp file in the same directory, then rename.
+  const tmpPath = `${CONFIG_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, yaml.dump(config, { lineWidth: -1 }), "utf-8");
+  fs.renameSync(tmpPath, CONFIG_PATH);
 }
 
 /**

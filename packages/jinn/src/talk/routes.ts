@@ -16,6 +16,7 @@ import fs from "node:fs";
 import yaml from "js-yaml";
 import type { IncomingMessage as HttpRequest, ServerResponse } from "node:http";
 import type { ApiContext } from "../gateway/api.js";
+import { readJsonBody } from "../gateway/http-helpers.js";
 import type { JinnConfig } from "../shared/types.js";
 import { CONFIG_PATH } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
@@ -443,36 +444,6 @@ export async function handleTalkApi(
 }
 
 // ── Local copies of api.ts response helpers ─────────────────────────────
-async function readJsonBody(
-  req: HttpRequest,
-  res: ServerResponse,
-  opts?: { allowEmpty?: boolean },
-): Promise<{ ok: true; body: unknown } | { ok: false }> {
-  let raw: string;
-  try {
-    raw = await new Promise<string>((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
-      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-      req.on("error", reject);
-    });
-  } catch {
-    badRequest(res, "Failed to read request body");
-    return { ok: false };
-  }
-  if (!raw.trim()) {
-    if (opts?.allowEmpty) return { ok: true, body: null };
-    badRequest(res, "Empty request body");
-    return { ok: false };
-  }
-  try {
-    return { ok: true, body: JSON.parse(raw) };
-  } catch {
-    badRequest(res, "Invalid JSON in request body");
-    return { ok: false };
-  }
-}
-
 function json(res: ServerResponse, data: unknown, status = 200): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));

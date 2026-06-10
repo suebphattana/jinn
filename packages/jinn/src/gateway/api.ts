@@ -63,6 +63,8 @@ import { runCronJob } from "../cron/runner.js";
 import QRCode from "qrcode";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, handleSessionAttachment, fileIdsToMedia, rehomeAttachmentsToSession, ensureFilesDir } from "./files.js";
+import { readJsonBody, readBodyRaw } from "./http-helpers.js";
+import { readJsonlTail } from "./jsonl-tail.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "../sessions/callbacks.js";
 import { loadInstances } from "../cli/instances.js";
 import { handleHookPost, LOOPBACK as HOOK_LOOPBACK } from "./hook-endpoint.js";
@@ -227,69 +229,41 @@ function dispatchWebSessionRun(
   }
 }
 
-/** Signals that a request body exceeded the per-handler size cap. */
-class BodyTooLargeError extends Error {
-  constructor() {
-    super("Request body exceeds maximum allowed size");
-    this.name = "BodyTooLargeError";
-  }
-}
+/**
+ * GET /api/skills description cache, keyed by skill dir name and invalidated
+ * by SKILL.md mtime (statSync is far cheaper than re-reading + re-parsing ~70
+ * files per request). Mirrors the mtime-cache in talk/orchestrator-persona.ts.
+ */
+const skillDescriptionCache = new Map<string, { mtimeMs: number; description: string }>();
 
-interface ReadBodyOpts {
-  /** Hard cap on bytes accepted from the stream; rejects with BodyTooLargeError when exceeded. */
-  maxBytes?: number;
-}
-
-function readBody(req: HttpRequest, opts: ReadBodyOpts = {}): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    const max = opts.maxBytes;
-    req.on("data", (chunk: Buffer) => {
-      total += chunk.length;
-      if (max !== undefined && total > max) {
-        // Bail out — destroy the socket so the sender stops shoveling bytes.
-        req.destroy();
-        reject(new BodyTooLargeError());
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
-    req.on("error", reject);
-  });
-}
-
-function readBodyRaw(req: HttpRequest): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
-
-async function readJsonBody(
-  req: HttpRequest,
-  res: ServerResponse,
-  opts: ReadBodyOpts = {},
-): Promise<{ ok: true; body: unknown } | { ok: false }> {
-  let raw: string;
-  try {
-    raw = await readBody(req, opts);
-  } catch (err) {
-    if (err instanceof BodyTooLargeError) {
-      json(res, { error: "Payload too large" }, 413);
-      return { ok: false };
+/** Extract a skill description from YAML frontmatter, ## Trigger section, or first paragraph. */
+function parseSkillDescription(content: string): string {
+  let description = "";
+  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (frontmatterMatch) {
+    const descMatch = frontmatterMatch[1].match(/^description:\s*(.+)$/m);
+    if (descMatch) {
+      description = descMatch[1].trim();
     }
-    throw err;
   }
-  try {
-    return { ok: true, body: JSON.parse(raw) };
-  } catch {
-    badRequest(res, "Invalid JSON in request body");
-    return { ok: false };
+  if (!description) {
+    const triggerMatch = content.match(/##\s*Trigger\s*\n+([^\n#]+)/);
+    if (triggerMatch) {
+      description = triggerMatch[1].trim();
+    } else {
+      // Use first non-heading, non-empty, non-frontmatter line
+      const bodyContent = frontmatterMatch ? content.slice(frontmatterMatch[0].length) : content;
+      const lines = bodyContent.split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          description = trimmed;
+          break;
+        }
+      }
+    }
   }
+  return description;
 }
 
 /** Resolve an array of file IDs to local filesystem paths for engine consumption. */
@@ -1044,18 +1018,14 @@ export async function handleApiRequest(
       return json(res, enriched);
     }
 
-    // GET /api/cron/:id/runs
+    // GET /api/cron/:id/runs?limit=N — newest first (the UI shows "Recent Runs").
+    // Run history is append-only JSONL that grows forever, so only the file's
+    // tail is read; corrupt lines (crash mid-write) are skipped, not 500'd.
     params = matchRoute("/api/cron/:id/runs", pathname);
     if (method === "GET" && params) {
+      const limit = Math.min(500, Math.max(1, parseInt(url.searchParams.get("limit") || "", 10) || 50));
       const runFile = path.join(CRON_RUNS, `${params.id}.jsonl`);
-      if (!fs.existsSync(runFile)) return json(res, []);
-      // Append-only JSONL: a crash mid-write can leave one dangling line. Skip the
-      // bad line(s) rather than 500-ing the whole history.
-      const runs: unknown[] = [];
-      let skipped = 0;
-      for (const l of fs.readFileSync(runFile, "utf-8").trim().split("\n").filter(Boolean)) {
-        try { runs.push(JSON.parse(l)); } catch { skipped++; }
-      }
+      const { entries: runs, skipped } = await readJsonlTail(runFile, limit);
       if (skipped) logger.warn(`GET /api/cron/${params.id}/runs: skipped ${skipped} corrupt line(s)`);
       return json(res, runs);
     }
@@ -1257,35 +1227,15 @@ export async function handleApiRequest(
       const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
       const skills = entries.filter((e) => e.isDirectory()).map((e) => {
         const skillMdPath = path.join(SKILLS_DIR, e.name, "SKILL.md");
-        let description = "";
-        if (fs.existsSync(skillMdPath)) {
-          const content = fs.readFileSync(skillMdPath, "utf-8");
-          // Extract description from YAML frontmatter, ## Trigger section, or first paragraph
-          const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-          if (frontmatterMatch) {
-            const descMatch = frontmatterMatch[1].match(/^description:\s*(.+)$/m);
-            if (descMatch) {
-              description = descMatch[1].trim();
-            }
-          }
-          if (!description) {
-            const triggerMatch = content.match(/##\s*Trigger\s*\n+([^\n#]+)/);
-            if (triggerMatch) {
-              description = triggerMatch[1].trim();
-            } else {
-              // Use first non-heading, non-empty, non-frontmatter line
-              const bodyContent = frontmatterMatch ? content.slice(frontmatterMatch[0].length) : content;
-              const lines = bodyContent.split("\n");
-              for (const line of lines) {
-                const trimmed = line.trim();
-                if (trimmed && !trimmed.startsWith("#")) {
-                  description = trimmed;
-                  break;
-                }
-              }
-            }
-          }
+        const st = fs.statSync(skillMdPath, { throwIfNoEntry: false });
+        if (!st) {
+          skillDescriptionCache.delete(e.name);
+          return { name: e.name, description: "" };
         }
+        const hit = skillDescriptionCache.get(e.name);
+        if (hit && hit.mtimeMs === st.mtimeMs) return { name: e.name, description: hit.description };
+        const description = parseSkillDescription(fs.readFileSync(skillMdPath, "utf-8"));
+        skillDescriptionCache.set(e.name, { mtimeMs: st.mtimeMs, description });
         return { name: e.name, description };
       });
       return json(res, skills);

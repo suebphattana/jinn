@@ -210,8 +210,27 @@ export function createKokoroTts(opts?: {
     }
   }
 
-  /** POST one sentence to /synth and return the raw WAV bytes. */
+  /**
+   * POST one sentence to /synth. The sidecar can die between ensureSidecar's
+   * liveness check and the request (or mid-request) — if the failure coincides
+   * with a dead/absent child, reset state and retry the spawn once.
+   */
   async function synth(text: string): Promise<Buffer> {
+    try {
+      return await synthOnce(text)
+    } catch (err) {
+      if (child && child.exitCode === null) throw err // sidecar alive — a real synth error
+      logger.warn(
+        `[kokoro] synth failed with sidecar dead — respawning once (${err instanceof Error ? err.message : err})`,
+      )
+      child = null
+      port = 0
+      ready = false
+      return synthOnce(text)
+    }
+  }
+
+  async function synthOnce(text: string): Promise<Buffer> {
     await ensureSidecar()
     if (!port) throw new Error("Kokoro sidecar not available")
     const res = await fetch(`http://127.0.0.1:${port}/synth`, {

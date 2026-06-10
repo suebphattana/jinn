@@ -248,7 +248,6 @@ engines:
     bin: claude
     model: opus
     effortLevel: medium
-    mode: interactive
   codex:
     bin: codex
     model: gpt-5.5

@@ -8,7 +8,7 @@
  * The returning gateway resumes any sessions it marked "interrupted" on shutdown.
  */
 import { loadConfig } from "../shared/config.js";
-import { stop, startDaemon, waitForPortFree, waitForPortListening } from "./lifecycle.js";
+import { stopAndWait, startDaemon, waitForPortFree, waitForPortListening } from "./lifecycle.js";
 import { logger } from "../shared/logger.js";
 
 // stdio is ignored in detached mode — surface crashes to the log file instead of
@@ -26,7 +26,10 @@ async function main(): Promise<void> {
   const port = config.gateway?.port ?? 7777;
 
   logger.info("restart-entry: stopping current gateway…");
-  stop(port); // best-effort; no-op if already down
+  // Waits for the old process to actually exit before removing the PID file,
+  // so a concurrent start/status never sees "not running" while the port is
+  // still held. Best-effort; no-op if already down.
+  await stopAndWait(port);
 
   const freed = await waitForPortFree(port);
   if (!freed) {

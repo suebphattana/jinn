@@ -93,7 +93,19 @@ export function restartDetached(): void {
   child.unref();
 }
 
-export function stop(port?: number): boolean {
+/**
+ * Send SIGTERM to the running gateway. Returns the PID that was signaled (or
+ * was found already gone), or null if nothing was running.
+ *
+ * Deliberately does NOT delete the PID file after a successful SIGTERM: the
+ * gateway keeps shutting down (gracefully, up to ~5s) after the signal, and
+ * unlinking early opens a race window where the gateway is still running and
+ * holding the port but a concurrent start/status sees "not running". The file
+ * self-heals once the process exits: getStatus() and stop() both verify
+ * liveness with kill(pid, 0) and treat a dead PID as stale, and startDaemon()
+ * overwrites the file. stopAndWait() removes it once the process has exited.
+ */
+function signalGateway(port?: number): number | null {
   // Try PID file first
   if (fs.existsSync(PID_FILE)) {
     const pid = parseInt(fs.readFileSync(PID_FILE, "utf-8").trim(), 10);
@@ -101,8 +113,7 @@ export function stop(port?: number): boolean {
     try {
       process.kill(pid, "SIGTERM");
       logger.info(`Sent SIGTERM to gateway process ${pid}`);
-      fs.unlinkSync(PID_FILE);
-      return true;
+      return pid;
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ESRCH") {
@@ -122,19 +133,70 @@ export function stop(port?: number): boolean {
     try {
       process.kill(pid, "SIGTERM");
       logger.info(`Killed process ${pid} on port ${targetPort}`);
-      return true;
+      return pid;
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ESRCH") {
         logger.warn(`Process ${pid} already gone.`);
-        return true;
+        return pid;
       }
       throw err;
     }
   }
 
   logger.warn(`No PID file found and nothing listening on port ${targetPort}.`);
-  return false;
+  return null;
+}
+
+export function stop(port?: number): boolean {
+  return signalGateway(port) !== null;
+}
+
+/**
+ * Stop the gateway and wait until the process has actually exited (bounded by
+ * `timeoutMs`), then remove the PID file. This is the race-free variant used
+ * by the restart path: the PID file stays on disk for the whole shutdown so a
+ * concurrent start/status keeps seeing "running" until the port is truly
+ * released. Returns true if something was signaled, false if nothing was
+ * running.
+ */
+export async function stopAndWait(port?: number, timeoutMs = 10_000): Promise<boolean> {
+  const pid = signalGateway(port);
+  if (pid === null) return false;
+
+  const exited = await waitForPidExit(pid, timeoutMs);
+  if (!exited) {
+    logger.warn(`Process ${pid} still alive after ${timeoutMs}ms — leaving PID file in place`);
+    return true;
+  }
+
+  // Only remove the PID file if it still refers to the process we stopped —
+  // a fresh daemon may have overwritten it already.
+  try {
+    if (
+      fs.existsSync(PID_FILE) &&
+      parseInt(fs.readFileSync(PID_FILE, "utf-8").trim(), 10) === pid
+    ) {
+      fs.unlinkSync(PID_FILE);
+    }
+  } catch {
+    // best-effort cleanup; a leftover stale file self-heals (see signalGateway)
+  }
+  return true;
+}
+
+/** Poll kill(pid, 0) until the process is gone, or `timeoutMs` elapses. */
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true; // ESRCH (or EPERM on a recycled PID) — treat as exited
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 function resolvePort(): number {

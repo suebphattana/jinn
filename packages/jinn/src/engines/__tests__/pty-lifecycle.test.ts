@@ -73,4 +73,19 @@ describe("PtyLifecycleManager", () => {
     expect(a.killed).toBe(true);
     expect(b.killed).toBe(true);
   });
+
+  it("onRelease listeners fire for every released session (engines purge per-session maps here)", () => {
+    const m = new PtyLifecycleManager({ maxLivePtys: 8 });
+    const released: string[] = [];
+    m.onRelease((id) => released.push(id));
+    m.adopt("a", fakeHandle());
+    m.adopt("b", fakeHandle());
+    m.releaseSession("a");
+    expect(released).toEqual(["a"]);
+    m.killAll(); // releases the rest
+    expect(released).toEqual(["a", "b"]);
+    // Releasing an unknown session does NOT fire listeners.
+    m.releaseSession("nope");
+    expect(released).toEqual(["a", "b"]);
+  });
 });

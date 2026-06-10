@@ -1,11 +1,12 @@
 import fs from "node:fs";
-import fsp from "node:fs/promises";
 import * as pty from "node-pty";
-import type { InterruptibleEngine, EngineRunOpts, EngineResult, StreamDelta } from "../shared/types.js";
+import type { InterruptibleEngine, EngineRunOpts, EngineResult } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
 import { JINN_HOME } from "../shared/paths.js";
 import { resolveBin } from "../shared/resolve-bin.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
+import { PtyStreamManager, createPtyHandle, setCapped } from "./pty-stream.js";
+import { tailTranscriptLines, type TranscriptTailer } from "./transcript-tailer.js";
 import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-view-engine.js";
 import {
   transcriptPathFor,
@@ -35,18 +36,16 @@ import { neutralizeForPaste } from "../shared/skill-commands.js";
  * spawn so the interactive "trust this folder?" gate never blocks us.
  */
 
-const SCROLLBACK_CAP_BYTES = 262144;
 export const ANTIGRAVITY_DEFAULT_MODEL = "Gemini 3.5 Flash (Medium)";
 const TURN_TIMEOUT_MS = 5 * 60 * 1000; // matches agy's --print-timeout default
 const TURN_FINAL_QUIET_MS = 1200;      // terminal text/no-tool row: finish promptly
 const TURN_QUIET_DONE_MS = 6000;       // fallback: wait longer around tool/ambiguous rows
+const TAIL_POLL_MS = 200;
 const CONV_DISCOVER_TIMEOUT_MS = 30 * 1000;
 const CONV_POLL_MS = 150;
 /** Accepted by agy without a startup error (verified); harmless in chat mode,
  *  bypasses approvals in agent mode. */
 const SKIP_PERMISSIONS_FLAG = "--dangerously-skip-permissions";
-
-interface TranscriptTailer { stop(): void; }
 
 /** Bracketed-paste `text` into the agy PTY and submit. The paste markers and the
  *  submit CR MUST go in a single write — empirically, sending the CR as a separate
@@ -57,94 +56,6 @@ interface TranscriptTailer { stop(): void; }
 function pasteAndSubmit(proc: pty.IPty, text: string): void {
   const payload = neutralizeForPaste(text);
   proc.write(`\x1b[200~${payload}\x1b[201~\r`);
-}
-
-/**
- * Tail a transcript JSONL from `startOffset`, emitting StreamDeltas for appended
- * lines and invoking onDone(content) for each new MODEL/PLANNER_RESPONSE/DONE.
- * Starting at the file's current EOF means a resumed conversation's history is
- * NOT replayed as fresh deltas.
- */
-function tailTranscript(
-  filePath: string,
-  startOffset: number,
-  onDelta: (d: StreamDelta) => void,
-  onDone: (content: string, delayMs: number) => void,
-  onActivity?: () => void,
-): TranscriptTailer {
-  let offset = startOffset;
-  let buf = "";
-  let stopped = false;
-  let fh: fsp.FileHandle | undefined;
-  let reading = false;
-  let pending = false;
-  // One tool-card state per tail so DONE-only tool rows synthesize their card
-  // (and RUNNING/planner-opened cards close without duplicating).
-  const toolState = newToolCardState();
-
-  const processLine = (line: string) => {
-    const deltas = transcriptLineToDeltas(line, toolState);
-    if (deltas.length) onActivity?.();
-    for (const d of deltas) onDelta(d);
-    const terminal = isTerminalAnswerLine(line);
-    if (terminal.terminal && terminal.content) onDone(terminal.content, TURN_FINAL_QUIET_MS);
-  };
-
-  const readNew = async (): Promise<void> => {
-    if (stopped) return;
-    if (reading) { pending = true; return; }
-    reading = true;
-    try {
-      do {
-        pending = false;
-        let stat: fs.Stats;
-        try { stat = await fsp.stat(filePath); } catch { return; }
-        if (stat.size <= offset) return;
-        if (!fh) {
-          try { fh = await fsp.open(filePath, "r"); } catch { return; }
-        }
-        if (stopped) return;
-        const size = stat.size - offset;
-        const chunk = Buffer.alloc(size);
-        let bytesRead: number;
-        try {
-          ({ bytesRead } = await fh.read(chunk, 0, size, offset));
-        } catch (err) {
-          try { await fh.close(); } catch { /* gone */ }
-          fh = undefined;
-          logger.warn(`antigravity tailTranscript read failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
-          return;
-        }
-        offset += bytesRead;
-        buf += chunk.subarray(0, bytesRead).toString("utf-8");
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const l of lines) processLine(l);
-      } while (pending && !stopped);
-    } finally {
-      reading = false;
-    }
-  };
-
-  let watcher: fs.FSWatcher | undefined;
-  try { watcher = fs.watch(filePath, () => { void readNew(); }); } catch { /* file may not exist yet */ }
-  // Poll fallback: fs.watch on freshly-created files can miss the first appends,
-  // and the file often doesn't exist when we attach. Cheap interval until stopped.
-  const poll = setInterval(() => { void readNew(); }, 200);
-  poll.unref();
-  const initialDrain = setTimeout(() => { void readNew(); }, 30);
-  initialDrain.unref();
-
-  return {
-    stop() {
-      stopped = true;
-      watcher?.close();
-      clearInterval(poll);
-      clearTimeout(initialDrain);
-      void fh?.close().catch(() => { /* ignore */ });
-      fh = undefined;
-    },
-  };
 }
 
 interface ActiveTurn {
@@ -158,20 +69,15 @@ interface ActiveTurn {
   boundProc?: pty.IPty;
 }
 
-interface StreamEntry {
-  chunks: Buffer[];
-  totalBytes: number;
-  subscribers: Set<{ data: (d: Buffer) => void; control?: (e: PtyControlEvent) => void }>;
-  hasSeenPty: boolean;
-}
-
 export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
   name = "antigravity" as const;
   private active = new Map<string, ActiveTurn>();
-  private streams = new Map<string, StreamEntry>();
+  private streams: PtyStreamManager;
   private lastGeom = new Map<string, { cols: number; rows: number }>();
 
-  constructor(private lifecycle: PtyLifecycleManager) {}
+  constructor(private lifecycle: PtyLifecycleManager) {
+    this.streams = new PtyStreamManager("Antigravity PTY", (id) => this.lifecycle.getWarm(id) !== undefined);
+  }
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
     const jinnSessionId = opts.sessionId;
@@ -240,6 +146,10 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       scheduleDone(delayMs);
     };
 
+    // Tail the conversation transcript, emitting StreamDeltas for appended lines and
+    // invoking onDone(content) for each new MODEL/PLANNER_RESPONSE/DONE. Starting at
+    // the file's current EOF means a resumed conversation's history is NOT replayed
+    // as fresh deltas.
     const attachTail = (cid: string, fromBeginning = false) => {
       if (turn.tailer) return;
       const tp = transcriptPathFor(cid);
@@ -247,7 +157,16 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       if (!fromBeginning) {
         try { startOffset = fs.statSync(tp).size; } catch { /* not created yet → 0 */ }
       }
-      turn.tailer = tailTranscript(tp, startOffset, (d) => opts.onStream?.(d), onDone, scheduleDone);
+      // One tool-card state per tail so DONE-only tool rows synthesize their card
+      // (and RUNNING/planner-opened cards close without duplicating).
+      const toolState = newToolCardState();
+      turn.tailer = tailTranscriptLines(tp, startOffset, (line) => {
+        const deltas = transcriptLineToDeltas(line, toolState);
+        if (deltas.length) scheduleDone(); // transcript activity — push the quiet window out
+        for (const d of deltas) opts.onStream?.(d);
+        const terminal = isTerminalAnswerLine(line);
+        if (terminal.terminal && terminal.content) onDone(terminal.content, TURN_FINAL_QUIET_MS);
+      }, { pollMs: TAIL_POLL_MS, label: "antigravity" });
     };
 
     this.active.set(jinnSessionId, turn);
@@ -390,53 +309,11 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     if (proc) this.injectPromptToProc(proc, opts);
   }
 
-  // --- PTY stream plumbing (mirrors InteractiveClaudeEngine) ---
-
-  private streamFor(sessionId: string): StreamEntry {
-    let stream = this.streams.get(sessionId);
-    if (!stream) {
-      stream = { chunks: [], totalBytes: 0, subscribers: new Set(), hasSeenPty: false };
-      this.streams.set(sessionId, stream);
-    }
-    return stream;
-  }
+  // --- PTY stream plumbing (shared PtyStreamManager, mirrors InteractiveClaudeEngine) ---
 
   private wireProcToStream(jinnSessionId: string, proc: pty.IPty, onExitExtra?: () => void): PtyHandle {
-    const handle = {
-      pid: proc.pid,
-      get killed() { return (proc as any)._exitCode != null; },
-      kill: (signal?: string) => { try { proc.kill(signal); } catch { /* gone */ } },
-    } as PtyHandle;
-    const stream = this.streamFor(jinnSessionId);
-    if (!stream.hasSeenPty) {
-      stream.hasSeenPty = true;
-    } else if (stream.subscribers.size > 0) {
-      for (const sub of stream.subscribers) {
-        try { sub.control?.({ type: "reset" }); } catch { /* ignore */ }
-      }
-    }
-    (proc as any).on?.("error", (err: Error) => {
-      logger.warn(`Antigravity PTY socket error for session ${jinnSessionId}: ${err.message}`);
-    });
-
-    proc.onData((d) => {
-      const chunk = Buffer.from(d, "utf-8");
-      stream.chunks.push(chunk);
-      stream.totalBytes += chunk.length;
-      while (stream.totalBytes > SCROLLBACK_CAP_BYTES && stream.chunks.length > 1) {
-        const head = stream.chunks.shift()!;
-        stream.totalBytes -= head.length;
-      }
-      if (stream.totalBytes > SCROLLBACK_CAP_BYTES && stream.chunks.length === 1) {
-        const only = stream.chunks[0]!;
-        const sliced = only.subarray(only.length - SCROLLBACK_CAP_BYTES);
-        stream.chunks[0] = sliced;
-        stream.totalBytes = sliced.length;
-      }
-      for (const sub of stream.subscribers) {
-        try { sub.data(chunk); } catch { /* ignore */ }
-      }
-    });
+    const handle = createPtyHandle(proc);
+    this.streams.attach(jinnSessionId, proc);
     proc.onExit(() => {
       // Identity-gate session cleanup. In a kill->respawn race the lifecycle/stream
       // entries already point at the NEW PTY by the time THIS (old, killed) PTY's exit
@@ -444,12 +321,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       // freshly-adopted PTY. Only clean up if this PTY is still the session's warm handle.
       const isCurrent = this.lifecycle.getWarm(jinnSessionId) === handle;
       if (isCurrent) {
-        const s = this.streams.get(jinnSessionId);
-        if (s) {
-          s.chunks = [];
-          s.totalBytes = 0;
-          if (s.subscribers.size === 0) this.streams.delete(jinnSessionId);
-        }
+        this.streams.onPtyExit(jinnSessionId);
         this.lifecycle.releaseSession(jinnSessionId);
       }
       // Settle the active turn as interrupted ONLY if this dying proc is the one bound
@@ -458,7 +330,6 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       const e = this.active.get(jinnSessionId);
       if (e && e.boundProc === proc) onExitExtra?.();
     });
-    (handle as any)._proc = proc;
     return handle;
   }
 
@@ -471,7 +342,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     const args = this.buildArgs(opts.engineSessionId, opts.model);
     const cols = opts.cols ?? this.lastGeom.get(jinnSessionId)?.cols ?? 120;
     const rows = opts.rows ?? this.lastGeom.get(jinnSessionId)?.rows ?? 40;
-    if (opts.cols && opts.rows) this.lastGeom.set(jinnSessionId, { cols: opts.cols, rows: opts.rows });
+    if (opts.cols && opts.rows) setCapped(this.lastGeom, jinnSessionId, { cols: opts.cols, rows: opts.rows });
     logger.info(`AntigravityEngine ensureIdleSpawn for session ${jinnSessionId} (resume ${opts.engineSessionId || "none — fresh"}, geom ${cols}×${rows})`);
     const proc = pty.spawn(bin, args, {
       name: "xterm-256color",
@@ -485,9 +356,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
   }
 
   getScrollback(sessionId: string): Buffer {
-    const s = this.streams.get(sessionId);
-    if (!s || s.chunks.length === 0) return Buffer.alloc(0);
-    return Buffer.concat(s.chunks, s.totalBytes);
+    return this.streams.getScrollback(sessionId);
   }
 
   subscribeOutput(
@@ -495,15 +364,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     cb: (data: Buffer) => void,
     onControl?: (event: PtyControlEvent) => void,
   ): () => void {
-    const stream = this.streamFor(sessionId);
-    const sub = { data: cb, control: onControl };
-    stream.subscribers.add(sub);
-    return () => {
-      stream.subscribers.delete(sub);
-      if (stream.subscribers.size === 0 && !this.lifecycle.getWarm(sessionId)) {
-        this.streams.delete(sessionId);
-      }
-    };
+    return this.streams.subscribe(sessionId, cb, onControl);
   }
 
   writeStdin(sessionId: string, text: string): void {
@@ -519,7 +380,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
   }
 
   resizePty(sessionId: string, cols: number, rows: number): void {
-    this.lastGeom.set(sessionId, { cols, rows });
+    setCapped(this.lastGeom, sessionId, { cols, rows });
     const handle = this.lifecycle.getWarm(sessionId);
     const proc = handle ? ((handle as any)._proc as pty.IPty | undefined) : undefined;
     if (!proc) return;

@@ -8,6 +8,7 @@ import { JINN_HOME, CLAUDE_SETTINGS_DIR, HOOK_RELAY_SCRIPT } from "../shared/pat
 import { writeSessionSettings } from "../shared/claude-settings.js";
 import { resolveBin } from "../shared/resolve-bin.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
+import { PtyStreamManager, createPtyHandle, setCapped } from "./pty-stream.js";
 import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-view-engine.js";
 import type { HookRegistry, HookPayload } from "../gateway/hook-registry.js";
 import { SsePtyProxy, MAIN_AGENT_SENTINEL, type SseDataEvent } from "./sse-pty-proxy.js";
@@ -313,8 +314,6 @@ export class TurnResolver {
   }
 }
 
-/** Cap for the per-session PTY scrollback ring buffer (xterm.js reconnect replay). */
-const SCROLLBACK_CAP_BYTES = 262144;
 const NATIVE_COMMAND_QUIET_MS = 1800;
 const NATIVE_COMMAND_MIN_MS = 3000;
 const NATIVE_COMMAND_MAX_MS = 90_000;
@@ -351,22 +350,14 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
   /** Sessions with an in-flight async idle-spawn (proxy.start awaited) — prevents
    *  a second ensureIdleSpawn from racing in a duplicate PTY during that gap. */
   private idleSpawning = new Set<string>();
-  /** Per-session PTY output streams: scrollback ring buffer (chunk list + running byte total)
-   *  + live subscribers. Survives PTY respawn. The chunk-list ring avoids the O(N) realloc
-   *  that a `(buffer + d).slice(-CAP)` per data event would cause at hot output. */
-  private streams = new Map<string, {
-    chunks: Buffer[];
-    totalBytes: number;
-    subscribers: Set<{ data: (d: Buffer) => void; control?: (e: PtyControlEvent) => void }>;
-    /** Set to true the first time a PTY is wired to this stream entry. Subsequent
-     *  wires (subscribers attached or not) are PTY respawns — clients need a reset
-     *  so their xterm doesn't render the new alt-screen atop the old one's cells. */
-    hasSeenPty: boolean;
-  }>();
+  /** Per-session PTY output streams (scrollback ring buffer + live subscribers).
+   *  Survives PTY respawn. */
+  private streams: PtyStreamManager;
   /** Last terminal geometry reported by the client per session. Used to spawn
    *  follow-up PTYs at the correct dimensions when a turn comes in after the
    *  warm PTY was reaped — otherwise spawn() falls back to 120×40 and the TUI
-   *  text body is locked in at the wrong width. */
+   *  text body is locked in at the wrong width. Intentionally survives PTY
+   *  release (its job is to size the NEXT spawn); growth is bounded by setCapped. */
   private lastGeom = new Map<string, { cols: number; rows: number }>();
   private lastOutputAt = new Map<string, number>();
   /** Model/effort the live PTY was spawned with, per session. `--model`/`--effort`
@@ -377,7 +368,17 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
   constructor(
     private lifecycle: PtyLifecycleManager,
     private hookRegistry: HookRegistry,
-  ) {}
+  ) {
+    this.streams = new PtyStreamManager("PTY", (id) => this.lifecycle.getWarm(id) !== undefined);
+    // Purge per-PTY bookkeeping whenever the session's PTY is released (kill,
+    // LRU eviction, sweep reap, cold respawn) so these maps don't grow forever
+    // in a long-running daemon. Both are meaningful only while a PTY is live and
+    // are repopulated on the next spawn. lastGeom is NOT purged here — see above.
+    this.lifecycle.onRelease((id) => {
+      this.lastOutputAt.delete(id);
+      this.spawnParams.delete(id);
+    });
+  }
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
     const jinnSessionId = opts.sessionId;
@@ -619,54 +620,8 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  with no Stop hook); a stale proc replaced by a respawn is treated as benign.
    *  `proxy` (the per-PTY SSE forward proxy) is torn down when this PTY exits. */
   private wireProcToStream(jinnSessionId: string, proc: pty.IPty, proxy?: SsePtyProxy): PtyHandle {
-    const handle: PtyHandle = {
-      pid: proc.pid,
-      get killed() { return (proc as any)._exitCode != null; },
-      kill: (signal?: string) => { try { proc.kill(signal); } catch { /* already gone */ } },
-    } as PtyHandle;
-    const stream = this.streamFor(jinnSessionId);
-    // Distinguish initial spawn from respawn via a per-stream flag rather than
-    // subscriber count — CliTerminal opens its WS on mount (before the user
-    // sends the first message that triggers spawn), so subscriber-count gating
-    // would spuriously reset on the very first PTY for the session.
-    // On respawn, only emit if there are subscribers (no one listens otherwise).
-    if (!stream.hasSeenPty) {
-      stream.hasSeenPty = true;
-    } else if (stream.subscribers.size > 0) {
-      for (const sub of stream.subscribers) {
-        try { sub.control?.({ type: "reset" }); } catch { /* ignore */ }
-      }
-    }
-    // node-pty's internal socket error handler (unixTerminal.js) throws synchronously when
-    // proc.listeners('error').length < 2. Without this listener the count stays at 1 (the
-    // internal handler), so any socket error (EIO on claude exit, EPIPE, etc.) propagates as
-    // an uncaught exception and kills the daemon. Adding a handler here bumps the count to 2
-    // and prevents the throw; we log it and let the onExit path handle cleanup.
-    (proc as any).on?.("error", (err: Error) => {
-      logger.warn(`PTY socket error for session ${jinnSessionId}: ${err.message}`);
-    });
-
-    proc.onData((d) => {
-      this.lastOutputAt.set(jinnSessionId, Date.now());
-      // Convert string to Buffer once; push to ring; evict head until under cap.
-      const chunk = Buffer.from(d, "utf-8");
-      stream.chunks.push(chunk);
-      stream.totalBytes += chunk.length;
-      while (stream.totalBytes > SCROLLBACK_CAP_BYTES && stream.chunks.length > 1) {
-        const head = stream.chunks.shift()!;
-        stream.totalBytes -= head.length;
-      }
-      // If a single chunk exceeds the cap, slice it down (rare; keeps invariant tight).
-      if (stream.totalBytes > SCROLLBACK_CAP_BYTES && stream.chunks.length === 1) {
-        const only = stream.chunks[0]!;
-        const sliced = only.subarray(only.length - SCROLLBACK_CAP_BYTES);
-        stream.chunks[0] = sliced;
-        stream.totalBytes = sliced.length;
-      }
-      for (const sub of stream.subscribers) {
-        try { sub.data(chunk); } catch { /* ignore subscriber errors */ }
-      }
-    });
+    const handle = createPtyHandle(proc);
+    this.streams.attach(jinnSessionId, proc, () => this.lastOutputAt.set(jinnSessionId, Date.now()));
     proc.onExit(() => {
       // Session-level cleanup MUST be identity-gated. In a kill->respawn race the
       // lifecycle/stream entries already point at the NEW PTY by the time THIS
@@ -676,20 +631,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       // the session's CURRENT warm handle means the cleanup is ours to do.
       const isCurrent = this.lifecycle.getWarm(jinnSessionId) === handle;
       if (isCurrent) {
-        // Clear scrollback so a stale farewell (Claude's "Resume this session…" hint
-        // printed on SIGHUP shutdown) doesn't persist into the next PTY incarnation.
-        const s = this.streams.get(jinnSessionId);
-        if (s) {
-          s.chunks = [];
-          s.totalBytes = 0;
-          // If no WS subscribers are attached, the entry is dead weight — drop it so
-          // the map doesn't leak entries for every session that ever ran. Subscribers,
-          // when present, are kept so a future respawn can notify them via Task 4's
-          // reset event; that path also clears the subscribers Set on full teardown.
-          if (s.subscribers.size === 0) {
-            this.streams.delete(jinnSessionId);
-          }
-        }
+        this.streams.onPtyExit(jinnSessionId);
         // Release the lifecycle entry so the dead handle isn't picked up by a future
         // run() as "warm" — that would inject into a corpse.
         this.lifecycle.releaseSession(jinnSessionId);
@@ -706,7 +648,6 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
         e.resolver.interrupt("Interrupted: claude process exited");
       }
     });
-    (handle as any)._proc = proc;
     return handle;
   }
 
@@ -774,7 +715,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // future cold spawn through run() picks up the right geometry too.
     const cols = opts.cols ?? this.lastGeom.get(jinnSessionId)?.cols ?? 120;
     const rows = opts.rows ?? this.lastGeom.get(jinnSessionId)?.rows ?? 40;
-    if (opts.cols && opts.rows) this.lastGeom.set(jinnSessionId, { cols: opts.cols, rows: opts.rows });
+    if (opts.cols && opts.rows) setCapped(this.lastGeom, jinnSessionId, { cols: opts.cols, rows: opts.rows });
 
     void (async () => {
       try {
@@ -819,27 +760,10 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     pasteAndSubmit(proc, text);
   }
 
-  /** Lazily create (or fetch) the output stream entry for a Jinn session id. */
-  private streamFor(sessionId: string): {
-    chunks: Buffer[];
-    totalBytes: number;
-    subscribers: Set<{ data: (d: Buffer) => void; control?: (e: PtyControlEvent) => void }>;
-    hasSeenPty: boolean;
-  } {
-    let stream = this.streams.get(sessionId);
-    if (!stream) {
-      stream = { chunks: [], totalBytes: 0, subscribers: new Set(), hasSeenPty: false };
-      this.streams.set(sessionId, stream);
-    }
-    return stream;
-  }
-
   /** Append-only capped output buffer for the session's current/most-recent PTY (for xterm.js reconnect replay).
    *  Returns a concatenated Buffer — pty-ws.ts forwards it directly without re-encoding. */
   getScrollback(sessionId: string): Buffer {
-    const s = this.streams.get(sessionId);
-    if (!s || s.chunks.length === 0) return Buffer.alloc(0);
-    return Buffer.concat(s.chunks, s.totalBytes);
+    return this.streams.getScrollback(sessionId);
   }
 
   /** Subscribe to live PTY output for a session. Returns an unsubscribe fn. Survives PTY respawn within the session.
@@ -850,18 +774,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     cb: (data: Buffer) => void,
     onControl?: (event: PtyControlEvent) => void,
   ): () => void {
-    const stream = this.streamFor(sessionId);
-    const sub = { data: cb, control: onControl };
-    stream.subscribers.add(sub);
-    return () => {
-      stream.subscribers.delete(sub);
-      // If this was the last subscriber AND there's no warm PTY producing data,
-      // the streams entry is dead weight — drop it. Mirrors the onExit cleanup
-      // path for sessions whose WS outlived the PTY.
-      if (stream.subscribers.size === 0 && !this.lifecycle.getWarm(sessionId)) {
-        this.streams.delete(sessionId);
-      }
-    };
+    return this.streams.subscribe(sessionId, cb, onControl);
   }
 
   /** Write raw text to the warm PTY as a bracketed-paste + CR (same /@!-guard as injectPrompt). No-op if no warm PTY. */
@@ -880,7 +793,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
 
   /** Resize the warm PTY + remember the geometry for the next cold spawn. */
   resizePty(sessionId: string, cols: number, rows: number): void {
-    this.lastGeom.set(sessionId, { cols, rows });
+    setCapped(this.lastGeom, sessionId, { cols, rows });
     const handle = this.lifecycle.getWarm(sessionId);
     if (!handle) return;
     const proc = (handle as any)._proc as pty.IPty | undefined;

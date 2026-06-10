@@ -45,6 +45,7 @@ function shouldStayAlive(e: Entry, now: number): boolean {
 export class PtyLifecycleManager {
   private entries = new Map<string, Entry>();
   private sweepTimer: NodeJS.Timeout | undefined;
+  private releaseListeners: Array<(sessionId: string) => void> = [];
 
   constructor(private opts: PtyLifecycleOpts) {
     this.sweepTimer = setInterval(() => this.sweep(), 30_000);
@@ -105,12 +106,21 @@ export class PtyLifecycleManager {
     this.reevaluate(sessionId);
   }
 
+  /** Engine-side release hook: invoked for EVERY released session (manual release,
+   *  LRU eviction, sweep reap, killAll), after the gateway's onCleanup. Engines use
+   *  it to purge per-session bookkeeping (spawn params, output timestamps) so their
+   *  maps don't grow forever in a long-running daemon. */
+  onRelease(listener: (sessionId: string) => void): void {
+    this.releaseListeners.push(listener);
+  }
+
   releaseSession(sessionId: string): void {
     const e = this.entries.get(sessionId);
     if (!e) return;
     this.entries.delete(sessionId);
     if (!e.handle.killed) e.handle.kill("SIGTERM");
     this.opts.onCleanup?.(sessionId);
+    for (const l of this.releaseListeners) l(sessionId);
   }
 
   killAll(): void {

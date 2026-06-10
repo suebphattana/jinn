@@ -40,8 +40,8 @@ import { getTalkTts } from "./tts-stream.js";
 /** Stable session key for the single hands-free orchestrator surface. */
 const TALK_SESSION_KEY = "talk:main";
 
-/** Default orchestrator model when `talk.orchestratorModel` is unset (snappy). */
-const DEFAULT_TALK_MODEL = "haiku";
+/** Default orchestrator model when `talk.orchestratorModel` is unset (capable enough to orchestrate; override via talk.orchestratorModel). */
+const DEFAULT_TALK_MODEL = "sonnet";
 
 /** The orchestrator model the talk session should run on. */
 function talkModel(config: JinnConfig): string {

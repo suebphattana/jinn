@@ -530,7 +530,7 @@ export interface JinnConfig {
      *  unavailable) the talk session falls back to `engines.default`, then to the
      *  first available engine — see talk/engine-resolver.ts. */
     engine?: string;
-    /** Model for the hands-free voice orchestrator session (default: "haiku" — snappy). */
+    /** Model for the hands-free voice orchestrator session (default: "sonnet" — capable enough to orchestrate). */
     orchestratorModel?: string;
     kokoro?: {
       voice?: string;

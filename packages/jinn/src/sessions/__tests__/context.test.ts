@@ -293,6 +293,30 @@ describe("buildContext — audience scoping", () => {
     // The old per-connector recipe block is gone:
     expect(out).not.toContain("**Send threaded reply**");
   });
+
+  it("senior WITHOUT reports gets no delegation mini-ref", () => {
+    const senior: Employee = { ...minimalEmployee, name: "analyst", displayName: "Analyst", rank: "senior" };
+    const out = buildContext({ ...baseOpts, employee: senior, hierarchy });
+    expect(out).not.toContain("Delegate to another employee");
+  });
+
+  it("senior WITH direct reports gets the delegation mini-ref", () => {
+    const seniorLead: Employee = { ...minimalEmployee, name: "ventures-lead", displayName: "Ventures Lead", rank: "senior" };
+    const h = {
+      nodes: {
+        "ventures-lead": { employee: seniorLead, parentName: null, directReports: ["scout"], depth: 0, chain: [] },
+        scout: { employee: { ...minimalEmployee, name: "scout", displayName: "Scout", rank: "employee" }, parentName: "ventures-lead", directReports: [], depth: 1, chain: ["ventures-lead"] },
+      },
+      sorted: ["ventures-lead", "scout"],
+    } as any;
+    const out = buildContext({ ...baseOpts, employee: seniorLead, hierarchy: h });
+    expect(out).toContain("Delegate to another employee");
+  });
+
+  it("chain of command carries slugs for delegation", () => {
+    const out = buildContext({ ...baseOpts, employee: minimalEmployee, hierarchy });
+    expect(out).toContain("`writer`"); // direct report slug
+  });
 });
 
 describe("buildContext — maxChars trimming", () => {

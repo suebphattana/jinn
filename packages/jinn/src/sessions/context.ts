@@ -218,10 +218,11 @@ export function buildContext(opts: {
   // in the Gateway API reference section below, so nothing is lost here.
 
   // ── STANDARD: Gateway API reference (audience-scoped; full table in CLAUDE.md) ──
+  const employeeNode = opts.employee ? opts.hierarchy?.nodes[opts.employee.name] : undefined;
   sections.push({
     tier: Tier.STANDARD,
     marker: `## ${portalName} Gateway API`,
-    content: buildApiReference(gatewayUrl, portalName, opts.employee),
+    content: buildApiReference(gatewayUrl, portalName, opts.employee, employeeNode?.directReports?.length ?? 0),
     summary: `## ${portalName} Gateway API (${gatewayUrl})\nFull endpoint reference: CLAUDE.md / AGENTS.md.`,
   });
 
@@ -290,7 +291,7 @@ function buildChainOfCommand(
   if (node.parentName) {
     const parent = hierarchy.nodes[node.parentName];
     if (parent) {
-      lines.push(`- **Your manager**: ${parent.employee.displayName} (${parent.employee.rank})`);
+      lines.push(`- **Your manager**: ${parent.employee.displayName} (\`${node.parentName}\`, ${parent.employee.rank})`);
     } else {
       lines.push(`- **Your manager**: ${node.parentName}`);
     }
@@ -302,7 +303,7 @@ function buildChainOfCommand(
   if (node.directReports.length > 0) {
     const reports = node.directReports.map((name) => {
       const r = hierarchy.nodes[name];
-      return r ? `${r.employee.displayName} (${r.employee.rank})` : name;
+      return r ? `${r.employee.displayName} (\`${name}\`, ${r.employee.rank})` : name;
     });
     lines.push(`- **Your direct reports**: ${reports.join(", ")}`);
   }
@@ -618,19 +619,21 @@ function buildEvolutionContext(portalName: string): string | null {
  * was pure duplication. What remains dynamic is the live base URL and the
  * short list of calls each audience actually makes.
  */
-function buildApiReference(gatewayUrl: string, portalName: string, employee?: Employee): string {
+function buildApiReference(gatewayUrl: string, portalName: string, employee?: Employee, directReportCount = 0): string {
   const header = `## ${portalName} Gateway API (base URL: ${gatewayUrl})`;
   const attachmentsLine =
     `- Push a file/image into this chat (web view): \`curl -X POST ${gatewayUrl}/api/sessions/<your-session-id>/attachments -H 'Content-Type: application/json' -d '{"path":"/abs/path","text":"caption"}'\``;
   if (!employee) {
     return `${header}\nThe full endpoint reference is in CLAUDE.md / AGENTS.md (auto-loaded). Substitute the base URL above.\n${attachmentsLine}`;
   }
-  if (employee.rank === "manager" || employee.rank === "executive") {
+  // Anyone who manages reports needs the delegation endpoints — rank alone undercounts (seniors can have reportsTo'd reports).
+  if (employee.rank === "manager" || employee.rank === "executive" || directReportCount > 0) {
     return [
       header,
       `- Delegate to another employee: \`POST ${gatewayUrl}/api/sessions\` with \`{prompt, employee, parentSessionId}\``,
       `- Follow up on a child session: \`POST ${gatewayUrl}/api/sessions/:id/message\` with \`{message}\``,
       `- Read a child's latest replies: \`GET ${gatewayUrl}/api/sessions/:id?last=N\``,
+      `- Valid \`employee\` values are the slugs in your chain of command, \`GET ${gatewayUrl}/api/org\`, or \`ls ~/.jinn/org/\``,
       attachmentsLine,
       `Full endpoint table: CLAUDE.md / AGENTS.md.`,
     ].join("\n");

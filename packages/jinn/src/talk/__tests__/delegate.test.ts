@@ -110,4 +110,22 @@ describe("delegateToThread", () => {
       title: "Check the MoveKit order status plea…",
     });
   });
+
+  it("rejects continuing a child that belongs to a DIFFERENT talk session", async () => {
+    const d = deps({
+      getSession: (id) =>
+        id === "t1"
+          ? fakeSession({})
+          : id === "foreign"
+            ? fakeSession({ id: "foreign", source: "web", parentSessionId: "other-talk", title: "Foreign" })
+            : undefined,
+    });
+    const r = await delegateToThread({ sessionId: "t1", thread: "foreign", brief: "x" }, d);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(400);
+      expect(r.threads).toEqual([{ id: "c1", label: "Pravko", status: "idle" }]);
+    }
+    expect(d.continueThread).not.toHaveBeenCalled();
+  });
 });

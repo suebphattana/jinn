@@ -27,6 +27,8 @@ import {
   getSessionBySessionKey,
   listChildSessions,
   updateSession,
+  searchSessions,
+  searchMessages,
 } from "../sessions/registry.js";
 import { engineAvailable, isKnownEngine, type EngineName } from "../shared/models.js";
 import { resolveTalkEngine, type TalkEngineResolution } from "./engine-resolver.js";
@@ -34,7 +36,8 @@ import { validateCard, validateCardPatch } from "./card-validate.js";
 import { delegateToThread } from "./delegate.js";
 import { setTalkMuted } from "./mute-state.js";
 import { TALK_EVENTS } from "./protocol.js";
-import { buildGraphSnapshot } from "./graph.js";
+import { buildGraphSnapshot, resolveTalkRoot } from "./graph.js";
+import { searchTalkSessions } from "./search.js";
 import { getTalkTts } from "./tts-stream.js";
 
 /** Stable session key for the single hands-free orchestrator surface. */
@@ -199,6 +202,27 @@ export async function handleTalkApi(
         return true;
       }
       json(res, { rootId: root.id, nodes: buildGraphSnapshot(root.id, listChildSessions) });
+      return true;
+    }
+
+    // GET /api/talk/search?q=&limit= — search sessions by title/metadata and by
+    // message content (FTS). Merges both hit sources, de-duped by sessionId
+    // (title hit wins position; content hits attach as hits[]). Capped at 20
+    // results overall and 3 hits per session. Returns [] when FTS is degraded
+    // (backfill not yet complete) — the orchestrator handles that gracefully.
+    if (method === "GET" && pathname === "/api/talk/search") {
+      const q = url.searchParams.get("q") ?? "";
+      const result = searchTalkSessions(q, {
+        searchSessions,
+        searchMessages,
+        getSession,
+        resolveTalkRoot,
+      });
+      if (!result.ok) {
+        json(res, { error: result.error }, result.status);
+        return true;
+      }
+      json(res, result);
       return true;
     }
 

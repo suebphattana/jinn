@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
 /**
  * The PTY is mocked. `spawn()` records the (bin, args) it was called with into
@@ -45,6 +47,23 @@ vi.mock("node-pty", () => ({
     return proc as unknown as import("node-pty").IPty;
   }),
 }));
+
+/**
+ * Redirect os.homedir() to a temp dir so the engine's module-level
+ * CODEX_SESSIONS_DIR (~/.codex/sessions) points at a sandbox the run-level
+ * tests can write transcript fixtures into. Everything else on node:os stays
+ * real. The temp home is created inside the factory (runs before the engine
+ * module is imported) and exposed via the hoisted state object.
+ */
+const osMockState = vi.hoisted(() => ({ home: "" }));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  const fsm = await import("node:fs");
+  const pathm = await import("node:path");
+  osMockState.home = fsm.mkdtempSync(pathm.join(actual.tmpdir(), "codex-it-home-"));
+  const homedir = () => osMockState.home;
+  return { ...actual, homedir, default: { ...((actual as any).default ?? actual), homedir } };
+});
 
 import { codexTranscriptLineToDeltas, CodexInteractiveEngine } from "../codex-interactive.js";
 import { PtyLifecycleManager } from "../pty-lifecycle.js";
@@ -160,21 +179,31 @@ describe("codexTranscriptLineToDeltas — terminal markers", () => {
       payload: { type: "task_complete", turn_id: "t-1", last_agent_message: "All done." },
     });
     const parsed = codexTranscriptLineToDeltas(line);
-    expect(parsed.taskComplete).toEqual({ lastAgentMessage: "All done." });
+    expect(parsed.taskComplete).toEqual({ lastAgentMessage: "All done.", turnId: "t-1" });
     expect(parsed.deltas).toEqual([]);
   });
 
   it("parses task_complete without last_agent_message", () => {
     const line = JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "t-2" } });
-    expect(codexTranscriptLineToDeltas(line).taskComplete).toEqual({ lastAgentMessage: undefined });
+    expect(codexTranscriptLineToDeltas(line).taskComplete).toEqual({ lastAgentMessage: undefined, turnId: "t-2" });
   });
 
   it("parses turn_aborted", () => {
     const line = JSON.stringify({ type: "event_msg", payload: { type: "turn_aborted", turn_id: "t-3" } });
-    expect(codexTranscriptLineToDeltas(line).turnAborted).toBe(true);
+    expect(codexTranscriptLineToDeltas(line).turnAborted).toEqual({ turnId: "t-3" });
   });
 
-  it("other event_msg payloads carry no terminal markers", () => {
+  it("parses task_started with turn id", () => {
+    const line = JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "t-9" } });
+    expect(codexTranscriptLineToDeltas(line).taskStarted).toEqual({ turnId: "t-9" });
+  });
+
+  it("empty-string last_agent_message is preserved as a string", () => {
+    const line = JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "t-5", last_agent_message: "" } });
+    expect(codexTranscriptLineToDeltas(line).taskComplete).toEqual({ lastAgentMessage: "", turnId: "t-5" });
+  });
+
+  it("task_started carries no terminal markers", () => {
     const line = JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "t-4" } });
     const parsed = codexTranscriptLineToDeltas(line);
     expect(parsed.taskComplete).toBeUndefined();
@@ -262,4 +291,108 @@ describe("CodexInteractiveEngine — effort/model PTY args + respawn", () => {
     expect(args[args.indexOf("--model") + 1]).toBe("gpt-5.5-codex");
     lifecycle.dispose();
   });
+});
+
+describe("CodexInteractiveEngine — terminal-marker gating + transcript discovery (run level)", () => {
+  // os.homedir() is mocked to a temp dir (see vi.mock above), so the engine's
+  // CODEX_SESSIONS_DIR points at <tmp>/.codex/sessions and these tests can plant
+  // transcript fixtures the discovery poll (200ms) + tailer (250ms) pick up live.
+  let lifecycle: PtyLifecycleManager;
+  let engine: CodexInteractiveEngine;
+  let sessionsDir: string;
+  let fileSeq = 0;
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const line = (obj: unknown) => JSON.stringify(obj) + "\n";
+  const sessionMeta = (id: string) => line({ type: "session_meta", payload: { id } });
+  const taskStarted = (turnId: string) => line({ type: "event_msg", payload: { type: "task_started", turn_id: turnId } });
+  const taskComplete = (turnId: string, msg: string) =>
+    line({ type: "event_msg", payload: { type: "task_complete", turn_id: turnId, last_agent_message: msg } });
+  const turnAborted = (turnId: string) => line({ type: "event_msg", payload: { type: "turn_aborted", turn_id: turnId } });
+  const assistantMessage = (text: string) =>
+    line({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] } });
+
+  beforeEach(() => {
+    lifecycle = new PtyLifecycleManager({ maxLivePtys: 8 });
+    engine = new CodexInteractiveEngine(lifecycle);
+    sessionsDir = path.join(osMockState.home, ".codex", "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  function freshTranscriptPath(): string {
+    return path.join(sessionsDir, `rollout-it-${++fileSeq}.jsonl`);
+  }
+
+  it("ignores a stale task_complete replayed before task_started, settles on the matched one", async () => {
+    const run = engine.run({ prompt: "hi", sessionId: "it-gate-1", cwd: "/tmp" });
+    let settled = false;
+    void run.then(() => { settled = true; });
+
+    // The fresh rollout appears pre-seeded with a STALE terminal marker (no
+    // task_started) — e.g. replayed history. It must NOT settle the turn.
+    const file = freshTranscriptPath();
+    fs.writeFileSync(file, sessionMeta("codex-it-1") + taskComplete("t-old", "STALE"));
+    await sleep(800); // discovery (200ms) + tailer attach/replay window
+    expect(settled).toBe(false);
+
+    // The real turn: matched task_started → task_complete settles immediately.
+    fs.appendFileSync(file, taskStarted("t-new") + assistantMessage("fresh answer") + taskComplete("t-new", "fresh answer"));
+    const result = await run;
+    expect(result.result).toBe("fresh answer");
+    expect(result.error).toBeUndefined();
+    expect(result.sessionId).toBe("codex-it-1");
+    lifecycle.dispose();
+  }, 15000);
+
+  it("ignores a terminal marker whose turn id mismatches the started turn", async () => {
+    const run = engine.run({ prompt: "hi", sessionId: "it-gate-2", cwd: "/tmp" });
+    let settled = false;
+    void run.then(() => { settled = true; });
+
+    const file = freshTranscriptPath();
+    fs.writeFileSync(file, sessionMeta("codex-it-2") + taskStarted("t-a") + taskComplete("t-b", "WRONG"));
+    await sleep(800);
+    expect(settled).toBe(false);
+
+    fs.appendFileSync(file, taskComplete("t-a", "RIGHT"));
+    const result = await run;
+    expect(result.result).toBe("RIGHT");
+    lifecycle.dispose();
+  }, 15000);
+
+  it("turn_aborted settles the turn only after this turn's task_started", async () => {
+    const run = engine.run({ prompt: "hi", sessionId: "it-gate-3", cwd: "/tmp" });
+    let settled = false;
+    void run.then(() => { settled = true; });
+
+    const file = freshTranscriptPath();
+    fs.writeFileSync(file, sessionMeta("codex-it-3") + turnAborted("t-old"));
+    await sleep(800); // stale abort ignored — turn still pending
+    expect(settled).toBe(false);
+
+    fs.appendFileSync(file, taskStarted("t-x") + turnAborted("t-x"));
+    const result = await run;
+    expect(result.error).toBe("Interrupted: codex turn aborted");
+    lifecycle.dispose();
+  }, 15000);
+
+  it("discovery ignores a pre-existing transcript that another process appends to", async () => {
+    // A foreign rollout exists BEFORE this turn starts...
+    const foreign = path.join(sessionsDir, `rollout-foreign-${++fileSeq}.jsonl`);
+    fs.writeFileSync(foreign, sessionMeta("codex-foreign"));
+
+    const run = engine.run({ prompt: "hi", sessionId: "it-disc-1", cwd: "/tmp" });
+    // ...and gets appended (mtime bump) by the OTHER codex process mid-discovery.
+    // The old mtime arm would attach fromBeginning and settle with FOREIGN.
+    fs.appendFileSync(foreign, taskStarted("t-f") + taskComplete("t-f", "FOREIGN"));
+    await sleep(800);
+
+    // Our own brand-new rollout appears — discovery must pick it, not the foreign one.
+    const own = freshTranscriptPath();
+    fs.writeFileSync(own, sessionMeta("codex-own") + taskStarted("t-o") + taskComplete("t-o", "OWN"));
+    const result = await run;
+    expect(result.result).toBe("OWN");
+    expect(result.sessionId).toBe("codex-own");
+    lifecycle.dispose();
+  }, 15000);
 });

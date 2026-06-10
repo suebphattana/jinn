@@ -79,10 +79,12 @@ export function codexTranscriptLineToDeltas(line: string): {
   doneText?: string;
   sessionId?: string;
   contextTokens?: number;
+  /** event_msg task_started — gates the terminal markers below to THIS turn. */
+  taskStarted?: { turnId?: string };
   /** event_msg task_complete — the turn's deterministic end marker. */
-  taskComplete?: { lastAgentMessage?: string };
+  taskComplete?: { lastAgentMessage?: string; turnId?: string };
   /** event_msg turn_aborted — the turn was interrupted CLI-side. */
-  turnAborted?: boolean;
+  turnAborted?: { turnId?: string };
 } {
   const trimmed = line.trim();
   if (!trimmed) return { deltas: [] };
@@ -105,13 +107,23 @@ export function codexTranscriptLineToDeltas(line: string): {
     return ctx ? { deltas: [{ type: "context", content: String(ctx) }], contextTokens: ctx } : { deltas: [] };
   }
 
+  if (msg.type === "event_msg" && msg?.payload?.type === "task_started") {
+    return { deltas: [], taskStarted: { turnId: typeof msg.payload.turn_id === "string" ? msg.payload.turn_id : undefined } };
+  }
+
   if (msg.type === "event_msg" && msg?.payload?.type === "task_complete") {
     const lam = msg.payload.last_agent_message;
-    return { deltas: [], taskComplete: { lastAgentMessage: typeof lam === "string" ? lam : undefined } };
+    return {
+      deltas: [],
+      taskComplete: {
+        lastAgentMessage: typeof lam === "string" ? lam : undefined,
+        turnId: typeof msg.payload.turn_id === "string" ? msg.payload.turn_id : undefined,
+      },
+    };
   }
 
   if (msg.type === "event_msg" && msg?.payload?.type === "turn_aborted") {
-    return { deltas: [], turnAborted: true };
+    return { deltas: [], turnAborted: { turnId: typeof msg.payload.turn_id === "string" ? msg.payload.turn_id : undefined } };
   }
 
   if (msg.type !== "response_item") return { deltas: [] };
@@ -230,6 +242,8 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
     let codexSessionId = opts.resumeSessionId;
     let latestAnswer = "";
     let lastContextTokens: number | undefined;
+    let sawTaskStarted = false;
+    let startedTurnId: string | undefined;
     let settled = false;
     let resolveFn!: (r: EngineResult) => void;
     const promise = new Promise<EngineResult>((res) => { resolveFn = res; });
@@ -253,20 +267,36 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
       finish({ sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: latestAnswer, error: reason });
 
     const onParsed = (parsed: ReturnType<typeof codexTranscriptLineToDeltas>) => {
+      if (settled) return;
       if (parsed.sessionId && !codexSessionId) codexSessionId = parsed.sessionId;
       if (parsed.contextTokens) lastContextTokens = parsed.contextTokens;
-      for (const d of parsed.deltas) opts.onStream?.(d);
-      if (parsed.taskComplete) {
-        // Deterministic end-of-turn marker — settle now (no quiet window).
-        const text = parsed.taskComplete.lastAgentMessage?.trim()
-          ? parsed.taskComplete.lastAgentMessage
-          : latestAnswer;
-        finish({ sessionId: codexSessionId ?? "", result: text, numTurns: 1, contextTokens: lastContextTokens });
-        return;
+      if (parsed.taskStarted) {
+        sawTaskStarted = true;
+        startedTurnId = parsed.taskStarted.turnId ?? startedTurnId;
       }
-      if (parsed.turnAborted) {
-        finish({ sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: latestAnswer, error: "Interrupted: codex turn aborted" });
-        return;
+      for (const d of parsed.deltas) opts.onStream?.(d);
+      if (parsed.taskComplete || parsed.turnAborted) {
+        // A terminal marker is only trustworthy if THIS tailer saw the matching
+        // task_started: a late-flushed marker from the PREVIOUS turn (or one
+        // replayed from a pre-existing transcript) arrives without its start —
+        // honoring it would instantly false-complete this turn with a stale
+        // answer. Unmatched markers fall through to the debounce fallback.
+        const turnId = parsed.taskComplete?.turnId ?? parsed.turnAborted?.turnId;
+        const matches = sawTaskStarted && (!turnId || !startedTurnId || turnId === startedTurnId);
+        if (!matches) {
+          logger.warn(`CodexInteractiveEngine: ignoring unmatched terminal marker for ${jinnSessionId} (sawTaskStarted=${sawTaskStarted})`);
+        } else if (parsed.taskComplete) {
+          // Deterministic end-of-turn marker — settle now (no quiet window).
+          const text = parsed.taskComplete.lastAgentMessage?.trim()
+            ? parsed.taskComplete.lastAgentMessage
+            : latestAnswer;
+          if (!text.trim()) logger.warn(`CodexInteractiveEngine: task_complete with no text for ${jinnSessionId}`);
+          finish({ sessionId: codexSessionId ?? "", result: text, numTurns: 1, contextTokens: lastContextTokens });
+          return;
+        } else {
+          finish({ sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: latestAnswer, error: "Interrupted: codex turn aborted" });
+          return;
+        }
       }
       if (parsed.doneText) {
         latestAnswer = parsed.doneText;
@@ -314,7 +344,10 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
       const discover = setInterval(() => {
         const after = listTranscriptFiles();
         const fresh = [...after.entries()]
-          .filter(([file, mtime]) => !before.has(file) || mtime > (before.get(file) ?? 0))
+          // Only brand-new files: codex creates a fresh rollout per session. An
+          // mtime-bumped PRE-EXISTING file is another process's transcript —
+          // replaying its history from the beginning would hijack this turn.
+          .filter(([file]) => !before.has(file))
           .sort((a, b) => b[1] - a[1]);
         if (fresh.length > 0) {
           clearInterval(discover);

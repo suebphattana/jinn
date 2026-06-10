@@ -119,12 +119,17 @@
   position: relative;
   z-index: var(--z-stage);
   display: flex;
-  align-items: flex-end;
+  /* `safe` falls back to start-alignment on overflow so the top of a tall
+     card scrolls into reach instead of being clipped out of the scrollport. */
+  align-items: safe flex-end;
   justify-content: center;
   padding: var(--space-2) var(--space-4) 0;
-  /* Cap so a tall blocking card can never push the controls off-screen. */
+  /* Cap so a tall blocking card can never push the controls off-screen; the
+     row scrolls internally so a clipped card's text stays REACHABLE — an
+     approval must never be actionable without its content being readable. */
   max-height: 46dvh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ---- row 6: bottom controls ---- */

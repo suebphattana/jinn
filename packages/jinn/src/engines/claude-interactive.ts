@@ -377,6 +377,7 @@ const NATIVE_COMMAND_MIN_MS = 3000;
 const NATIVE_COMMAND_MAX_MS = 90_000;
 const LOST_STOP_RECOVERY_QUIET_MS = 15_000;
 const LOST_STOP_RECOVERY_MIN_MS = 10_000;
+const LATE_RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 
 function isNativeClaudeCommand(prompt: string): boolean {
   const first = prompt.trim().split(/\s+/, 1)[0]?.toLowerCase();
@@ -430,6 +431,9 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  apply only at spawn, so a mid-chat switch must cold-respawn rather than reuse
    *  the warm PTY (which would keep running the old model). */
   private spawnParams = new Map<string, { model?: string; effortLevel?: string; appendApplied?: boolean }>();
+  /** Sessions with a post-failure recovery listener armed (turn settled as an
+   *  API error, but the CLI may still finish — a late Stop supersedes). */
+  private lateRecovery = new Map<string, { timer: NodeJS.Timeout }>();
 
   constructor(
     private lifecycle: PtyLifecycleManager,
@@ -444,6 +448,10 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (this.active.has(jinnSessionId)) {
       return { sessionId: opts.resumeSessionId ?? "", result: "", error: "Interactive engine: a turn is already running for this session" };
     }
+
+    // A previous turn may have left a late-recovery listener armed; this new
+    // turn owns the session (and the hook registration) now.
+    this.cancelLateRecovery(jinnSessionId);
 
     let warm = this.lifecycle.getWarm(jinnSessionId);
     // Mid-chat model/effort switch: `--model`/`--effort` bind at spawn, so a warm
@@ -618,6 +626,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // wait/retry/fallback machinery engages exactly as it does for `claude -p`.
     const rl = rateLimitFromStopFailure(resolver.stopFailure);
     if (rl) result.rateLimit = rl;
+    // Turn settled as an API-error failure — the CLI may still be retrying.
+    // Keep listening for a late Stop so a wrong "failed" verdict self-corrects.
+    if (result.error && resolver.stopFailure) {
+      this.armLateRecovery(jinnSessionId, opts);
+    }
     return result;
   }
 
@@ -953,6 +966,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
   }
 
   kill(sessionId: string, reason = "Interrupted"): void {
+    this.cancelLateRecovery(sessionId);
     const e = this.active.get(sessionId);
     e?.resolver.interrupt(reason.startsWith("Interrupted") ? reason : `Interrupted: ${reason}`);
     this.lifecycle.releaseSession(sessionId);
@@ -984,5 +998,34 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
   /** InterruptibleEngine.isAlive — true if a turn OR a warm PTY exists. */
   isAlive(sessionId: string): boolean {
     return this.active.has(sessionId) || this.lifecycle.getWarm(sessionId) !== undefined;
+  }
+
+  /** Keep listening for a late Stop after an API-error settle. Public for run(),
+   *  kill(), and tests. No-op when the caller didn't provide onLateRecovery. */
+  armLateRecovery(jinnSessionId: string, opts: EngineRunOpts): void {
+    if (!opts.onLateRecovery) return;
+    this.cancelLateRecovery(jinnSessionId);
+    const timer = setTimeout(() => this.cancelLateRecovery(jinnSessionId), LATE_RECOVERY_WINDOW_MS);
+    timer.unref?.();
+    this.lateRecovery.set(jinnSessionId, { timer });
+    this.hookRegistry.register(jinnSessionId, (h) => {
+      if (h.hook_event_name !== "Stop") return;
+      const text = String(h.last_assistant_message ?? "");
+      const sid = typeof h.session_id === "string" ? h.session_id : "";
+      this.cancelLateRecovery(jinnSessionId);
+      if (text.trim()) {
+        logger.info(`InteractiveClaudeEngine: late Stop superseded failed turn for ${jinnSessionId}`);
+        opts.onLateRecovery?.({ result: text, sessionId: sid });
+      }
+    });
+  }
+
+  /** Tear down a pending late-recovery listener (new turn starting / kill / expiry). */
+  cancelLateRecovery(jinnSessionId: string): void {
+    const lr = this.lateRecovery.get(jinnSessionId);
+    if (!lr) return;
+    clearTimeout(lr.timer);
+    this.lateRecovery.delete(jinnSessionId);
+    this.hookRegistry.unregister(jinnSessionId);
   }
 }

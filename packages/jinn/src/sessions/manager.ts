@@ -13,6 +13,7 @@ import {
   accumulateSessionCost,
   createSession,
   deleteSession,
+  getSession,
   getSessionBySessionKey,
   getMessages,
   insertMessage,
@@ -379,6 +380,19 @@ export class SessionManager {
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
         source: session.source,
+        onLateRecovery: ({ result: lateText, sessionId: engineSid }) => {
+          const live = getSession(session.id);
+          if (!live || live.status === "running") return;
+          insertMessage(session.id, "assistant", lateText);
+          updateSession(session.id, {
+            ...(engineSid.trim() ? { engineSessionId: engineSid } : {}),
+            status: "idle",
+            lastActivity: new Date().toISOString(),
+            lastError: null,
+          });
+          void connector.replyMessage(target, lateText).catch(() => {});
+          logger.info(`Session ${session.id} recovered by late Stop after a failed turn`);
+        },
       });
 
       const wasInterrupted = result.error?.startsWith("Interrupted");

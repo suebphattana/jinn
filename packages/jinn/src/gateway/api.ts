@@ -2325,6 +2325,32 @@ async function runWebSession(
           feedTalkText(currentSession.id, delta.content);
         }
       },
+      // A turn that settled as failed but whose CLI later finished delivers the
+      // recovered text here. Append it and restore a clean idle status — unless
+      // the session is gone or a NEW turn owns it (status back to "running").
+      onLateRecovery: ({ result: lateText, sessionId: engineSid }) => {
+        const live = getSession(currentSession.id);
+        if (!live || live.status === "running") return;
+        insertMessage(currentSession.id, "assistant", lateText);
+        const recovered = updateSession(currentSession.id, {
+          ...(engineSid.trim() ? { engineSessionId: engineSid } : {}),
+          status: "idle",
+          lastActivity: new Date().toISOString(),
+          lastError: null,
+        });
+        if (recovered) {
+          notifyParentSession(recovered, { result: lateText, error: null }, { alwaysNotify: employee?.alwaysNotify });
+          void deliverConnectorReply(recovered, lateText, context.connectors);
+        }
+        context.emit("session:completed", {
+          sessionId: currentSession.id,
+          employee: currentSession.employee || config.portal?.portalName || "Jinn",
+          title: currentSession.title,
+          result: lateText,
+          error: null,
+        });
+        logger.info(`Web session ${currentSession.id} recovered by late Stop after a failed turn`);
+      },
     }).finally(() => {
       clearInterval(runHeartbeat);
       // Stop any pending debounced text flush so it can't re-insert a partial row

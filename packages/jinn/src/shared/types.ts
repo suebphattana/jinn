@@ -43,6 +43,12 @@ export interface EngineRunOpts {
   sessionId?: string;
   /** Session source ("cron", "web", "slack", …) — used by the interactive engine for lifecycle policy. */
   source?: string;
+  /** Interactive engines only: called when a turn that already settled as
+   *  failed (API-error StopFailure) later produces a real Stop — the CLI
+   *  retried past the grace window and finished. The gateway should persist
+   *  `result` as a follow-up assistant message and restore idle status.
+   *  `sessionId` is the engine-native session id ("" if unknown). */
+  onLateRecovery?: (info: { result: string; sessionId: string }) => void;
 }
 
 export interface EngineResult {

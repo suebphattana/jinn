@@ -293,6 +293,86 @@ describe("searchTalkSessions", () => {
     });
   });
 
+  describe("limit param", () => {
+    function manySessionDeps(n: number) {
+      const sessions = Array.from({ length: n }, (_, i) => makeSession(`s${i}`));
+      return {
+        deps: makeDeps({
+          searchSessions: () => sessions,
+          getSession: (id: string) => sessions.find((s) => s.id === id),
+        }),
+        sessions,
+      };
+    }
+
+    it("honors limit=5 — returns exactly 5 results", () => {
+      const { deps } = manySessionDeps(25);
+      const r = searchTalkSessions("session", deps, 5);
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error("expected ok");
+      expect(r.results).toHaveLength(5);
+    });
+
+    it("clamps limit=999 to 20", () => {
+      const { deps } = manySessionDeps(25);
+      const r = searchTalkSessions("session", deps, 999);
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error("expected ok");
+      expect(r.results).toHaveLength(20);
+    });
+
+    it("treats limit=0 as absent — falls back to default 20", () => {
+      const { deps } = manySessionDeps(25);
+      const r = searchTalkSessions("session", deps, 0);
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error("expected ok");
+      expect(r.results).toHaveLength(20);
+    });
+
+    it("treats limit=NaN as absent — falls back to default 20", () => {
+      const { deps } = manySessionDeps(25);
+      const r = searchTalkSessions("session", deps, NaN);
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error("expected ok");
+      expect(r.results).toHaveLength(20);
+    });
+  });
+
+  describe("content-only hit metadata", () => {
+    it("session found only via content carries full metadata from getSession", () => {
+      const session = makeSession("cx1", {
+        title: "Special Title",
+        employee: "movekit-support",
+        source: "talk",
+        status: "running",
+        lastActivity: "2026-06-10T09:00:00Z",
+      });
+      const messageHits: MessageSearchResult[] = [
+        { sessionId: "cx1", snippet: "«keyword» found here", role: "assistant", timestamp: 5000 },
+      ];
+      const deps = makeDeps({
+        searchSessions: () => [], // NOT in title hits — content-only
+        searchMessages: () => messageHits,
+        getSession: (id) => (id === "cx1" ? session : undefined),
+        resolveTalkRoot: () => undefined,
+      });
+      const r = searchTalkSessions("keyword", deps);
+      expect(r.ok).toBe(true);
+      if (!r.ok) throw new Error("expected ok");
+      expect(r.results).toHaveLength(1);
+      expect(r.results[0]).toEqual({
+        sessionId: "cx1",
+        title: "Special Title",
+        employee: "movekit-support",
+        source: "talk",
+        lastActivity: "2026-06-10T09:00:00Z",
+        status: "running",
+        isTalkChild: false,
+        hits: [{ snippet: "«keyword» found here", role: "assistant", ts: 5000 }],
+      });
+    });
+  });
+
   describe("result shape", () => {
     it("includes all required fields in each result", () => {
       const session = makeSession("s1", {

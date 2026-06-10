@@ -52,24 +52,32 @@ export interface SearchDeps {
 
 /**
  * Search sessions by title/metadata and by message content, merge, de-dupe,
- * and return up to 20 results with up to 3 content-hit snippets each.
+ * and return up to `limit` results (clamped to [1, RESULTS_CAP]; absent/0/NaN
+ * → RESULTS_CAP) with up to 3 content-hit snippets each.
  *
  * Pure logic — all I/O comes through injected `deps`.
  */
-export function searchTalkSessions(q: unknown, deps: SearchDeps): SearchResponse {
+export function searchTalkSessions(q: unknown, deps: SearchDeps, limit?: number): SearchResponse {
   if (typeof q !== "string" || !q.trim()) {
     return { ok: false, status: 400, error: "q must be a non-empty string" };
   }
 
   const query = q.trim();
 
+  // Resolve effective cap: clamp caller-supplied limit to [1, RESULTS_CAP];
+  // absent, 0, or NaN all fall back to RESULTS_CAP.
+  const cap =
+    limit === undefined || !Number.isFinite(limit) || limit < 1
+      ? RESULTS_CAP
+      : Math.min(Math.floor(limit), RESULTS_CAP);
+
   // Title / metadata hits — newest-first (searchSessions orders by last_activity DESC).
   // Request up to twice the cap so de-dup doesn't leave us short.
-  const sessionHits = deps.searchSessions(query, RESULTS_CAP * 2);
+  const sessionHits = deps.searchSessions(query, cap * 2);
 
   // Full-text content hits — newest-first. Fetch enough to fill HITS_PER_SESSION
-  // slots for up to RESULTS_CAP result entries.
-  const messageHits = deps.searchMessages(query, RESULTS_CAP * HITS_PER_SESSION);
+  // slots for up to cap result entries.
+  const messageHits = deps.searchMessages(query, cap * HITS_PER_SESSION);
 
   // Build an ordered, de-duped map: sessionId → { session, accumulated hits }.
   // Insertion order = title-hit order first, then content-only sessions.
@@ -100,10 +108,10 @@ export function searchTalkSessions(q: unknown, deps: SearchDeps): SearchResponse
     }
   }
 
-  // 3. Materialise results, capped at RESULTS_CAP.
+  // 3. Materialise results, capped at effective cap.
   const results: SearchResult[] = [];
   for (const sessionId of order) {
-    if (results.length >= RESULTS_CAP) break;
+    if (results.length >= cap) break;
     const { session, hits } = map.get(sessionId)!;
     results.push({
       sessionId: session.id,

@@ -212,12 +212,14 @@ export async function handleTalkApi(
     // (backfill not yet complete) — the orchestrator handles that gracefully.
     if (method === "GET" && pathname === "/api/talk/search") {
       const q = url.searchParams.get("q") ?? "";
+      const limitRaw = url.searchParams.get("limit");
+      const limitParsed = limitRaw !== null ? parseInt(limitRaw, 10) : undefined;
       const result = searchTalkSessions(q, {
         searchSessions,
         searchMessages,
         getSession,
         resolveTalkRoot,
-      });
+      }, limitParsed);
       if (!result.ok) {
         json(res, { error: result.error }, result.status);
         return true;

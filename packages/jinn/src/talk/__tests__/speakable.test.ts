@@ -34,6 +34,14 @@ describe("toSpeakable", () => {
     expect(toSpeakable("ok [card-action card=x action=approve] done")).toBe("ok done");
   });
 
+  it("removes bare hex strings >= 12 chars", () => {
+    expect(toSpeakable("commit deadbeefcafe123 deployed")).toBe("commit deployed");
+  });
+
+  it("removes [Route this ...] machine tags", () => {
+    expect(toSpeakable('ok [Route this to the existing "x" COO thread: session abc] done')).toBe("ok done");
+  });
+
   it("removes entire fenced code block, leaving empty string", () => {
     expect(toSpeakable("```js\ncode\n```")).toBe("");
   });

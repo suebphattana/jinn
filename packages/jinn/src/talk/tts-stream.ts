@@ -100,7 +100,7 @@ function queueSentence(sessionId: string, t: TurnState, text: string, opts: Koko
     }
     if (t.epoch !== epoch || t.failed) return;
     const speakable = toSpeakable(text);
-    if (!speakable) return; // nothing worth speaking — do NOT bump seq
+    if (!speakable) return; // nothing worth speaking — do NOT bump seq; if this is the FINAL flush remainder, the turn emits no last:true — same as the pre-existing empty-remainder path; the frontend re-arms via its drain/idle path, so this is safe
     try {
       const n = await getTalkTts(opts).speak(sessionId, speakable, emit, { seqStart: t.seq, final });
       t.seq += n;

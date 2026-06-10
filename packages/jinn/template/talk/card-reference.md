@@ -64,7 +64,7 @@ Drop the soft link when the topic closes (no message sent):
 ```json
 {"ok":true,"results":[{"sessionId":"…","title":"…","employee":"movekit-eng"|null,"source":"talk"|"chat"|…,"lastActivity":"…","status":"idle"|"running"|…,"isTalkChild":true|false,"hits":[{"snippet":"…","role":"assistant","ts":1234567890}]}]}
 ```
-- `isTalkChild`: **true** → it's one of YOUR own talk threads — just continue it with Shape 2 (do NOT attach). **false** → a foreign session — adopt it with Shape 3 (attach) to watch or engage.
+- `isTalkChild`: hint only. **true** → a talk-owned thread; continue with Shape 2 only if its id is in your roster, otherwise attach it (Shape 3). **false** → a foreign session — attach it (Shape 3). If a continue is rejected, attach instead.
 - `hits`: up to 3 content snippets per session (newest first); empty when only the title matched.
 
 ### Worked example — "have the movekit engineer look at the failing build"
@@ -74,7 +74,7 @@ Drop the soft link when the topic closes (no message sent):
 {"sessionId":"<YOUR_OWN_SESSION_ID>","thread":"7f3a…","attach":true,"mode":"engage","brief":"Investigate the failing CI build and report the root cause + fix.","utterance":"have the movekit engineer look at the failing build"}
 ```
 3. Say "On the movekit build now." and END YOUR TURN. When it reports back, narrate the outcome; detach with Shape 4 once resolved.
-(If search had returned `isTalkChild:true`, you'd skip attach and just continue it with Shape 2.)
+(If search had returned `isTalkChild:true` and the id is in your roster, skip attach and continue with Shape 2; otherwise attach it.)
 
 ## All 13 card types
 

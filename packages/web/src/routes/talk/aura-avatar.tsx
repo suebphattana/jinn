@@ -251,6 +251,9 @@ export function AuraAvatar({
   )
 
   // Refs so the rAF loop reads the freshest spring values without re-binding.
+  // `size` is in here too: the OrbLayer hero↔dock morph animates it every frame,
+  // and re-initing the loop effect per frame would freeze the plasma (closure
+  // time/ripples reset) — instead the loop reads it live and resizes in-place.
   const live = useRef({
     glow,
     glowScale,
@@ -266,6 +269,7 @@ export function AuraAvatar({
     hasLevel,
     state,
     reduced,
+    size,
   })
   live.current = {
     glow,
@@ -282,24 +286,28 @@ export function AuraAvatar({
     hasLevel,
     state,
     reduced,
+    size,
   }
 
   // Accent (theme) color — read once on mount for glow/ring/arc/equalizer.
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const accentRef = useRef<RGB>({ r: 224, g: 163, b: 60 })
+  // Set by the loop effect; lets the reduced-motion path (no running loop)
+  // request a single repaint when the snapped size changes.
+  const redrawRef = useRef<(() => void) | null>(null)
 
-  // --- Drive the CSS outer glow from springs (cheap GPU blur) -------------
+  // --- One-time theme accent read (forces a style recalc — keep off the
+  // per-frame path; `--aura-size` is already set inline by the wrapper).
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
-    el.style.setProperty("--aura-size", `${size}px`)
     const raw = getComputedStyle(el).getPropertyValue("--accent").trim()
     if (raw) {
       accentRef.current = parseColor(raw)
       el.style.setProperty("--aura-accent", raw)
     }
-  }, [size])
+  }, [])
 
   // Keep glow opacity/scale in sync each render (spring values change often).
   const glowStyle = useMemo(
@@ -327,18 +335,6 @@ export function AuraAvatar({
     // (CSS), overflowing it symmetrically; it's transparent + pointer-events:none
     // so the extra room costs nothing in layout.
     const HEADROOM = 1.7
-    const px = Math.round(size * HEADROOM)
-    canvas.width = Math.round(px * dpr)
-    canvas.height = Math.round(px * dpr)
-    canvas.style.width = `${px}px`
-    canvas.style.height = `${px}px`
-
-    const CX = px / 2
-    const CY = px / 2
-    // Orb radius ~ 0.353 of the ORB footprint (`size`), not the padded canvas.
-    const R = size * 0.3529
-    // Rings fade to zero by this radius so they never touch the canvas edge.
-    const maxRippleR = (px / 2) * 0.96
 
     const accent = accentRef.current
     const baseAccentStr = rgbStr(accent)
@@ -371,6 +367,27 @@ export function AuraAvatar({
 
     const draw = (now: number) => {
       const s = live.current
+
+      // --- Sizing, from the LIVE size prop (the hero↔dock morph animates it
+      // every frame; reading it here keeps the simulation state alive instead
+      // of re-initing this effect). The multi-MB backing store only reallocates
+      // on frames where the rounded pixel size actually changed; the implicit
+      // resize-clear and the redraw below share this same rAF, so no blank flash.
+      const px = Math.round(s.size * HEADROOM)
+      const device = Math.round(px * dpr)
+      if (canvas.width !== device) {
+        canvas.width = device
+        canvas.height = device
+        canvas.style.width = `${px}px`
+        canvas.style.height = `${px}px`
+      }
+      const CX = px / 2
+      const CY = px / 2
+      // Orb radius ~ 0.353 of the ORB footprint (`size`), not the padded canvas.
+      const R = s.size * 0.3529
+      // Rings fade to zero by this radius so they never touch the canvas edge.
+      const maxRippleR = (px / 2) * 0.96
+
       const dtMs = lastTs == null ? 16 : Math.min(now - lastTs, 1000 / 30)
       lastTs = now
       const dt = dtMs / 1000
@@ -450,6 +467,9 @@ export function AuraAvatar({
         if (moving) p.r += R * 0.02
         // Fade smoothly to zero as the ring travels toward the canvas-safe edge,
         // so it always fully dissipates on-canvas (never a hard clipped cut).
+        // Radii are absolute px: when the orb shrinks mid-flight, maxRippleR
+        // drops below in-flight rings → prog >= 1 culls them (intended — rings
+        // dissipate as the orb shrinks rather than rescaling with it).
         const prog = Math.min(1, (p.r - rippleStart) / (maxRippleR - rippleStart))
         p.a = 0.5 * Math.pow(1 - prog, 1.6)
         if (prog >= 1 || p.a <= 0.01) {
@@ -628,12 +648,28 @@ export function AuraAvatar({
     // Always paint at least one frame (covers reduced-motion static orb).
     raf = requestAnimationFrame(draw)
 
+    // Single-frame repaint for the reduced-motion path, where no loop runs but
+    // the size can still snap (hero↔dock mode flip). Cancel-then-schedule so a
+    // burst of calls coalesces into one frame.
+    redrawRef.current = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(draw)
+    }
+
     return () => {
       if (raf) cancelAnimationFrame(raf)
+      redrawRef.current = null
       lastTs = null
     }
-    // Re-init the loop when size changes or motion preference flips. The loop
-    // reads everything else (state, springs, level) live from `live.current`.
+    // Re-init the loop only when the motion preference flips. Everything else
+    // (state, springs, level, SIZE) is read live from `live.current` each frame
+    // so the OrbLayer's per-frame size morph never tears down the simulation.
+  }, [reduced])
+
+  // Under reduced motion no loop is running, so when the (snapped) size
+  // changes repaint once — the sizing block at the top of `draw` re-applies.
+  useEffect(() => {
+    if (reduced) redrawRef.current?.()
   }, [size, reduced])
 
   return (

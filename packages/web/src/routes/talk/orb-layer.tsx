@@ -26,6 +26,8 @@ import { AuraAvatar } from "./aura-avatar"
 import { SPRING_PRESETS, useSpringValue } from "./motion"
 import { DOCKED_ORB_SIZE, heroOrbSize, type StageMode } from "./stage"
 
+// Must cover the `--motion-hero` dock-row transition (500ms, talk-tokens.css)
+// plus slack, so the rAF re-measure chase outlives the settling layout.
 const SETTLE_WINDOW_MS = 700
 
 interface OrbLayerProps {

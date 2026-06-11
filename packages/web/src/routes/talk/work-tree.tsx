@@ -82,9 +82,9 @@ function SubRow({
   const label = labelFor(node, sideState)
   const live = kind === "working" ? activity.get(node.id)?.activity : undefined
   const indent = Math.min(Math.max(node.depth - baseDepth, 1), 3)
+  // Wrapper div owns the listitem role so the inner button retains full button semantics for assistive tech.
   return (
-    <button
-      type="button"
+    <div
       role="listitem"
       className="wt__item wt__item--sub"
       style={
@@ -95,26 +95,31 @@ function SubRow({
         } as CSSProperties
       }
       data-status={kind}
-      aria-label={`Open thread: ${label} — ${kind}`}
-      title={`Open thread: ${label} — ${kind}`}
-      onClick={() => onOpenThread(node.id)}
     >
-      <span className="wt__connector" aria-hidden="true">
-        ↳
-      </span>
-      <span className="wt__dot wt__dot--sub" aria-hidden="true" />
-      <span className="wt__sub-main">
-        <span className="wt__sub-label">{label}</span>
-        {live ? (
-          <span className="wt__live" key={live}>
-            {live}
-          </span>
-        ) : null}
-      </span>
-      <span className="wt__pill" data-kind={kind}>
-        {kind}
-      </span>
-    </button>
+      <button
+        type="button"
+        className="wt__sub-btn"
+        aria-label={`Open thread: ${label} — ${kind}`}
+        title={`Open thread: ${label} — ${kind}`}
+        onClick={() => onOpenThread(node.id)}
+      >
+        <span className="wt__connector" aria-hidden="true">
+          ↳
+        </span>
+        <span className="wt__dot wt__dot--sub" aria-hidden="true" />
+        <span className="wt__sub-main">
+          <span className="wt__sub-label">{label}</span>
+          {live ? (
+            <span className="wt__live" key={live}>
+              {live}
+            </span>
+          ) : null}
+        </span>
+        <span className="wt__pill" data-kind={kind}>
+          {kind}
+        </span>
+      </button>
+    </div>
   )
 }
 

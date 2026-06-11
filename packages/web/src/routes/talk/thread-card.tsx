@@ -78,30 +78,35 @@ function SubRow({
   const live = kind === "working" || kind === "waiting" ? activity.get(node.id)?.activity : undefined
   const indent = Math.min(Math.max(node.depth - baseDepth, 1), 3)
   const hue = channelHue(node.label || node.id)
+  // Wrapper div owns the listitem role so the inner button retains full button semantics for assistive tech.
   return (
-    <button
-      type="button"
+    <div
       role="listitem"
       className="tcard__sub"
       style={{ ["--tc-indent" as string]: String(indent), ["--tc-hue" as string]: String(hue) } as CSSProperties}
       data-status={kind}
-      aria-label={`Open thread: ${node.label} — ${kind}`}
-      onClick={onOpenThread ? () => onOpenThread(node.id) : undefined}
     >
-      <span className="tcard__connector" aria-hidden="true">
-        ↳
-      </span>
-      <span className="tcard__dot" aria-hidden="true" />
-      <span className="tcard__sub-main">
-        <span className="tcard__sub-route">→ {node.label}</span>
-        {live ? (
-          <span className="tcard__live" key={live}>
-            {live}
-          </span>
-        ) : null}
-      </span>
-      <StatusPill kind={kind} />
-    </button>
+      <button
+        type="button"
+        className="tcard__sub-btn"
+        aria-label={`Open thread: ${node.label} — ${kind}`}
+        onClick={onOpenThread ? () => onOpenThread(node.id) : undefined}
+      >
+        <span className="tcard__connector" aria-hidden="true">
+          ↳
+        </span>
+        <span className="tcard__dot" aria-hidden="true" />
+        <span className="tcard__sub-main">
+          <span className="tcard__sub-route">→ {node.label}</span>
+          {live ? (
+            <span className="tcard__live" key={live}>
+              {live}
+            </span>
+          ) : null}
+        </span>
+        <StatusPill kind={kind} />
+      </button>
+    </div>
   )
 }
 

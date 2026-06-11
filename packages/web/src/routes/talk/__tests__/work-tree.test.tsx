@@ -86,7 +86,8 @@ describe("WorkTree — hierarchy rendering", () => {
 
   it("clicking a grandchild (depth-3) row opens that thread", () => {
     const { props } = renderTree()
-    fireEvent.click(screen.getByRole("listitem", { name: /query runner/i }))
+    // After the listitem-wrapper fix, buttons are queried by role "button" (listitems no longer carry a name).
+    fireEvent.click(screen.getByRole("button", { name: /query runner/i }))
     expect(props.onOpenThread).toHaveBeenCalledWith("gg1")
   })
 
@@ -97,7 +98,8 @@ describe("WorkTree — hierarchy rendering", () => {
 
   it("sub-row aria-labels carry the label and status", () => {
     renderTree()
-    expect(screen.getByRole("listitem", { name: "Open thread: Funnel Analyst — working" })).toBeTruthy()
+    // Listitem wrapper has no aria-label; query the button inside by its accessible name.
+    expect(screen.getByRole("button", { name: "Open thread: Funnel Analyst — working" })).toBeTruthy()
   })
 
   it("rail is a list; every row is a listitem", () => {

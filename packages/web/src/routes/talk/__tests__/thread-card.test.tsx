@@ -34,10 +34,12 @@ describe("ThreadCard", () => {
     render(<ThreadCard threadId="t1" graph={graph} activity={new Map()} fallbackLabel="Movekit Lead" />)
     expect(screen.getByText(/Funnel Analyst/)).toBeTruthy()
     expect(screen.getByText(/Query Runner/)).toBeTruthy()
-    // head is a button; sub-rows are role="listitem" (overrides implicit button)
-    const headBtns = screen.getAllByRole("button", { name: /open thread/i })
-    const subItems = screen.getAllByRole("listitem", { name: /open thread/i })
-    expect(headBtns.length + subItems.length).toBeGreaterThanOrEqual(3) // head + 2 sub-rows
+    // After the listitem-wrapper fix: head + sub-row buttons are all role="button";
+    // listitem wrappers are counted separately (no accessible name on the wrapper div).
+    const allBtns = screen.getAllByRole("button", { name: /open thread/i })
+    expect(allBtns.length).toBeGreaterThanOrEqual(3) // head + 2 sub-row buttons
+    const listItems = screen.getAllByRole("listitem")
+    expect(listItems.length).toBeGreaterThanOrEqual(2) // 2 sub-row wrapper divs
   })
 
   it("shows the report excerpt and settles when completed", () => {
@@ -85,8 +87,8 @@ describe("ThreadCard", () => {
         onOpenThread={onOpenThread}
       />,
     )
-    // sub-rows carry role="listitem" (overrides implicit button role)
-    fireEvent.click(screen.getByRole("listitem", { name: /funnel analyst/i }))
+    // After the listitem-wrapper fix, the button inside the wrapper carries the accessible name.
+    fireEvent.click(screen.getByRole("button", { name: /funnel analyst/i }))
     expect(onOpenThread).toHaveBeenCalledWith("g1")
   })
 })

@@ -171,21 +171,31 @@
 }
 
 /* ---- sub-rows (depth-2+ descendants, ↳ thread-card pattern) ---- */
+/* Outer div: owns background/hover/opacity — the inner .wt__sub-btn carries the grid layout. */
 .wt__item--sub {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  align-items: center;
-  gap: 6px;
   width: min(240px, 60vw);
-  padding: 3px 8px 3px calc(8px + var(--wt-indent, 1) * 12px);
   border-radius: 8px;
-  text-align: left;
-  cursor: pointer;
   transition: background var(--motion-exit), opacity 200ms ease;
 }
 .wt__item--sub:hover { background: var(--fill-secondary); }
 .wt__item--sub[data-status="idle"] { opacity: 0.55; }
 .wt__item--sub[data-status="idle"]:hover { opacity: 1; }
+/* Inner button: full-width grid matching the original sub-row layout. */
+.wt__sub-btn {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px 3px calc(8px + var(--wt-indent, 1) * 12px);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  border-radius: 8px;
+}
 .wt__dot--sub {
   width: 7px;
   height: 7px;
@@ -290,6 +300,8 @@
 .wt[data-collapsed="true"] .wt__pill { display: none; }
 .wt[data-collapsed="true"] .wt__item--sub {
   width: auto;
+}
+.wt[data-collapsed="true"] .wt__item--sub .wt__sub-btn {
   padding: 0 0 0 16px;
   justify-content: start;
 }
@@ -314,7 +326,11 @@
 .wt[data-collapsed="true"]:hover .wt__item--sub,
 .wt[data-collapsed="true"]:focus-within .wt__item--sub {
   width: min(240px, 60vw);
+}
+.wt[data-collapsed="true"]:hover .wt__item--sub .wt__sub-btn,
+.wt[data-collapsed="true"]:focus-within .wt__item--sub .wt__sub-btn {
   padding: 3px 8px 3px calc(8px + var(--wt-indent, 1) * 12px);
+  justify-content: initial;
 }
 .wt[data-collapsed="true"]:hover .wt__dot--sub,
 .wt[data-collapsed="true"]:focus-within .wt__dot--sub { width: 7px; height: 7px; }

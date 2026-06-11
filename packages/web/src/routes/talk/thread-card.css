@@ -126,20 +126,30 @@
   flex-direction: column;
   gap: 2px;
 }
+/* Outer div: owns background/hover and the entrance animation; inner .tcard__sub-btn carries the grid. */
 .tcard__sub {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 6px 4px calc(6px + (var(--tc-indent, 1) - 1) * 14px);
   border-radius: 8px;
-  text-align: left;
-  cursor: pointer;
   animation: tcard-sub-in var(--motion-enter) both;
   transition: background var(--motion-exit);
 }
 .tcard__sub:hover {
   background: var(--fill-secondary);
+}
+/* Inner button: full-width grid matching the original sub-row layout. */
+.tcard__sub-btn {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 6px 4px calc(6px + (var(--tc-indent, 1) - 1) * 14px);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  border-radius: 8px;
 }
 .tcard__sub .tcard__dot {
   width: 7px;

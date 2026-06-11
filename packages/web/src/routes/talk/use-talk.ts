@@ -15,7 +15,7 @@
  * Mic control is plain tap-to-talk: tap the mic to start listening, tap again to
  * send. After a reply is spoken the loop returns to idle and waits for the next tap.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { useGateway } from "@/hooks/use-gateway"
 import { useStt, type SttState } from "@/hooks/use-stt"
 import { useSpeak } from "./use-speak"
@@ -36,6 +36,7 @@ import {
   type SessionCompletedEvent,
 } from "./protocol"
 import { graphReducer, type GraphNode, type GraphAction } from "./graph-store"
+import { activityFor, threadActivityReducer, type ActivityMap } from "./thread-activity"
 import type { AvatarState, Card } from "./types"
 import { useConversation, type StreamRow } from "./use-conversation"
 import { whisperFor } from "./talk-whisper"
@@ -114,6 +115,12 @@ export interface UseTalkReturn {
    * are dimmed by the renderer. This is the SINGLE source for the work rail.
    */
   graph: GraphNode[]
+  /**
+   * Advisory per-node overlay keyed by sessionId: live "now doing" line while a
+   * node works + sanitized final-report excerpt on completion. Renders alongside
+   * the graph (the structural source); a missing entry just renders nothing.
+   */
+  activity: ActivityMap
   /** Per-node UI side-state (rename overrides + dismiss tombstones) for the dock. */
   sideState: DockSideMap
   /** Hue of the focused (most-recent running depth-1) node — drives the orb
@@ -280,6 +287,10 @@ export function useTalk(): UseTalkReturn {
   const dispatchGraph = useCallback((a: GraphAction) => {
     setGraph((prev) => graphReducer(prev, a))
   }, [])
+  // Advisory per-node overlay: live "now doing" lines + final report excerpts,
+  // keyed by sessionId. Fed from child session:delta / session:completed below;
+  // the graph stays the structural source (a missing entry renders nothing).
+  const [activity, dispatchActivity] = useReducer(threadActivityReducer, new Map() as ActivityMap)
 
   // Known session ids (graph) so we can route child stream events. Synced from
   // `graph` each render AND added immediately on focus/graph deltas (so a child
@@ -625,17 +636,14 @@ export function useTalk(): UseTalkReturn {
           else dispatchGraph({ type: "upsert", node: ev.node })
           // The dock renders depth-1 nodes straight from the graph — no second
           // mirror to keep in sync. Below we still emit conversation chips.
-          // Conversation delegation chips. Owned children: "added" → delegated,
-          // "completed" → reported (no live notification WS event exists, so the
-          // completed graph delta is the cleanest "child reported back" signal).
+          // Conversation delegation chips. Owned children: "added" → delegated
+          // (completion is carried by the ThreadCard's report line, not a chip).
           // Attachments: their own attached/detached chips.
           const n = ev.node
           if (n.depth === 1) {
             const hue = channelHue(n.label || n.id)
             if (ev.change === "added" && !n.attached) {
               addSystem({ id: `sys-del-${n.id}`, event: "delegated", label: n.label, threadId: n.id, hue, ts: Date.now() })
-            } else if (ev.change === "completed" && !n.attached) {
-              addSystem({ id: `sys-rep-${n.id}-${Date.now()}`, event: "reported", label: n.label, threadId: n.id, hue, ts: Date.now() })
             } else if (ev.change === "attached") {
               addSystem({ id: `sys-att-${n.id}`, event: "attached", label: n.label, threadId: n.id, hue, ts: Date.now() })
             } else if (ev.change === "detached") {
@@ -665,6 +673,12 @@ export function useTalk(): UseTalkReturn {
             }
           } else if (isChild && s) {
             dispatchGraph({ type: "setStatus", id: s, status: "running" }) // keep working
+            // Surface what the worker is doing — the delegation-card live line.
+            if (ev.type === "tool_use") {
+              dispatchActivity({ type: "activity", id: s, text: activityFor({ toolName: ev.toolName, content: ev.content, input: ev.input }) })
+            } else if (ev.type === "text") {
+              dispatchActivity({ type: "activity", id: s, text: "writing…" })
+            }
           }
           break
         }
@@ -702,7 +716,7 @@ export function useTalk(): UseTalkReturn {
           break
         }
         case "session:completed": {
-          void (payload as SessionCompletedEvent)
+          const ev = payload as SessionCompletedEvent
           if (isOrch) {
             // Hand the finished assistant entry id to the speaker so it can swap
             // the caption per spoken sentence; the speaker finalizes `partial`.
@@ -711,6 +725,8 @@ export function useTalk(): UseTalkReturn {
             speakReplyIfNeeded(finishedId)
           } else if (isChild && s) {
             dispatchGraph({ type: "setStatus", id: s, status: "idle" })
+            // The live line ends; keep a sanitized excerpt of the final report.
+            dispatchActivity({ type: "report", id: s, text: ev.result ?? "" })
           }
           break
         }
@@ -999,7 +1015,7 @@ export function useTalk(): UseTalkReturn {
 
   return useMemo(
     () => ({
-      state, whisper, orchestratorId, rows, graph, sideState, focusHue, targetThreadId, cards, level,
+      state, whisper, orchestratorId, rows, graph, activity, sideState, focusHue, targetThreadId, cards, level,
       resolvedCardIds, cardAnchorFor,
       connected: gateway.connected,
       listening,
@@ -1018,6 +1034,6 @@ export function useTalk(): UseTalkReturn {
       activate, cardAction,
       startListening, stop, stopSpeaking,
     }),
-    [state, whisper, orchestratorId, rows, graph, sideState, focusHue, targetThreadId, cards, level, resolvedCardIds, cardAnchorFor, gateway.connected, listening, stt.available, stt.error, stt.state, stt.downloadProgress, stt.startDownload, ttsStatus, voiceMode, muted, toggleMute, sendText, dismissSttDownload, engineInfo, switchEngine, switchModel, selectThread, renameThread, dismissThread, activate, cardAction, startListening, stop, stopSpeaking],
+    [state, whisper, orchestratorId, rows, graph, activity, sideState, focusHue, targetThreadId, cards, level, resolvedCardIds, cardAnchorFor, gateway.connected, listening, stt.available, stt.error, stt.state, stt.downloadProgress, stt.startDownload, ttsStatus, voiceMode, muted, toggleMute, sendText, dismissSttDownload, engineInfo, switchEngine, switchModel, selectThread, renameThread, dismissThread, activate, cardAction, startListening, stop, stopSpeaking],
   )
 }

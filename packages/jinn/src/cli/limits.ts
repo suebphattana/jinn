@@ -15,9 +15,16 @@ function formatReset(window: EngineLimitWindow): string {
   return `, resets ${new Date(window.resetsAtIso).toLocaleString()}`;
 }
 
+function formatDuration(minutes?: number): string {
+  if (!minutes) return "";
+  if (minutes % 1440 === 0) return `${minutes / 1440}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}m`;
+}
+
 function formatWindow(window: EngineLimitWindow): string {
   const used = window.usedPercent === undefined ? "unknown" : `${window.usedPercent}%`;
-  const duration = window.windowDurationMins ? `/${Math.round(window.windowDurationMins / 60)}h` : "";
+  const duration = window.windowDurationMins ? `/${formatDuration(window.windowDurationMins)}` : "";
   return `${window.name}${duration}: ${used} used${formatReset(window)}`;
 }
 

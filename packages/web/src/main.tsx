@@ -8,6 +8,7 @@ const ChatPage = lazy(() => import('./routes/chat/page'))
 const CronPage = lazy(() => import('./routes/cron/page'))
 const KanbanPage = lazy(() => import('./routes/kanban/page'))
 const LogsPage = lazy(() => import('./routes/logs/page'))
+const LimitsPage = lazy(() => import('./routes/limits/page'))
 const OrgPage = lazy(() => import('./routes/org/page'))
 const SettingsPage = lazy(() => import('./routes/settings/page'))
 const SkillsPage = lazy(() => import('./routes/skills/page'))
@@ -26,6 +27,7 @@ function App() {
             <Route path="/cron" element={<CronPage />} />
             <Route path="/kanban" element={<KanbanPage />} />
             <Route path="/logs" element={<LogsPage />} />
+            <Route path="/limits" element={<LimitsPage />} />
             <Route path="/org" element={<OrgPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/skills" element={<SkillsPage />} />

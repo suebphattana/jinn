@@ -179,6 +179,68 @@ export interface EnginesResponse {
   engines: Record<string, EngineRegistryEntry>;
 }
 
+// --- Engine quota/limit snapshots (GET /api/engine-limits) ---
+export interface EngineLimitWindow {
+  name: string;
+  usedPercent?: number;
+  windowDurationMins?: number;
+  resetsAt?: number;
+  resetsAtIso?: string;
+}
+
+export interface EngineLimitContext {
+  usedPercent?: number;
+  remainingPercent?: number;
+  contextWindowSize?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+}
+
+export interface EngineLimitCredits {
+  hasCredits?: boolean;
+  unlimited?: boolean;
+  balance?: string;
+  limit?: number;
+  used?: number;
+  remainingPercent?: number;
+  resetsAt?: number;
+  resetsAtIso?: string;
+}
+
+export interface EngineLimitBucket {
+  id: string;
+  name?: string;
+  planType?: string;
+  primary?: EngineLimitWindow;
+  secondary?: EngineLimitWindow;
+  credits?: EngineLimitCredits;
+}
+
+export interface EngineLimitEngineSnapshot {
+  name: string;
+  available: boolean;
+  status: "live" | "snapshot" | "static" | "unsupported" | "error";
+  source: string;
+  refreshedAt: string;
+  defaultModel?: string;
+  models: ModelInfo[];
+  accountPlan?: string;
+  windows?: EngineLimitWindow[];
+  buckets?: EngineLimitBucket[];
+  credits?: EngineLimitCredits;
+  context?: EngineLimitContext;
+  costUsd?: number;
+  unsupportedReason?: string;
+  error?: string;
+  stale?: boolean;
+}
+
+export interface EngineLimitsResponse {
+  generatedAt: string;
+  default: string;
+  engines: Record<string, EngineLimitEngineSnapshot>;
+}
+
 // --- Talk: session search + delegate (Mission Control) ---
 export interface TalkSearchHit {
   snippet: string
@@ -223,6 +285,10 @@ export const api = {
   getEngines: () => get<EnginesResponse>("/api/engines"),
   /** Force re-discovery of dynamic (pi) models, returning the rebuilt registry. */
   refreshEngines: () => post<EnginesResponse>("/api/engines/refresh"),
+  getEngineLimits: (engine?: string) =>
+    get<EngineLimitsResponse>(`/api/engine-limits${engine ? `?engine=${encodeURIComponent(engine)}` : ""}`),
+  refreshEngineLimits: (engine?: string) =>
+    post<EngineLimitsResponse>(`/api/engine-limits/refresh${engine ? `?engine=${encodeURIComponent(engine)}` : ""}`, {}),
   getSessions: () => get<SessionsResponse>("/api/sessions"),
   /** One group's sessions, newest first — used by the sidebar "load more" button. */
   getSessionsForGroup: (group: string, offset: number, limit = 50) =>

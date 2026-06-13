@@ -3,10 +3,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
-  Database,
   Gauge,
   RefreshCw,
-  Server,
+  TimerReset,
   WalletCards,
 } from "lucide-react"
 import { api } from "@/lib/api"
@@ -18,13 +17,11 @@ import type {
 } from "@/lib/api"
 import { PageLayout, ToolbarActions } from "@/components/page-layout"
 
-function formatDate(value?: string) {
-  if (!value) return "Not exposed"
-  return new Date(value).toLocaleString()
-}
+const FEATURED_ENGINES = ["claude", "codex"]
 
-function formatPercent(value?: number) {
-  return value === undefined ? "Not exposed" : `${value}%`
+function formatDate(value?: string) {
+  if (!value) return "Unknown"
+  return new Date(value).toLocaleString()
 }
 
 function formatDuration(minutes?: number) {
@@ -34,33 +31,90 @@ function formatDuration(minutes?: number) {
   return `${minutes}m`
 }
 
-function engineTone(engine: EngineLimitEngineSnapshot) {
-  if (engine.status === "error") return "var(--system-red)"
-  if (!engine.available) return "var(--text-tertiary)"
-  if (engine.stale) return "var(--system-orange)"
-  if (engine.status === "live") return "var(--system-green)"
-  if (engine.status === "snapshot") return "var(--accent)"
-  return "var(--system-blue)"
+function windowLabel(window: EngineLimitWindow) {
+  return window.windowDurationMins ? formatDuration(window.windowDurationMins) : window.name
 }
 
-function engineStatusLabel(engine: EngineLimitEngineSnapshot) {
-  if (!engine.available) return "Unavailable"
+function clampPercent(value?: number) {
+  return Math.max(0, Math.min(100, value ?? 0))
+}
+
+function gaugeColor(value?: number) {
+  if (value === undefined) return "var(--text-quaternary)"
+  if (value >= 90) return "var(--system-red)"
+  if (value >= 70) return "var(--system-orange)"
+  return "var(--system-green)"
+}
+
+function statusLabel(engine: EngineLimitEngineSnapshot) {
   if (engine.status === "live") return "Live"
   if (engine.status === "snapshot") return "Captured"
-  if (engine.status === "static") return "Plan metadata"
   if (engine.status === "error") return "Error"
-  return "Limited"
+  return "Waiting for data"
 }
 
-function engineIcon(engine: EngineLimitEngineSnapshot) {
-  if (engine.status === "error") return AlertTriangle
-  if (!engine.available) return Database
-  if (engine.status === "live") return CheckCircle2
-  if (engine.status === "snapshot") return Gauge
-  return Clock3
+function statusColor(engine: EngineLimitEngineSnapshot) {
+  if (engine.status === "error") return "var(--system-red)"
+  if (engine.status === "live") return "var(--system-green)"
+  if (engine.status === "snapshot") return "var(--accent)"
+  return "var(--text-tertiary)"
 }
 
-function SummaryMetric({ label, value, icon: Icon }: { label: string; value: string; icon: typeof Gauge }) {
+function topWindow(engines: EngineLimitEngineSnapshot[]) {
+  return engines
+    .flatMap((engine) => (engine.windows || []).map((window) => ({ engine, window })))
+    .filter((item) => item.window.usedPercent !== undefined)
+    .sort((a, b) => (b.window.usedPercent || 0) - (a.window.usedPercent || 0))[0]
+}
+
+function nextReset(engines: EngineLimitEngineSnapshot[]) {
+  return engines
+    .flatMap((engine) => engine.windows || [])
+    .map((window) => window.resetsAtIso)
+    .filter(Boolean)
+    .sort()[0]
+}
+
+function SummaryStrip({ engines }: { engines: EngineLimitEngineSnapshot[] }) {
+  const highest = topWindow(engines)
+  const reset = nextReset(engines)
+  const live = engines.filter((engine) => engine.status === "live" || engine.status === "snapshot").length
+
+  return (
+    <div className="grid gap-[var(--space-3)] lg:grid-cols-3">
+      <SummaryTile
+        icon={Gauge}
+        label="Highest usage"
+        value={highest ? `${highest.window.usedPercent}%` : "Unknown"}
+        detail={highest ? `${highest.engine.name} ${windowLabel(highest.window)}` : "No observed quota windows"}
+      />
+      <SummaryTile
+        icon={TimerReset}
+        label="Next reset"
+        value={formatDate(reset)}
+        detail="Earliest observed quota reset"
+      />
+      <SummaryTile
+        icon={CheckCircle2}
+        label="Observed engines"
+        value={`${live}/${engines.length}`}
+        detail="Claude and Codex only"
+      />
+    </div>
+  )
+}
+
+function SummaryTile({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: typeof Gauge
+  label: string
+  value: string
+  detail: string
+}) {
   return (
     <div className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-regular)] p-[var(--space-4)] min-w-0">
       <div className="flex items-center gap-[var(--space-2)] text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
@@ -70,202 +124,170 @@ function SummaryMetric({ label, value, icon: Icon }: { label: string; value: str
       <div className="mt-[var(--space-2)] text-[length:var(--text-title3)] font-[var(--weight-bold)] text-[var(--text-primary)] truncate">
         {value}
       </div>
+      <div className="mt-1 text-[length:var(--text-caption1)] text-[var(--text-tertiary)] truncate">{detail}</div>
     </div>
   )
 }
 
-function LimitTile({ window }: { window: EngineLimitWindow }) {
+function CircularGauge({ window }: { window: EngineLimitWindow }) {
+  const used = clampPercent(window.usedPercent)
+  const color = gaugeColor(window.usedPercent)
   const observed = window.usedPercent !== undefined
-  const used = Math.max(0, Math.min(100, window.usedPercent ?? 0))
-  const fill =
-    used >= 90
-      ? "var(--system-red)"
-      : used >= 70
-        ? "var(--system-orange)"
-        : "var(--system-green)"
 
   return (
-    <div className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-thin)] p-[var(--space-4)] min-w-0">
-      <div className="flex items-start justify-between gap-[var(--space-3)]">
-        <div>
-          <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
-            {window.windowDurationMins ? formatDuration(window.windowDurationMins) : window.name}
+    <div className="flex flex-col items-center text-center min-w-0">
+      <div
+        className="relative w-[164px] h-[164px] rounded-full flex items-center justify-center"
+        style={{
+          background: observed
+            ? `conic-gradient(${color} ${used * 3.6}deg, var(--material-thin) 0deg)`
+            : "conic-gradient(var(--text-quaternary) 0deg, var(--material-thin) 0deg)",
+        }}
+      >
+        <div className="absolute inset-[12px] rounded-full bg-[var(--material-regular)] border border-[var(--separator)]" />
+        <div className="relative z-10">
+          <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">{windowLabel(window)}</div>
+          <div className="mt-1 text-[length:var(--text-title1)] font-[var(--weight-bold)] text-[var(--text-primary)]">
+            {observed ? `${window.usedPercent}%` : "-"}
           </div>
-          <div className="mt-1 text-[length:var(--text-title2)] font-[var(--weight-bold)] text-[var(--text-primary)]">
-            {formatPercent(window.usedPercent)}
+          <div className="mt-1 text-[length:var(--text-caption1)]" style={{ color }}>
+            {observed ? `${100 - used}% left` : "pending"}
           </div>
         </div>
-        <span className="text-[length:var(--text-caption1)] px-2 py-1 rounded-[var(--radius-sm)] bg-[var(--material-regular)] text-[var(--text-secondary)]">
-          {window.name}
-        </span>
+      </div>
+      <div className="mt-[var(--space-3)] text-[length:var(--text-footnote)] font-[var(--weight-semibold)] text-[var(--text-primary)]">
+        {window.name}
+      </div>
+      <div className="mt-1 text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
+        Resets {formatDate(window.resetsAtIso)}
+      </div>
+    </div>
+  )
+}
+
+function EngineGaugePanel({ engine }: { engine: EngineLimitEngineSnapshot }) {
+  const windows = engine.windows || []
+  const source = engine.source.replace(" account/rateLimits/read", "")
+  const tone = statusColor(engine)
+  const context = engine.context
+  const note = engine.error || (engine.stale ? "Latest snapshot is older than 30 minutes." : null)
+
+  return (
+    <section className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-regular)] overflow-hidden">
+      <div className="px-[var(--space-5)] py-[var(--space-4)] border-b border-[var(--separator)] flex flex-wrap items-start justify-between gap-[var(--space-3)]">
+        <div>
+          <div className="flex items-center gap-[var(--space-3)]">
+            <h2 className="text-[length:var(--text-title2)] font-[var(--weight-bold)] text-[var(--text-primary)] capitalize">
+              {engine.name}
+            </h2>
+            <span
+              className="inline-flex items-center rounded-[var(--radius-sm)] px-2 py-1 text-[length:var(--text-caption1)] font-[var(--weight-semibold)]"
+              style={{ color: tone, background: "color-mix(in srgb, currentColor 10%, transparent)" }}
+            >
+              {statusLabel(engine)}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-[var(--space-3)] gap-y-1 text-[length:var(--text-caption1)] text-[var(--text-secondary)]">
+            <span>{source}</span>
+            {engine.accountPlan && (
+              <span className="inline-flex items-center gap-1">
+                <WalletCards size={13} />
+                {engine.accountPlan}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="text-right text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
+          <div>Updated</div>
+          <div>{formatDate(engine.refreshedAt)}</div>
+        </div>
       </div>
 
-      <div className="mt-[var(--space-3)] h-2 rounded-full bg-[var(--material-regular)] overflow-hidden">
-        {observed ? (
-          <div className="h-full rounded-full transition-all duration-300" style={{ width: `${used}%`, background: fill }} />
-        ) : (
-          <div
-            className="h-full opacity-60"
-            style={{
-              background:
-                "repeating-linear-gradient(90deg, var(--text-quaternary) 0 8px, transparent 8px 14px)",
-            }}
-          />
+      <div className="p-[var(--space-5)] grid gap-[var(--space-5)]">
+        <div className="grid gap-[var(--space-5)] sm:grid-cols-2">
+          {windows.map((window) => (
+            <CircularGauge key={`${engine.name}-${window.name}`} window={window} />
+          ))}
+        </div>
+
+        <div className="grid gap-[var(--space-3)] md:grid-cols-3">
+          {context && (
+            <InfoCell
+              label="Context"
+              value={context.usedPercent === undefined ? "Unknown" : `${context.usedPercent}%`}
+              detail={context.contextWindowSize ? `${context.contextWindowSize.toLocaleString()} token window` : "Window unknown"}
+            />
+          )}
+          {engine.credits && (
+            <InfoCell
+              label="Credits"
+              value={engine.credits.balance ? `Balance ${engine.credits.balance}` : engine.credits.hasCredits === false ? "None" : "Unknown"}
+              detail={engine.credits.unlimited ? "Unlimited" : "Account credits"}
+            />
+          )}
+          {engine.costUsd !== undefined && (
+            <InfoCell label="Session cost" value={`$${engine.costUsd.toFixed(4)}`} detail="Latest captured session" />
+          )}
+        </div>
+
+        <ExtraBuckets buckets={engine.buckets || []} />
+
+        {note && (
+          <div className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-thin)] p-[var(--space-3)] text-[length:var(--text-footnote)] text-[var(--text-secondary)]">
+            {note}
+          </div>
         )}
       </div>
-
-      <div className="mt-[var(--space-2)] text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
-        {observed ? `Resets ${formatDate(window.resetsAtIso)}` : "Usage and reset are not exposed by this source"}
-      </div>
-    </div>
+    </section>
   )
 }
 
-function ContextStrip({ engine }: { engine: EngineLimitEngineSnapshot }) {
-  if (!engine.context && !engine.credits && engine.costUsd === undefined) return null
+function InfoCell({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="grid gap-[var(--space-3)] md:grid-cols-3">
-      {engine.context && (
-        <MiniStat
-          label="Context"
-          value={
-            engine.context.usedPercent === undefined
-              ? "Not exposed"
-              : `${engine.context.usedPercent}% of ${(engine.context.contextWindowSize || 0).toLocaleString()}`
-          }
-        />
-      )}
-      {engine.credits && (
-        <MiniStat
-          label="Credits"
-          value={
-            engine.credits.unlimited
-              ? "Unlimited"
-              : engine.credits.balance
-                ? `Balance ${engine.credits.balance}`
-                : engine.credits.hasCredits === false
-                  ? "No credits"
-                  : "Unknown"
-          }
-        />
-      )}
-      {engine.costUsd !== undefined && <MiniStat label="Session cost" value={`$${engine.costUsd.toFixed(4)}`} />}
-    </div>
-  )
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border border-[var(--separator)] rounded-[var(--radius-md)] p-[var(--space-3)] bg-[var(--material-thin)] min-w-0">
+    <div className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-thin)] p-[var(--space-3)] min-w-0">
       <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">{label}</div>
       <div className="mt-1 text-[length:var(--text-callout)] font-[var(--weight-semibold)] text-[var(--text-primary)] truncate">
         {value}
       </div>
+      <div className="mt-1 text-[length:var(--text-caption1)] text-[var(--text-tertiary)] truncate">{detail}</div>
     </div>
   )
 }
 
-function BucketList({ buckets }: { buckets: EngineLimitBucket[] }) {
+function ExtraBuckets({ buckets }: { buckets: EngineLimitBucket[] }) {
   const extra = buckets.filter((bucket) => bucket.id !== "codex")
   if (extra.length === 0) return null
   return (
     <div className="grid gap-[var(--space-2)]">
       <div className="text-[length:var(--text-caption1)] font-[var(--weight-semibold)] text-[var(--text-tertiary)]">
-        Additional quota buckets
+        Extra Codex buckets
       </div>
       {extra.map((bucket) => (
-        <div key={bucket.id} className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-thin)] p-[var(--space-3)]">
-          <div className="flex flex-wrap items-center gap-[var(--space-2)] mb-[var(--space-3)]">
-            <span className="font-[var(--weight-semibold)] text-[var(--text-primary)]">{bucket.name || bucket.id}</span>
-            {bucket.planType && <span className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">{bucket.planType}</span>}
+        <div key={bucket.id} className="grid gap-[var(--space-3)] md:grid-cols-[220px_1fr_1fr] border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-thin)] p-[var(--space-3)]">
+          <div className="min-w-0">
+            <div className="font-[var(--weight-semibold)] text-[var(--text-primary)] truncate">{bucket.name || bucket.id}</div>
+            <div className="mt-1 text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">{bucket.planType || "bucket"}</div>
           </div>
-          <div className="grid gap-[var(--space-3)] md:grid-cols-2">
-            {bucket.primary && <LimitTile window={bucket.primary} />}
-            {bucket.secondary && <LimitTile window={bucket.secondary} />}
-          </div>
+          {bucket.primary && <MiniWindow window={bucket.primary} />}
+          {bucket.secondary && <MiniWindow window={bucket.secondary} />}
         </div>
       ))}
     </div>
   )
 }
 
-function EnginePanel({ engine }: { engine: EngineLimitEngineSnapshot }) {
-  const Icon = engineIcon(engine)
-  const tone = engineTone(engine)
-  const windows = engine.windows || []
-  const note = engine.error || engine.unsupportedReason || (engine.stale ? "Latest snapshot is older than 30 minutes." : null)
-
+function MiniWindow({ window }: { window: EngineLimitWindow }) {
+  const used = clampPercent(window.usedPercent)
   return (
-    <section className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-regular)] overflow-hidden">
-      <div className="grid gap-[var(--space-4)] lg:grid-cols-[280px_1fr]">
-        <aside className="p-[var(--space-4)] border-b lg:border-b-0 lg:border-r border-[var(--separator)]">
-          <div className="flex items-start gap-[var(--space-3)]">
-            <div className="w-9 h-9 rounded-[var(--radius-sm)] flex items-center justify-center shrink-0" style={{ color: tone, background: "color-mix(in srgb, currentColor 10%, transparent)" }}>
-              <Icon size={18} />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-[length:var(--text-title3)] font-[var(--weight-bold)] text-[var(--text-primary)] capitalize">
-                {engine.name}
-              </h2>
-              <div className="mt-2 inline-flex items-center rounded-[var(--radius-sm)] px-2 py-1 text-[length:var(--text-caption1)] font-[var(--weight-semibold)]" style={{ color: tone, background: "color-mix(in srgb, currentColor 10%, transparent)" }}>
-                {engineStatusLabel(engine)}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-[var(--space-4)] grid gap-[var(--space-2)] text-[length:var(--text-caption1)] text-[var(--text-secondary)]">
-            <div className="flex items-start gap-2">
-              <Server size={13} className="mt-0.5 shrink-0" />
-              <span>{engine.source}</span>
-            </div>
-            {engine.accountPlan && (
-              <div className="flex items-center gap-2">
-                <WalletCards size={13} className="shrink-0" />
-                <span>{engine.accountPlan}</span>
-              </div>
-            )}
-            <div>Updated {formatDate(engine.refreshedAt)}</div>
-          </div>
-        </aside>
-
-        <div className="p-[var(--space-4)] grid gap-[var(--space-4)] min-w-0">
-          {windows.length > 0 ? (
-            <div className="grid gap-[var(--space-3)] md:grid-cols-2">
-              {windows.map((window) => (
-                <LimitTile key={`${window.name}-${window.windowDurationMins}`} window={window} />
-              ))}
-            </div>
-          ) : (
-            <div className="border border-[var(--separator)] rounded-[var(--radius-md)] bg-[var(--material-thin)] p-[var(--space-4)] text-[length:var(--text-footnote)] text-[var(--text-secondary)]">
-              No quota windows are exposed yet for this engine.
-            </div>
-          )}
-
-          <ContextStrip engine={engine} />
-          <BucketList buckets={engine.buckets || []} />
-
-          {engine.models.length > 0 && (
-            <div className="flex flex-wrap gap-[var(--space-2)]">
-              {engine.models.map((model) => (
-                <span
-                  key={model.id}
-                  className="text-[length:var(--text-caption1)] px-2 py-1 rounded-[var(--radius-sm)] bg-[var(--material-thin)] text-[var(--text-secondary)] border border-[var(--separator)]"
-                >
-                  {model.label || model.id}
-                  {model.contextWindow ? ` · ${model.contextWindow.toLocaleString()}` : ""}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {note && (
-            <div className="text-[length:var(--text-footnote)] text-[var(--text-secondary)] border border-[var(--separator)] rounded-[var(--radius-md)] p-[var(--space-3)] bg-[var(--material-thin)]">
-              {note}
-            </div>
-          )}
-        </div>
+    <div className="min-w-0">
+      <div className="flex items-center justify-between gap-[var(--space-2)] text-[length:var(--text-caption1)]">
+        <span className="text-[var(--text-secondary)]">{window.name}</span>
+        <span className="font-[var(--weight-semibold)] text-[var(--text-primary)]">{window.usedPercent ?? 0}%</span>
       </div>
-    </section>
+      <div className="mt-2 h-2 rounded-full bg-[var(--material-regular)] overflow-hidden">
+        <div className="h-full rounded-full" style={{ width: `${used}%`, background: gaugeColor(window.usedPercent) }} />
+      </div>
+    </div>
   )
 }
 
@@ -292,15 +314,10 @@ export default function LimitsPage() {
     refresh()
   }, [refresh])
 
-  const engines = useMemo(() => Object.values(data?.engines || {}), [data])
-  const observed = engines.filter((engine) => engine.windows?.some((window) => window.usedPercent !== undefined)).length
-  const planOnly = engines.filter((engine) => engine.windows?.length && !engine.windows.some((window) => window.usedPercent !== undefined)).length
-  const errors = engines.filter((engine) => engine.status === "error").length
-  const nextReset = engines
-    .flatMap((engine) => engine.windows || [])
-    .map((window) => window.resetsAtIso)
-    .filter(Boolean)
-    .sort()[0]
+  const engines = useMemo(
+    () => FEATURED_ENGINES.map((name) => data?.engines[name]).filter(Boolean) as EngineLimitEngineSnapshot[],
+    [data],
+  )
 
   return (
     <PageLayout>
@@ -315,10 +332,10 @@ export default function LimitsPage() {
           <div className="flex items-center justify-between px-[var(--space-6)] py-[var(--space-4)]">
             <div className="min-w-0">
               <h1 className="text-[length:var(--text-title1)] font-[var(--weight-bold)] text-[var(--text-primary)] leading-[var(--leading-tight)]">
-                Engine Limits
+                Claude / Codex Limits
               </h1>
               <p className="text-[length:var(--text-footnote)] text-[var(--text-secondary)] mt-[var(--space-1)]">
-                {data ? `Generated ${formatDate(data.generatedAt)}` : "Loading engine telemetry"}
+                {data ? `Generated ${formatDate(data.generatedAt)}` : "Loading live quota telemetry"}
               </p>
             </div>
             <ToolbarActions>
@@ -341,26 +358,15 @@ export default function LimitsPage() {
           )}
 
           {loading ? (
-            <div className="h-[200px] flex items-center justify-center text-[var(--text-tertiary)]">Loading...</div>
+            <div className="h-[220px] flex items-center justify-center text-[var(--text-tertiary)]">Loading...</div>
           ) : (
             <div className="grid gap-[var(--space-4)]">
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-[var(--space-3)]">
-                <SummaryMetric label="Engines" value={String(engines.length)} icon={Database} />
-                <SummaryMetric label="Observed quota" value={String(observed)} icon={CheckCircle2} />
-                <SummaryMetric label="Plan only" value={String(planOnly)} icon={Clock3} />
-                <SummaryMetric label={errors ? "Errors" : "Next reset"} value={errors ? String(errors) : formatDate(nextReset)} icon={errors ? AlertTriangle : Gauge} />
+              <SummaryStrip engines={engines} />
+              <div className="grid gap-[var(--space-4)] xl:grid-cols-2 items-start">
+                {engines.map((engine) => (
+                  <EngineGaugePanel key={engine.name} engine={engine} />
+                ))}
               </div>
-
-              {engines.map((engine) => (
-                <EnginePanel key={engine.name} engine={engine} />
-              ))}
-
-              {engines.length === 0 && (
-                <div className="h-[200px] flex flex-col items-center justify-center text-[var(--text-tertiary)] gap-[var(--space-2)]">
-                  <Gauge size={22} />
-                  <span>No engines found</span>
-                </div>
-              )}
             </div>
           )}
         </main>

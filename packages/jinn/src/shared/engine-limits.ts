@@ -1,5 +1,6 @@
 import { spawn, execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type {
   EngineLimitBucket,
@@ -213,11 +214,9 @@ async function readCodexRateLimits(config: JinnConfig): Promise<JsonRecord> {
     let stdout = "";
     let stderr = "";
     let settled = false;
-    let closeStdinTimer: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      if (closeStdinTimer) clearTimeout(closeStdinTimer);
       child.kill("SIGTERM");
       reject(new Error(stderr.trim() || "Timed out reading Codex rate limits"));
     }, 5000);
@@ -226,7 +225,6 @@ async function readCodexRateLimits(config: JinnConfig): Promise<JsonRecord> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (closeStdinTimer) clearTimeout(closeStdinTimer);
       child.kill("SIGTERM");
       resolve(value);
     }
@@ -256,23 +254,20 @@ async function readCodexRateLimits(config: JinnConfig): Promise<JsonRecord> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (closeStdinTimer) clearTimeout(closeStdinTimer);
       reject(err);
     });
     child.on("close", () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (closeStdinTimer) clearTimeout(closeStdinTimer);
       reject(new Error(stderr.trim() || "Codex app-server exited before returning rate limits"));
     });
     child.stdin.write(`${JSON.stringify(initialize)}\n${JSON.stringify(request)}\n`);
-    // `codex app-server --stdio` can exit early if stdin is closed immediately
-    // after the write. Keeping it open briefly mirrors a real JSON-RPC client and
-    // gives the server time to process both requests.
-    closeStdinTimer = setTimeout(() => {
-      try { child.stdin.end(); } catch { /* best effort */ }
-    }, 1000);
+    // Keep stdin OPEN until we settle or time out. `codex app-server --stdio`
+    // exits as soon as stdin closes, so the previous fixed 1s close timer raced
+    // the async rate-limit fetch and made the server exit before replying
+    // ("exited before returning rate limits"). settle()/the timeout kill the
+    // child for us, so there is no need to close stdin ourselves.
   });
 }
 
@@ -302,11 +297,102 @@ function planWindow(name: string, windowDurationMins: number): EngineLimitWindow
   return { name, windowDurationMins };
 }
 
+// Codex writes the same rate-limit snapshot into every `token_count` event of its
+// session rollout JSONL (snake_case), so we can read it from disk exactly like the
+// Claude statusline snapshot — no app-server spawn, no JSON-RPC race.
+function windowFromCodexRollout(name: string, value: unknown): EngineLimitWindow | undefined {
+  if (!isRecord(value)) return undefined;
+  const durationMins = num(value.window_minutes);
+  const resetsAt = num(value.resets_at);
+  return {
+    name: limitWindowName(name, durationMins),
+    usedPercent: num(value.used_percent),
+    windowDurationMins: durationMins,
+    resetsAt,
+    resetsAtIso: isoFromSeconds(resetsAt),
+  };
+}
+
+function codexHome(): string {
+  return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+}
+
+// Walk the date-structured sessions/YYYY/MM/DD tree newest-first to the most
+// recent rollout file without listing every session.
+function newestCodexRollout(sessionsDir: string): string | null {
+  try {
+    let dir = sessionsDir;
+    for (let depth = 0; depth < 3; depth++) {
+      const subdirs = fs.readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+        .reverse();
+      if (subdirs.length === 0) return null;
+      dir = path.join(dir, subdirs[0]);
+    }
+    const files = fs.readdirSync(dir)
+      .filter((n) => n.startsWith("rollout-") && n.endsWith(".jsonl"))
+      .map((n) => path.join(dir, n))
+      .map((file) => ({ file, mtimeMs: fs.statSync(file).mtimeMs }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return files[0]?.file ?? null;
+  } catch {
+    return null;
+  }
+}
+
+interface CodexRollup { rateLimits: JsonRecord; capturedAtIso?: string; mtimeMs: number }
+
+function readCodexRollupSnapshot(): CodexRollup | null {
+  const file = newestCodexRollout(path.join(codexHome(), "sessions"));
+  if (!file) return null;
+  try {
+    const mtimeMs = fs.statSync(file).mtimeMs;
+    const lines = fs.readFileSync(file, "utf-8").split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const t = lines[i].trim();
+      if (!t || !t.includes('"rate_limits"')) continue;
+      try {
+        const parsed = JSON.parse(t);
+        const rl = isRecord(parsed.payload) ? parsed.payload.rate_limits : undefined;
+        if (isRecord(rl)) return { rateLimits: rl, capturedAtIso: str(parsed.timestamp), mtimeMs };
+      } catch { /* skip non-JSON / partial line */ }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function collectCodexLimits(config: JinnConfig): Promise<EngineLimitEngineSnapshot> {
   const snap = baseSnapshot(config, "codex");
   if (!snap.available) {
     return { ...snap, status: "unsupported", unsupportedReason: "Codex CLI is not installed." };
   }
+
+  // Primary: latest session rollout snapshot on disk (light, never races).
+  const rollup = readCodexRollupSnapshot();
+  if (rollup) {
+    const rl = rollup.rateLimits;
+    const windows = [
+      windowFromCodexRollout("5h", rl.primary),
+      windowFromCodexRollout("7d", rl.secondary),
+    ].filter(Boolean) as EngineLimitWindow[];
+    if (windows.length > 0) {
+      return {
+        ...snap,
+        status: "snapshot",
+        source: "codex session rollout",
+        refreshedAt: rollup.capturedAtIso ?? new Date(rollup.mtimeMs).toISOString(),
+        windows,
+        accountPlan: str(rl.plan_type),
+        stale: Date.now() - rollup.mtimeMs > 30 * 60_000,
+      };
+    }
+  }
+
+  // Fallback: live app-server query, used only when no rollout snapshot exists yet.
   try {
     const result = await readCodexRateLimits(config);
     const buckets = bucketsFromCodex(result);
@@ -320,12 +406,12 @@ async function collectCodexLimits(config: JinnConfig): Promise<EngineLimitEngine
       credits: main?.credits,
       accountPlan: main?.planType,
     };
-  } catch (err) {
+  } catch {
     return {
       ...snap,
-      status: "error",
-      source: "codex app-server account/rateLimits/read",
-      error: err instanceof Error ? err.message : String(err),
+      status: "static",
+      source: "codex session rollout",
+      unsupportedReason: "No Codex session rollout with rate limits yet. Run a Codex session to populate live limits.",
     };
   }
 }

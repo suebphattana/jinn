@@ -66,6 +66,13 @@ export class TalkAudioPlayer {
   private playhead = 0
   /** Count of buffers currently scheduled / playing. */
   private activeSources = 0
+  /**
+   * Live references to every scheduled/playing BufferSource so `reset()` can
+   * actually halt them. Without this, `source.start(...)` is fire-and-forget and
+   * a pause/stop would clear the queue but let already-committed sources play to
+   * completion (the "pause keeps playing" bug).
+   */
+  private liveSources = new Set<AudioBufferSourceNode>()
   /** Chunks accepted but not yet decoded/scheduled (sitting in the chain). */
   private inFlight = 0
   /** True between the first enqueue and the queue fully draining. */
@@ -218,7 +225,9 @@ export class TalkAudioPlayer {
 
     this.activeSources++
     this.inFlight = Math.max(0, this.inFlight - 1)
+    this.liveSources.add(source)
     source.onended = () => {
+      this.liveSources.delete(source)
       this.activeSources--
       this.checkIdle()
     }
@@ -269,8 +278,13 @@ export class TalkAudioPlayer {
     this.idleCb = cb
   }
 
-  /** Drop all queued audio and reset ordering state (e.g. on cancel / unmount). */
+  /**
+   * Drop all queued audio and reset ordering state (e.g. on cancel / unmount /
+   * read-aloud pause). Halts any source that's already scheduled or playing —
+   * not just future enqueues — so pause/stop is immediate and silent.
+   */
   reset(): void {
+    this.stopLiveSources()
     // Abandon the in-flight decode chain; future enqueues start a fresh chain.
     this.chain = Promise.resolve()
     this.started = false
@@ -280,6 +294,28 @@ export class TalkAudioPlayer {
     this.activeSources = 0
     this.ended = false
     if (this.ctx) this.playhead = this.ctx.currentTime
+  }
+
+  /**
+   * Immediately stop every scheduled/playing source. We null `onended` first so
+   * the stop()-triggered callback doesn't run the activeSources/idle bookkeeping
+   * (we've already zeroed it in reset), then `stop()` + `disconnect()` each one.
+   */
+  private stopLiveSources(): void {
+    for (const source of this.liveSources) {
+      source.onended = null
+      try {
+        source.stop()
+      } catch {
+        /* not yet started, or already stopped — fine */
+      }
+      try {
+        source.disconnect()
+      } catch {
+        /* best effort */
+      }
+    }
+    this.liveSources.clear()
   }
 
   /** Fully tear down the AudioContext. Call on unmount. */

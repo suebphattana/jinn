@@ -3,8 +3,8 @@
  * + lifecycle), pause-cancels-stream, Kokoro→Web-Speech fallback, markdown strip;
  * plus the length-prefixed frame reader.
  */
-import { describe, it, expect, vi } from "vitest"
-import { createTtsStart, createFrameReader, type TtsEngineDeps, type StreamPlayer } from "../tts-engine"
+import { describe, it, expect, vi, afterEach } from "vitest"
+import { createTtsStart, createFrameReader, defaultTtsDeps, type TtsEngineDeps, type StreamPlayer } from "../tts-engine"
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -208,5 +208,44 @@ describe("createTtsStart (streaming)", () => {
     await flush()
     expect(c.onError).toHaveBeenCalledTimes(1)
     expect(c.onEnd).not.toHaveBeenCalled()
+  })
+})
+
+/* ── Web Speech fallback: pause must actually cancel speech ──────────────────── */
+
+describe("defaultTtsDeps().speak (Web Speech fallback)", () => {
+  const realSynth = (globalThis as { speechSynthesis?: unknown }).speechSynthesis
+  const realUtt = (globalThis as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance
+
+  afterEach(() => {
+    ;(globalThis as { speechSynthesis?: unknown }).speechSynthesis = realSynth
+    ;(globalThis as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance = realUtt
+  })
+
+  function installSynth() {
+    const cancel = vi.fn()
+    const speak = vi.fn()
+    ;(globalThis as { speechSynthesis?: unknown }).speechSynthesis = { cancel, speak }
+    ;(globalThis as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance = class {
+      text: string
+      onstart: (() => void) | null = null
+      onend: (() => void) | null = null
+      onerror: (() => void) | null = null
+      constructor(text: string) {
+        this.text = text
+      }
+    }
+    return { cancel, speak }
+  }
+
+  // Regression: the read-aloud pause toggle calls the returned stop() handle; for
+  // the browser fallback that MUST cancel the active utterance (was: kept talking).
+  it("stop() handle cancels the active speech synthesis utterance", () => {
+    const { cancel, speak } = installSynth()
+    const stop = defaultTtsDeps().speak("hello world", cbs())
+    expect(speak).toHaveBeenCalledTimes(1)
+    cancel.mockClear() // ignore the pre-speak clear cancel()
+    stop()
+    expect(cancel).toHaveBeenCalledTimes(1)
   })
 })

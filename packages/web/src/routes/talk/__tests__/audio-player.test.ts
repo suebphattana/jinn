@@ -13,10 +13,18 @@ const events: string[] = []
 class FakeBufferSource {
   buffer: unknown = null
   onended: (() => void) | null = null
+  started = false
+  stopped = false
   start = vi.fn((_when?: number) => {
+    this.started = true
     events.push("start")
   })
+  stop = vi.fn((_when?: number) => {
+    this.stopped = true
+    events.push("stop")
+  })
   connect = vi.fn(() => {})
+  disconnect = vi.fn(() => {})
 }
 
 class FakeAudioContext {
@@ -134,5 +142,34 @@ describe("TalkAudioPlayer turn boundaries", () => {
     expect(ctx.sources).toHaveLength(2)
     expect(ctx.sources[1].start).toHaveBeenCalledTimes(1)
     expect(player.playing).toBe(true)
+  })
+
+  // Regression: read-aloud / talk "pause" must actually silence audio. A pause
+  // routes through reset(); before the fix reset() cleared the queue but left
+  // already-scheduled sources playing to completion ("pause keeps playing").
+  it("reset() stops every scheduled/playing source (pause is immediate)", async () => {
+    const player = new TalkAudioPlayer()
+    player.enqueue(0, "audio/wav", B64, false)
+    player.enqueue(1, "audio/wav", B64, false)
+    player.enqueue(2, "audio/wav", B64, true)
+    await settle(player)
+
+    const ctx = FakeAudioContext.last!
+    expect(ctx.sources).toHaveLength(3)
+    for (const s of ctx.sources) expect(s.start).toHaveBeenCalledTimes(1)
+    expect(player.playing).toBe(true)
+
+    // Pause: every committed source must be stopped (not left to drain).
+    player.reset()
+    for (const s of ctx.sources) {
+      expect(s.stop).toHaveBeenCalledTimes(1)
+      expect(s.disconnect).toHaveBeenCalledTimes(1)
+    }
+    expect(player.playing).toBe(false)
+
+    // A late onended from a stopped source must not flip idle/bookkeeping back on
+    // (onended is detached before stop, so calling it is a no-op for state).
+    ctx.sources[0].onended?.()
+    expect(player.playing).toBe(false)
   })
 })

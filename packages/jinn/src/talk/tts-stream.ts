@@ -32,6 +32,47 @@ export function __setTalkTtsForTest(tts: Tts | null): void {
   engine = tts;
 }
 
+/**
+ * Max characters accepted by POST /api/tts in a single read-aloud call. Bounds
+ * the sidecar's synth time and the WAV response size (≈ a few minutes of audio).
+ */
+export const TTS_MAX_CHARS = 8000;
+
+/**
+ * Validate + bound the `text` field of a POST /api/tts request. Trims, rejects
+ * non-strings and empties, and caps over-long input at the last sentence/space
+ * boundary before the limit so a word is never cut mid-token. Pure — unit-tested.
+ */
+export function validateTtsText(
+  raw: unknown,
+  maxChars = TTS_MAX_CHARS,
+): { ok: true; text: string } | { ok: false; error: string } {
+  if (typeof raw !== "string") return { ok: false, error: "text must be a string" };
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false, error: "text must be a non-empty string" };
+  if (trimmed.length <= maxChars) return { ok: true, text: trimmed };
+  const head = trimmed.slice(0, maxChars);
+  // Prefer a clean cut at a sentence/newline/space boundary in the back half of
+  // the window; if none (e.g. one giant token), hard-slice at the cap.
+  const boundary = Math.max(head.lastIndexOf(". "), head.lastIndexOf("\n"), head.lastIndexOf(" "));
+  const text = (boundary > maxChars / 2 ? head.slice(0, boundary + 1) : head).trim();
+  return { ok: true, text };
+}
+
+/**
+ * Standalone one-shot synthesis for POST /api/tts: returns a single WAV buffer
+ * for the whole text. Reuses the shared Kokoro engine; rejects when unavailable.
+ */
+export async function synthesizeText(text: string, opts?: KokoroOpts): Promise<Buffer> {
+  return getTalkTts(opts).synthesize(text);
+}
+
+/** TTS engine readiness for GET /api/tts — no synth, no sidecar spawn. */
+export function ttsStatus(opts?: KokoroOpts): { available: boolean; voice: string } {
+  const s = getTalkTts(opts).status();
+  return { available: s.available, voice: s.voice };
+}
+
 interface TurnState {
   buffer: string;
   seq: number;

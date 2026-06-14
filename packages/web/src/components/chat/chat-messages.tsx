@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import type { Message } from '@/lib/conversations'
 import { parseMedia, stripAttachedFilesBlock } from '@/lib/conversations'
 import { MessageMedia } from './message-media'
 import { useOpenFile } from '@/components/chat/file-open-context'
 import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
+import { useMessageTts, stopMessageTts } from './use-message-tts'
 
 /* ── Tool grouping ──────────────────────────────────────── */
 
@@ -438,8 +439,11 @@ function shouldShowTimestamp(messages: Message[], index: number): boolean {
 const ACTION_BTN =
   'inline-flex h-[26px] w-[26px] items-center justify-center rounded-[7px] border-none bg-transparent text-[var(--text-quaternary)] transition-colors hover:bg-[var(--fill-tertiary)] hover:text-[var(--text-secondary)] cursor-pointer disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--text-quaternary)]'
 
-function MessageActions({ text, onRetry, retryDisabled }: { text: string; onRetry?: () => void; retryDisabled?: boolean }) {
+function MessageActions({ id, text, onRetry, retryDisabled }: { id: string; text: string; onRetry?: () => void; retryDisabled?: boolean }) {
   const [copied, setCopied] = useState(false)
+  const tts = useMessageTts(id, text)
+  const speaking = tts.phase === 'playing'
+  const loading = tts.phase === 'loading'
 
   function handleCopy() {
     if (!text) return
@@ -459,6 +463,30 @@ function MessageActions({ text, onRetry, retryDisabled }: { text: string; onRetr
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="9" y="9" width="13" height="13" rx="2" />
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        )}
+      </button>
+      {/* Read aloud — toggles play↔pause. Custom (Kokoro) TTS with a browser
+          Web Speech fallback; only one message speaks at a time. */}
+      <button
+        onClick={tts.toggle}
+        aria-label={speaking ? 'Pause' : loading ? 'Loading audio' : 'Read aloud'}
+        aria-pressed={speaking || loading}
+        title={speaking ? 'Pause' : 'Read aloud'}
+        className={ACTION_BTN}
+      >
+        {loading ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+        ) : speaking ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="6" y="5" width="4" height="14" rx="1" />
+            <rect x="14" y="5" width="4" height="14" rx="1" />
+          </svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l10.79-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14z" />
           </svg>
         )}
       </button>
@@ -584,6 +612,7 @@ const MessageRow = React.memo(function MessageRow({ msg, index: i, messages, loa
             {/* Subtle action row — copy + retry (no avatars, full-width preserved) */}
             {textContent && (
               <MessageActions
+                id={msg.id || `idx-${i}`}
                 text={textContent}
                 onRetry={onRetry && prevUserText ? () => onRetry(prevUserText) : undefined}
                 retryDisabled={loading}
@@ -635,6 +664,9 @@ export function ChatMessages({ messages, loading, streamingText, onRetry }: Chat
 
   // Memoize grouped messages to avoid re-running on streaming-only re-renders
   const groupedMessages = useMemo(() => groupMessages(messages), [messages])
+
+  // Stop any in-progress read-aloud when the chat view unmounts (navigation away).
+  useEffect(() => () => stopMessageTts(), [])
 
   if (messages.length === 0 && !loading) {
     return (

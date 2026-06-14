@@ -148,6 +148,12 @@ export interface Tts {
    * turn streamed sentence-by-sentence only signals end-of-audio on the flush.
    */
   speak(sessionId: string, text: string, emit: Emit, opts?: { seqStart?: number; final?: boolean }): Promise<number>
+  /**
+   * One-shot synthesis of arbitrary `text` into a single WAV buffer (no WS
+   * streaming). Backs the standalone POST /api/tts read-aloud surface. Rejects if
+   * the engine is unavailable (missing venv/weights).
+   */
+  synthesize(text: string): Promise<Buffer>
   status(): { available: boolean; downloading: boolean; progress: number; voice: string; ready: boolean }
   /** Pre-spawn the sidecar and load the model so the first real speak is fast. No-op if weights/venv are missing. */
   warm?(): Promise<void>

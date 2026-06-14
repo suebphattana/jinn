@@ -74,7 +74,14 @@ import { handleHookPost, isLoopback } from "./hook-endpoint.js";
 import { scheduleOnLoadTailSync, transcriptEntryText } from "./external-turns.js";
 import { handleTalkApi } from "../talk/routes.js";
 import { getOrchestratorPersona } from "../talk/orchestrator-persona.js";
-import { feedTalkText, flushTalkSpeech, discardTalkSpeech } from "../talk/tts-stream.js";
+import {
+  feedTalkText,
+  flushTalkSpeech,
+  discardTalkSpeech,
+  synthesizeText,
+  ttsStatus,
+  validateTtsText,
+} from "../talk/tts-stream.js";
 import { isTalkMuted } from "../talk/mute-state.js";
 import { maybeEmitTalkGraph } from "../talk/graph.js";
 
@@ -1841,6 +1848,42 @@ export async function handleApiRequest(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return serverError(res, `Failed to update STT config: ${msg}`);
+      }
+    }
+
+    // ── TTS (per-message read-aloud) ──────────────────────────
+    // GET /api/tts — engine readiness so the client can pick Kokoro vs the
+    // browser Web Speech fallback WITHOUT a failed POST. Reuses the shared Kokoro
+    // engine (also driving the /talk voice loop); gated on weights + venv present.
+    if (method === "GET" && pathname === "/api/tts") {
+      const { available, voice } = ttsStatus(context.getConfig().talk?.kokoro);
+      return json(res, { available, voice });
+    }
+
+    // POST /api/tts {text} — synthesize one WAV for the whole message. 503
+    // {available:false} when Kokoro can't run (client then falls back to Web Speech).
+    if (method === "POST" && pathname === "/api/tts") {
+      const kokoroOpts = context.getConfig().talk?.kokoro;
+      if (!ttsStatus(kokoroOpts).available) {
+        return json(res, { available: false }, 503);
+      }
+      const parsed = await readJsonBody(req, res);
+      if (!parsed.ok) return;
+      const valid = validateTtsText((parsed.body as { text?: unknown } | null)?.text);
+      if (!valid.ok) return badRequest(res, valid.error);
+      try {
+        const wav = await synthesizeText(valid.text, kokoroOpts);
+        res.writeHead(200, {
+          "Content-Type": "audio/wav",
+          "Content-Length": String(wav.length),
+          "Cache-Control": "no-store",
+        });
+        res.end(wav);
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`TTS synthesis failed: ${msg}`);
+        return serverError(res, `TTS synthesis failed: ${msg}`);
       }
     }
 

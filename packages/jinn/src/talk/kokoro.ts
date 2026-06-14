@@ -294,6 +294,21 @@ export function createKokoroTts(opts?: {
       return sentences.length
     },
 
+    async synthesize(text: string): Promise<Buffer> {
+      // Fail fast & gracefully if the engine can't run at all (the route turns
+      // this into a 503 {available:false} so the client falls back to Web Speech).
+      if (!pythonPresent() || !weightsPresent()) {
+        throw new Error(
+          "Kokoro TTS unavailable (missing venv or weights) — falling back to Web Speech",
+        )
+      }
+      const clean = text.replace(/\s+/g, " ").trim()
+      if (!clean) throw new Error("Kokoro synthesize: empty text")
+      // The kokoro-onnx sidecar handles arbitrary-length text in one /synth call,
+      // returning a single valid WAV — no per-sentence concatenation needed.
+      return synth(clean)
+    },
+
     async warm(): Promise<void> {
       // Nothing to warm if the engine can't run; speak() will surface the error.
       if (!pythonPresent() || !weightsPresent()) return

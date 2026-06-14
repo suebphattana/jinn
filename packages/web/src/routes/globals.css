@@ -104,8 +104,12 @@
   /* Max reading measure for the assistant text column. Scroller + composer stay
      full-bleed; only the prose column caps. Single-line tune. */
   --chat-measure: 64rem;
-  /* Clearance under the floating header pills (pill height + gap + safe-area). */
-  --chat-top-clearance: calc(max(var(--safe-top), 12px) + 52px);
+  /* Clearance under the floating header pills. The pills now float in the
+     corners (not a solid header), so content only needs a small top gap +
+     safe-area inset — it then scrolls UNDER the translucent top scrim, which
+     fades it. The previous +52px reserved space for the removed solid header
+     and left a dead gap above the first message. */
+  --chat-top-clearance: max(var(--safe-top), 12px);
 }
 
 /* LEDGER DARK — warm charcoal + amber (default) */

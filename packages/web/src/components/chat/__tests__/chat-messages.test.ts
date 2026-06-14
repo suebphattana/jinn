@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isFilePath } from '../chat-messages'
+import { isFilePath, parseFenceLang } from '../chat-messages'
 
 // Pins the file-path detection behaviour so the shared FILE_PATH_CORE regex
 // (used both for isFilePath and the inline-formatter's bare-path alternative)
@@ -29,5 +29,21 @@ describe('isFilePath', () => {
 
   it.each(shouldNotLink)('does NOT treat %s as a file path', (s) => {
     expect(isFilePath(s)).toBe(false)
+  })
+})
+
+// Pins the code-fence language parsing used to label code blocks. Rule: take the
+// first whitespace-delimited token after the ``` marker, lowercased; '' for bare.
+describe('parseFenceLang', () => {
+  it('extracts a simple language tag', () => {
+    expect(parseFenceLang('```ts')).toBe('ts')
+    expect(parseFenceLang('```TSX')).toBe('tsx')
+  })
+  it('returns the first token when extra fence metadata follows', () => {
+    expect(parseFenceLang('```js {3-5} title="x"')).toBe('js')
+  })
+  it('returns empty string for a bare fence', () => {
+    expect(parseFenceLang('```')).toBe('')
+    expect(parseFenceLang('```   ')).toBe('')
   })
 })

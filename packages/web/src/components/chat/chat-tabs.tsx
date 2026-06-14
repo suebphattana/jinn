@@ -33,7 +33,8 @@ export function PillButton({
       title={title}
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+        // D1: 36px tap target at base (Apple HIG floor); tighten to 32px on desktop.
+        "inline-flex size-9 lg:size-8 shrink-0 items-center justify-center rounded-full transition-colors",
         "text-[var(--text-secondary)]",
         "hover:bg-[var(--fill-secondary)] hover:text-foreground",
         className,
@@ -78,22 +79,27 @@ export function ChatHeaderPills({
   const hideCls = hideOnMobile ? "hidden lg:block" : ""
   return (
     <>
-      {/* LEFT pill — hamburger (opens chat list) + employee avatar (always) */}
-      <div className={cn("pointer-events-none absolute left-3 top-3 z-10 lg:left-4", hideCls)}>
+      {/* LEFT pill — hamburger (opens chat list) + employee avatar (always).
+          D2: top/left respect the safe-area on notched devices (Dynamic Island),
+          composing max(inset,12px) at the call site; desktop stays at the tight 4. */}
+      <div className={cn("pointer-events-none absolute left-[max(var(--safe-left),12px)] top-[max(var(--safe-top),12px)] z-10 lg:left-4 lg:top-4", hideCls)}>
         <div className={PILL_CLASS}>
           {onToggleSidebar && (
             <PillButton onClick={onToggleSidebar} title="Chats" ariaLabel="Toggle chat list">
               <Menu size={17} />
             </PillButton>
           )}
-          <span className="flex size-7 items-center justify-center pr-1 pl-0.5">
+          {/* D5: avatar is purely identity, not a control — de-emphasize so it
+              reads as non-interactive next to the live hamburger (no hover/cursor
+              affordance, slightly recessed, unselectable). */}
+          <span className="flex size-7 select-none items-center justify-center pr-1 pl-0.5 opacity-80">
             <EmployeeAvatar name={avatarName || employeeName || ''} size={24} />
           </span>
         </div>
       </div>
 
       {/* RIGHT pill — new · more */}
-      <div className={cn("pointer-events-none absolute right-3 top-3 z-10 lg:right-4", hideCls)}>
+      <div className={cn("pointer-events-none absolute right-[max(var(--safe-right),12px)] top-[max(var(--safe-top),12px)] z-10 lg:right-4 lg:top-4", hideCls)}>
         <div className={PILL_CLASS}>
           <PillButton onClick={onNew} title="New Chat (N)" ariaLabel="New chat">
             <Plus size={18} strokeWidth={2.4} />

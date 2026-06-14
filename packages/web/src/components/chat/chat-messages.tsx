@@ -44,7 +44,7 @@ function ToolGroup({ msgs, isActive }: { msgs: Message[]; isActive: boolean }) {
     <div className="assistant-msg-row mb-[var(--space-1)]">
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-[var(--space-2)] py-[5px] px-[var(--space-3)] rounded-full bg-[var(--fill-secondary)] border border-[var(--separator)] text-[length:var(--text-caption1)] text-[var(--text-secondary)] cursor-pointer transition-[background] duration-150 ease-in-out hover:bg-[var(--fill-tertiary)]"
+        className="flex items-center gap-[var(--space-2)] py-[5px] px-[var(--space-3)] rounded-full bg-[var(--fill-secondary)] text-[length:var(--text-caption1)] text-[var(--text-secondary)] cursor-pointer transition-[background] duration-150 ease-in-out hover:bg-[var(--fill-tertiary)]"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-60">
           <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
@@ -72,7 +72,7 @@ function ToolGroup({ msgs, isActive }: { msgs: Message[]; isActive: boolean }) {
           {msgs.map((m) => (
             <span
               key={m.id}
-              className="inline-flex items-center gap-1 py-0.5 px-2 rounded-full bg-[var(--fill-tertiary)] border border-[var(--separator)] text-[length:var(--text-caption2)] text-[var(--text-tertiary)]"
+              className="inline-flex items-center gap-1 py-0.5 px-2 rounded-full bg-[var(--fill-tertiary)] text-[length:var(--text-caption2)] text-[var(--text-tertiary)]"
             >
               {m.toolCall}
             </span>
@@ -182,7 +182,7 @@ function inlineFormat(text: string): React.ReactNode {
         parts.push(renderPathLink(match[7], match.index))
       } else {
         parts.push(
-          <code key={match.index} className="bg-[var(--fill-secondary)] border border-[var(--separator)] rounded-[5px] py-px px-[5px] text-[0.88em] font-[family-name:var(--font-code)] text-[var(--accent)]">{match[7]}</code>
+          <code key={match.index} className="bg-[var(--fill-secondary)] rounded-[5px] py-px px-[5px] text-[0.88em] font-[family-name:var(--font-code)] text-[var(--text-primary)]">{match[7]}</code>
         )
       }
     } else if (match[8]) {
@@ -197,7 +197,15 @@ function inlineFormat(text: string): React.ReactNode {
   return parts.length === 1 ? parts[0] : <>{parts}</>
 }
 
-function CodeBlock({ code, keyProp }: { code: string; keyProp: number }) {
+// Parse the language label off a ```fence line. Returns lowercased first token
+// (e.g. ```tsx {3-5} → "tsx"), or '' for a bare ``` fence.
+export function parseFenceLang(line: string): string {
+  const after = line.replace(/^```/, '').trim()
+  if (!after) return ''
+  return after.split(/\s+/)[0].toLowerCase()
+}
+
+function CodeBlock({ code, lang, keyProp }: { code: string; lang?: string; keyProp: number }) {
   const [copied, setCopied] = useState(false)
 
   function handleCopy() {
@@ -208,15 +216,32 @@ function CodeBlock({ code, keyProp }: { code: string; keyProp: number }) {
   }
 
   return (
-    <div key={keyProp} className="relative my-2">
-      <button
-        onClick={handleCopy}
-        aria-label="Copy code"
-        className="absolute top-2 right-2 py-0.5 px-2 text-[11px] rounded-[var(--radius-sm)] bg-[var(--fill-secondary)] text-[var(--text-secondary)] border border-[var(--separator)] cursor-pointer"
-      >
-        {copied ? 'Copied!' : 'Copy'}
-      </button>
-      <pre className="code-block bg-[var(--fill-tertiary)] border border-[var(--separator)] rounded-[var(--radius-md)] py-[var(--space-3)] px-[var(--space-4)] overflow-x-auto text-[13px] leading-normal font-[family-name:var(--font-code)] text-[var(--text-primary)]"><code>{code}</code></pre>
+    // Soft contained card — no hairline (fill + shadow-subtle). The header strip
+    // lifts the copy button off the first line of code (fixes mobile overlap).
+    <div key={keyProp} className="code-block-wrap my-[var(--space-2)] rounded-[var(--radius-md)] overflow-hidden bg-[var(--fill-tertiary)] shadow-[var(--shadow-subtle)]">
+      <div className="flex items-center justify-between gap-[var(--space-2)] py-[3px] pl-[var(--space-3)] pr-[var(--space-1)] bg-[var(--fill-secondary)]">
+        <span className="text-[length:var(--text-caption2)] tracking-wide text-[var(--text-tertiary)] font-[family-name:var(--font-code)]">
+          {lang || 'text'}
+        </span>
+        <button
+          onClick={handleCopy}
+          aria-label={copied ? 'Copied' : 'Copy code'}
+          title={copied ? 'Copied' : 'Copy'}
+          className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-[7px] border-none bg-transparent text-[var(--text-quaternary)] transition-colors hover:bg-[var(--fill-tertiary)] hover:text-[var(--text-secondary)] cursor-pointer"
+        >
+          {copied ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          )}
+        </button>
+      </div>
+      <pre className="code-block overflow-x-auto py-[var(--space-3)] px-[var(--space-4)] text-[length:var(--text-footnote)] leading-normal font-[family-name:var(--font-code)] text-[var(--text-primary)]"><code>{code}</code></pre>
     </div>
   )
 }
@@ -234,21 +259,21 @@ function TableBlock({ headerLine, rows, keyProp }: { headerLine: string; rows: s
   const bodyRows = rows.map(parseTableRow)
 
   return (
-    <div key={keyProp} className="my-2.5 rounded-[10px] border border-[var(--separator)] overflow-hidden">
+    <div key={keyProp} className="my-[var(--space-3)] rounded-[var(--radius-md)] overflow-hidden shadow-[var(--shadow-subtle)]">
       <div className="overflow-x-auto [WebkitOverflowScrolling:touch]">
         <table className="border-collapse text-[length:var(--text-footnote)] leading-[1.6] w-full min-w-max">
           <thead>
             <tr className="bg-[var(--fill-tertiary)]">
               {headers.map((h, hi) => (
-                <th key={hi} className="text-left py-2.5 px-4 font-semibold text-[var(--text-primary)] border-b border-[var(--separator)] max-w-[280px] break-words">{inlineFormat(h)}</th>
+                <th key={hi} className="text-left py-2.5 px-4 font-semibold text-[var(--text-primary)] max-w-[280px] break-words">{inlineFormat(h)}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {bodyRows.map((row, ri) => (
-              <tr key={ri} className={ri % 2 === 1 ? 'bg-[var(--fill-quaternary,transparent)]' : 'bg-transparent'}>
+              <tr key={ri} className={ri % 2 === 1 ? 'bg-[var(--fill-quaternary)]' : 'bg-transparent'}>
                 {row.map((cell, ci) => (
-                  <td key={ci} className={`py-2.5 px-4 text-[var(--text-primary)] max-w-[280px] break-words ${ri < bodyRows.length - 1 ? 'border-b border-[var(--separator)]' : ''}`}>{inlineFormat(cell)}</td>
+                  <td key={ci} className="py-2.5 px-4 text-[var(--text-primary)] max-w-[280px] break-words">{inlineFormat(cell)}</td>
                 ))}
               </tr>
             ))}
@@ -265,6 +290,7 @@ function formatMessage(content: string): React.ReactNode {
   const result: React.ReactNode[] = []
   let inCodeBlock = false
   let codeLines: string[] = []
+  let codeLang = ''
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -272,10 +298,12 @@ function formatMessage(content: string): React.ReactNode {
       if (!inCodeBlock) {
         inCodeBlock = true
         codeLines = []
+        codeLang = parseFenceLang(line)
       } else {
         inCodeBlock = false
-        result.push(<CodeBlock key={i} keyProp={i} code={codeLines.join('\n')} />)
+        result.push(<CodeBlock key={i} keyProp={i} code={codeLines.join('\n')} lang={codeLang} />)
         codeLines = []
+        codeLang = ''
       }
       continue
     }
@@ -297,8 +325,8 @@ function formatMessage(content: string): React.ReactNode {
     if (line.trim() === '') { result.push(<div key={`space-${i}`} className="h-1.5" />); continue }
     if (line.match(/^[-*] /)) {
       result.push(
-        <div key={i} className="flex gap-[var(--space-2)] mb-0.5">
-          <span className="text-[var(--accent)] shrink-0 mt-px">&bull;</span>
+        <div key={i} className="flex gap-[var(--space-2)] mb-1">
+          <span className="text-[var(--text-tertiary)] shrink-0 mt-px">&bull;</span>
           <span>{inlineFormat(line.slice(2))}</span>
         </div>
       )
@@ -307,8 +335,8 @@ function formatMessage(content: string): React.ReactNode {
     if (line.match(/^\d+\. /)) {
       const num = line.match(/^(\d+)\. /)?.[1]
       result.push(
-        <div key={i} className="flex gap-[var(--space-2)] mb-0.5">
-          <span className="text-[var(--accent)] shrink-0 font-[var(--weight-semibold)] min-w-4">{num}.</span>
+        <div key={i} className="flex gap-[var(--space-2)] mb-1">
+          <span className="text-[var(--text-secondary)] shrink-0 font-[var(--weight-semibold)] min-w-4">{num}.</span>
           <span>{inlineFormat(line.replace(/^\d+\. /, ''))}</span>
         </div>
       )
@@ -316,7 +344,7 @@ function formatMessage(content: string): React.ReactNode {
     }
     if (line.startsWith('### ')) {
       result.push(
-        <div key={i} className="font-[var(--weight-semibold)] text-[length:var(--text-footnote)] mt-[var(--space-2)] mb-0.5">
+        <div key={i} className="font-[var(--weight-semibold)] text-[length:var(--text-body)] mt-[var(--space-4)] mb-[var(--space-2)]">
           {inlineFormat(line.slice(4))}
         </div>
       )
@@ -324,7 +352,7 @@ function formatMessage(content: string): React.ReactNode {
     }
     if (line.startsWith('## ')) {
       result.push(
-        <div key={i} className="font-[var(--weight-bold)] text-[length:var(--text-subheadline)] mt-[var(--space-3)] mb-[3px]">
+        <div key={i} className="font-[var(--weight-bold)] text-[18px] mt-[var(--space-4)] mb-[var(--space-2)]">
           {inlineFormat(line.slice(3))}
         </div>
       )
@@ -332,18 +360,18 @@ function formatMessage(content: string): React.ReactNode {
     }
     if (line.startsWith('# ')) {
       result.push(
-        <div key={i} className="font-[var(--weight-bold)] text-[length:var(--text-body)] mt-[var(--space-3)] mb-[var(--space-1)]">
+        <div key={i} className="font-[var(--weight-bold)] text-[length:var(--text-title3)] mt-[var(--space-4)] mb-[var(--space-2)]">
           {inlineFormat(line.slice(2))}
         </div>
       )
       continue
     }
-    result.push(<div key={i} className="mb-px">{inlineFormat(line)}</div>)
+    result.push(<div key={i} className="mb-[var(--space-2)]">{inlineFormat(line)}</div>)
   }
 
   // Close unclosed code block
   if (inCodeBlock && codeLines.length > 0) {
-    result.push(<CodeBlock key="trailing-code" keyProp={999} code={codeLines.join('\n')} />)
+    result.push(<CodeBlock key="trailing-code" keyProp={999} code={codeLines.join('\n')} lang={codeLang} />)
   }
 
   return <>{result}</>
@@ -421,7 +449,7 @@ function MessageActions({ text, onRetry, retryDisabled }: { text: string; onRetr
   }
 
   return (
-    <div className="mt-0.5 -ml-1 flex items-center gap-0.5">
+    <div className="msg-actions mt-0.5 -ml-1 flex items-center gap-0.5">
       <button onClick={handleCopy} aria-label={copied ? 'Copied' : 'Copy message'} title={copied ? 'Copied' : 'Copy'} className={ACTION_BTN}>
         {copied ? (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -513,7 +541,7 @@ const MessageRow = React.memo(function MessageRow({ msg, index: i, messages, loa
       {/* Notification message — centered system-style banner */}
       {isNotification && (
         <div className="flex justify-center px-[var(--space-4)] mb-[var(--space-1)]">
-          <div className="notification-msg-bubble flex items-start gap-[var(--space-2)] py-[var(--space-3)] px-[var(--space-4)] rounded-[var(--radius-md)] bg-[var(--fill-secondary)] border border-dashed border-[var(--separator)] text-[var(--text-secondary)] text-[length:var(--text-caption1)] leading-[var(--leading-relaxed)] max-w-[85%]">
+          <div className="notification-msg-bubble flex items-start gap-[var(--space-2)] py-[var(--space-3)] px-[var(--space-4)] rounded-[var(--radius-md)] bg-[var(--fill-secondary)] text-[var(--text-secondary)] text-[length:var(--text-caption1)] leading-[var(--leading-relaxed)] max-w-[85%]">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 opacity-60">
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
               <path d="M13.73 21a2 2 0 0 1-3.46 0" />
@@ -527,7 +555,7 @@ const MessageRow = React.memo(function MessageRow({ msg, index: i, messages, loa
       {isUser && (
         <div className="flex flex-col items-end px-[var(--space-3)] lg:px-[var(--space-8)] mb-[var(--space-1)]">
           {textContent && (
-            <div className="user-msg-bubble py-[var(--space-3)] px-[var(--space-4)] rounded-[var(--radius-lg)_var(--radius-lg)_var(--radius-sm)_var(--radius-lg)] bg-[var(--accent)] text-[var(--accent-contrast)] text-[length:var(--text-subheadline)] leading-[var(--leading-relaxed)] font-[var(--weight-medium)] shadow-[var(--shadow-subtle)]">
+            <div className="user-msg-bubble py-[var(--space-3)] px-[var(--space-4)] rounded-[var(--radius-lg)_var(--radius-lg)_var(--radius-sm)_var(--radius-lg)] bg-[var(--accent-fill)] text-[var(--text-primary)] text-[length:var(--text-subheadline)] leading-[var(--leading-relaxed)] font-[var(--weight-medium)] shadow-[var(--shadow-subtle)]">
               {formattedContent}
             </div>
           )}
@@ -541,7 +569,7 @@ const MessageRow = React.memo(function MessageRow({ msg, index: i, messages, loa
 
       {/* Assistant message */}
       {!isUser && !isNotification && (
-        <div className="assistant-msg-row flex justify-start px-[var(--space-4)] mb-[var(--space-1)]">
+        <div className="assistant-msg-row flex justify-start mb-[var(--space-1)]">
           <div className="assistant-msg-bubble flex flex-col">
             {/* Text bubble */}
             {textContent && (
@@ -576,10 +604,11 @@ function StreamingBubble({ streamingText }: { streamingText: string }) {
     [streamingText]
   )
   return (
-    <div className="assistant-msg-row flex justify-start px-[var(--space-4)] mb-[var(--space-1)]">
+    <div className="assistant-msg-row flex justify-start mb-[var(--space-1)]">
       <div className="assistant-msg-bubble flex flex-col">
         <div className="assistant-transcript py-[var(--space-1)] text-[var(--text-primary)] text-[length:var(--text-body)] leading-[var(--leading-relaxed)]">
           {formattedContent}
+          <span className="stream-caret" aria-hidden="true" />
         </div>
       </div>
     </div>
@@ -624,7 +653,7 @@ export function ChatMessages({ messages, loading, streamingText, onRetry }: Chat
 
   return (
     <div ref={containerRef} style={{ overflowAnchor: 'auto' }} className="chat-messages-scroll relative flex-1 overflow-y-auto overflow-x-hidden bg-[var(--bg)] min-h-0">
-      <div className="py-[var(--space-3)] pb-[var(--space-6)]">
+      <div className="mx-auto w-full max-w-[var(--chat-measure)] py-[var(--space-3)] pb-[var(--space-6)]">
       {groupedMessages.map((item) => {
         if (item.kind === 'tool-group') {
           const firstMsg = item.msgs[0]
@@ -655,8 +684,9 @@ export function ChatMessages({ messages, loading, streamingText, onRetry }: Chat
       {/* Streaming message — shows text as it arrives, always re-renders */}
       {streamingText && <StreamingBubble streamingText={streamingText} />}
 
-      {/* Running indicator — stays visible until the backend sends a terminal event. */}
-      {loading && messages.length > 0 && (
+      {/* Running indicator — pre-first-token only; once streamingText arrives the
+          caret carries the "live" signal, so suppress this to avoid a double cue. */}
+      {loading && messages.length > 0 && !streamingText && (
         // Share the assistant text gutter (space-3 mobile / space-8 @lg) so the
         // indicator lines up flush with the messages and tool cards.
         <div className="assistant-msg-row flex items-center gap-1.5 mt-[var(--space-1)]">
@@ -699,40 +729,29 @@ export function ChatMessages({ messages, loading, streamingText, onRetry }: Chat
           .user-msg-bubble { max-width: 82%; }
           .assistant-msg-row { padding: 0 var(--space-8) !important; }
         }
-        /* User message contrast fixes — ensure all child elements are visible on accent background */
-        .user-msg-bubble code {
-          background: rgba(255,255,255,0.2) !important;
-          border-color: rgba(255,255,255,0.3) !important;
-          color: inherit !important;
+        /* Streaming caret — CSS-only, theme-aware via currentColor. */
+        .stream-caret {
+          display: inline-block;
+          width: 0.5em;
+          height: 1em;
+          margin-left: 1px;
+          vertical-align: text-bottom;
+          background: currentColor;
+          border-radius: 1px;
+          opacity: 0.55;
+          animation: jinn-caret 1.05s steps(1) infinite;
         }
-        .user-msg-bubble .code-block,
-        .user-msg-bubble pre {
-          background: rgba(0,0,0,0.2) !important;
-          border-color: rgba(255,255,255,0.15) !important;
-          color: rgba(255,255,255,0.95) !important;
+        @keyframes jinn-caret { 0%, 50% { opacity: 0.55; } 50.01%, 100% { opacity: 0; } }
+        /* Message actions — always visible by default (touch). On hover-capable
+           pointers, hide at rest and reveal on row hover/focus. No !important. */
+        .msg-actions { opacity: 1; transition: opacity 150ms ease; }
+        @media (hover: hover) {
+          .assistant-msg-row .msg-actions { opacity: 0; }
+          .assistant-msg-row:hover .msg-actions,
+          .assistant-msg-row:focus-within .msg-actions { opacity: 1; }
         }
-        .user-msg-bubble a {
-          color: inherit !important;
-          text-decoration-color: rgba(255,255,255,0.6) !important;
-        }
-        .user-msg-bubble strong { color: inherit !important; }
-        .user-msg-bubble em { color: inherit !important; opacity: 0.9; }
-        .user-msg-bubble span { color: inherit !important; }
-        .user-msg-bubble div { color: inherit !important; }
-        .user-msg-bubble th, .user-msg-bubble td { color: inherit !important; }
-        .user-msg-bubble table { border-color: rgba(255,255,255,0.2) !important; }
-        .user-msg-bubble th { border-color: rgba(255,255,255,0.2) !important; }
-        .user-msg-bubble td { border-color: rgba(255,255,255,0.15) !important; }
-        .user-msg-bubble tr { background: transparent !important; }
-        .user-msg-bubble thead tr { background: rgba(255,255,255,0.1) !important; }
-        /* Selection visibility for user messages */
-        .user-msg-bubble ::selection {
-          background: rgba(255,255,255,0.35);
-          color: inherit;
-        }
-        .user-msg-bubble ::-moz-selection {
-          background: rgba(255,255,255,0.35);
-          color: inherit;
+        @media (hover: none) {
+          .msg-actions button { min-height: 36px; min-width: 36px; }
         }
       `}</style>
     </div>

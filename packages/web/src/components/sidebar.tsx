@@ -64,7 +64,7 @@ export function Sidebar() {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       className={cn(
-        "fixed inset-y-0 left-0 hidden overflow-hidden border-r border-border bg-[var(--bg-secondary)] transition-[width,z-index] duration-200 ease-out lg:flex lg:flex-col",
+        "fixed inset-y-0 left-0 hidden overflow-hidden bg-[var(--bg-secondary)] shadow-[var(--shadow-card)] transition-[width,z-index] duration-200 ease-out lg:flex lg:flex-col",
         hovered ? "z-[110] w-[200px]" : "z-[60] w-14"
       )}
     >

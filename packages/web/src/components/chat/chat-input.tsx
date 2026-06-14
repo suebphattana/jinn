@@ -168,7 +168,7 @@ export function ChatInput({
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(() => {
       el.style.height = 'auto'
-      el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+      el.style.height = Math.min(el.scrollHeight, 180) + 'px'
     })
   }, [])
 
@@ -520,13 +520,13 @@ export function ChatInput({
   const hasContent = value.trim().length > 0 || pendingAttachments.length > 0
 
   return (
-    <div className="px-3 sm:px-4 pt-[var(--space-3)] pb-[var(--space-3)] bg-[var(--bg)] shrink-0 relative">
+    <div className="px-3 sm:px-4 pt-[var(--space-3)] pb-[max(var(--safe-bottom),var(--space-3))] bg-[var(--bg)] shrink-0 relative">
       {/* Soft top scrim — fades scrolling content into the composer instead of a
           hard 1px divider. Borderless, readable over the thread in both themes. */}
       <div aria-hidden className="pointer-events-none absolute -top-5 left-0 right-0 h-5 bg-gradient-to-b from-transparent to-[var(--bg)]" />
       {/* Slash command autocomplete */}
       {showCommands && filteredCommands.length > 0 && (
-        <div className="absolute bottom-full left-[var(--space-4)] right-[var(--space-4)] mb-1 bg-[var(--bg)] border border-[var(--separator)] rounded-[var(--radius-md)] shadow-[var(--shadow-lg)] max-h-60 overflow-y-auto z-10">
+        <div className="absolute bottom-full left-3 right-3 sm:left-4 sm:right-4 mb-1 border-0 bg-[var(--bg-tertiary)] rounded-[var(--radius-lg)] shadow-[var(--shadow-overlay)] max-h-60 overflow-y-auto z-10">
           {filteredCommands.map((cmd, idx) => {
             const isHighlighted = idx === commandIndex
             return (
@@ -548,7 +548,7 @@ export function ChatInput({
 
       {/* Mention autocomplete */}
       {showMentions && filteredEmployees.length > 0 && (
-        <div className="absolute bottom-full left-[var(--space-4)] right-[var(--space-4)] mb-1 bg-[var(--bg)] border border-[var(--separator)] rounded-[var(--radius-md)] shadow-[var(--shadow-lg)] max-h-40 overflow-y-auto z-10">
+        <div className="absolute bottom-full left-3 right-3 sm:left-4 sm:right-4 mb-1 border-0 bg-[var(--bg-tertiary)] rounded-[var(--radius-lg)] shadow-[var(--shadow-overlay)] max-h-40 overflow-y-auto z-10">
           {filteredEmployees.slice(0, 8).map((emp, idx) => {
             const isHighlighted = idx === mentionIndex
             return (
@@ -597,12 +597,16 @@ export function ChatInput({
           hairline at rest. A low-opacity accent ring (not a 1px border) marks
           the streaming state. */}
       <div
-        className="rounded-[22px] bg-[var(--bg-secondary)] px-[var(--space-4)] pt-[var(--space-3)] pb-[var(--space-2)] transition-shadow duration-200 ease-in-out"
-        style={{
-          boxShadow: loading
-            ? 'var(--shadow-card), 0 0 0 1.5px color-mix(in srgb, var(--accent) 38%, transparent)'
-            : 'var(--shadow-card)',
-        }}
+        className="composer-card rounded-[22px] bg-[var(--bg-secondary)] px-[var(--space-4)] pt-[var(--space-3)] pb-[var(--space-2)] transition-shadow duration-200 ease-in-out"
+        style={
+          // While streaming, the inline accent ring overrides the CSS class so
+          // it always wins over the :focus-within ring. When idle, no inline
+          // boxShadow → the .composer-card stylesheet rule governs (base shadow
+          // + soft :focus-within accent ring).
+          loading
+            ? { boxShadow: 'var(--shadow-card), 0 0 0 1.5px color-mix(in srgb, var(--accent) 38%, transparent)' }
+            : undefined
+        }
         onPointerDown={(e) => {
           // Click-to-focus: tapping anywhere in the card (including the gaps
           // between toolbar buttons) lands the caret in the textarea. Real
@@ -628,7 +632,7 @@ export function ChatInput({
           }
           rows={1}
           disabled={disabled}
-          className={`block w-full bg-transparent border-none outline-none resize-none text-[var(--text-primary)] text-[length:var(--text-subheadline)] leading-6 max-h-30 min-h-6 px-1 pt-1 pb-2 m-0 ${disabled ? 'opacity-50' : 'opacity-100'}`}
+          className={`block w-full bg-transparent border-none outline-none resize-none overflow-y-auto text-[var(--text-primary)] text-[length:var(--text-subheadline)] leading-6 min-h-6 px-1 pt-1 pb-2 m-0 ${disabled ? 'opacity-50' : 'opacity-100'}`}
           onInput={(e) => {
             resize(e.target as HTMLTextAreaElement)
           }}
@@ -650,7 +654,7 @@ export function ChatInput({
             title="Attach file"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => fileInputRef.current?.click()}
-            className="w-[34px] h-[34px] shrink-0 rounded-full flex items-center justify-center bg-transparent border-none cursor-pointer text-[var(--text-secondary)] hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            className="w-[36px] h-[36px] shrink-0 rounded-full flex items-center justify-center bg-transparent border-none cursor-pointer text-[var(--text-secondary)] hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)] transition-colors"
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14M5 12h14" />
@@ -696,11 +700,11 @@ export function ChatInput({
             onPointerUp={handleMicPointerUp}
             onPointerCancel={handleMicPointerUp}
             disabled={stt.state === 'transcribing'}
-            className={`w-[34px] h-[34px] shrink-0 flex items-center justify-center border-none transition-all duration-150 ease-in-out touch-none select-none ${stt.state === 'recording' ? 'rounded-full bg-[var(--system-red)] text-white cursor-pointer' : `rounded-full bg-transparent text-[var(--text-secondary)] hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)] ${stt.state === 'transcribing' ? 'cursor-wait' : 'cursor-pointer'}`}`}
+            className={`w-[36px] h-[36px] shrink-0 flex items-center justify-center border-none transition-all duration-150 ease-in-out touch-none select-none ${stt.state === 'recording' ? 'rounded-full bg-[var(--system-red)] text-white cursor-pointer' : `rounded-full bg-transparent text-[var(--text-secondary)] hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)] ${stt.state === 'transcribing' ? 'cursor-wait' : 'cursor-pointer'}`}`}
             title={
               stt.state === 'recording' ? 'Stop recording'
               : stt.state === 'transcribing' ? 'Transcribing…'
-              : 'Voice input'
+              : 'Hold to talk · tap to toggle'
             }
           >
             {stt.state === 'recording' && stt.analyser ? (
@@ -719,33 +723,43 @@ export function ChatInput({
             )}
           </button>
 
-          {/* Stop button — shown when a turn is streaming (interrupts). */}
-          {loading && onInterrupt ? (
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={onInterrupt}
-              aria-label="Stop"
-              className="w-[38px] h-[38px] rounded-full bg-[var(--system-red)] text-white border-none cursor-pointer flex items-center justify-center shrink-0 transition-all duration-150 ease-in-out"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="4" y="4" width="16" height="16" rx="2" />
-              </svg>
-            </button>
-          ) : (
-            /* Send button — accent circle */
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={handleSubmit}
-              disabled={!hasContent || disabled}
-              aria-label="Send message"
-              className={`w-[38px] h-[38px] rounded-full border-none flex items-center justify-center shrink-0 transition-all duration-150 ease-in-out ${hasContent ? 'bg-[var(--accent)] text-[var(--accent-contrast)] cursor-pointer' : 'bg-[var(--fill-tertiary)] text-[var(--text-quaternary)] cursor-default'}`}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="19" x2="12" y2="5" />
-                <polyline points="5 12 12 5 19 12" />
-              </svg>
-            </button>
-          )}
+          {/* Send ↔ Stop — one persistent circular button. While a turn streams
+              (and an interrupt handler exists) it morphs to red and calls the
+              SAME stop handler; otherwise it sends. Background + icon crossfade
+              keyed on `loading` instead of an instant button swap. */}
+          {(() => {
+            const showStop = loading && !!onInterrupt
+            return (
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={showStop ? onInterrupt : handleSubmit}
+                disabled={showStop ? false : (!hasContent || disabled)}
+                aria-label={showStop ? 'Stop' : 'Send message'}
+                title={showStop ? 'Stop' : 'Send message'}
+                className={`relative w-[38px] h-[38px] rounded-full border-none flex items-center justify-center shrink-0 transition-all duration-200 ease-in-out ${
+                  showStop
+                    ? 'bg-[var(--system-red)] text-white cursor-pointer'
+                    : hasContent
+                      ? 'bg-[var(--accent)] text-[var(--accent-contrast)] cursor-pointer'
+                      : 'bg-[var(--fill-tertiary)] text-[var(--text-quaternary)] cursor-default'
+                }`}
+              >
+                {/* Send arrow */}
+                <span className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-in-out ${showStop ? 'opacity-0 scale-50' : 'opacity-100 scale-100'}`}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5" />
+                    <polyline points="5 12 12 5 19 12" />
+                  </svg>
+                </span>
+                {/* Stop square */}
+                <span className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-in-out ${showStop ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                  </svg>
+                </span>
+              </button>
+            )
+          })()}
         </div>
       </div>
 
@@ -805,6 +819,11 @@ export function ChatInput({
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        /* Idle base shadow + soft accent ring when the composer holds focus.
+           Not a 1px border — a 4px --accent-fill wash. Overridden inline while
+           streaming so the brighter loading ring takes precedence. */
+        .composer-card { box-shadow: var(--shadow-card); }
+        .composer-card:focus-within { box-shadow: var(--shadow-card), 0 0 0 4px var(--accent-fill); }
       `}</style>
     </div>
   )

@@ -92,6 +92,22 @@
    Apple Material Design System — Themes
    ============================================ */
 
+/* Theme-independent layout tokens (safe-area + chat reading measure).
+   Defined once on :root so they cascade to every theme block below. */
+:root {
+  /* iOS safe-area passthroughs (0 on non-notched devices). Compose at the call
+     site, e.g. top-[max(var(--safe-top),12px)] / pb-[max(var(--safe-bottom),var(--space-3))]. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  /* Max reading measure for the assistant text column. Scroller + composer stay
+     full-bleed; only the prose column caps. Single-line tune. */
+  --chat-measure: 64rem;
+  /* Clearance under the floating header pills (pill height + gap + safe-area). */
+  --chat-top-clearance: calc(max(var(--safe-top), 12px) + 52px);
+}
+
 /* LEDGER DARK — warm charcoal + amber (default) */
 :root, [data-theme="dark"] {
   --font-ui: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -128,9 +144,10 @@
   --shadow-key: 0 4px 16px rgba(0,0,0,0.50);
   --shadow-card: 0 0 0 0.5px rgba(0,0,0,0.30), 0 4px 16px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
   --shadow-overlay: 0 0 0 0.5px rgba(0,0,0,0.40), 0 16px 48px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.05);
-  /* Frosted header-pill material (theme-aware) */
-  --pill-bg: rgba(30,28,22,0.55);
-  --pill-border: rgba(255,255,255,0.10);
+  /* Frosted header-pill material (theme-aware). Dark bumped for legibility — the
+     0.55/0.10 pill nearly vanished on the near-black bg. */
+  --pill-bg: rgba(34,31,24,0.64);
+  --pill-border: rgba(255,255,255,0.14);
   --code-bg: rgba(255,255,255,0.05);
   --code-border: rgba(255,255,255,0.09);
   --code-text: #E8E4D8;
@@ -291,9 +308,9 @@
     --shadow-key: 0 4px 16px rgba(0,0,0,0.50);
     --shadow-card: 0 0 0 0.5px rgba(0,0,0,0.30), 0 4px 16px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
     --shadow-overlay: 0 0 0 0.5px rgba(0,0,0,0.40), 0 16px 48px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.05);
-    /* Frosted header-pill material (theme-aware) */
-    --pill-bg: rgba(30,28,22,0.55);
-    --pill-border: rgba(255,255,255,0.10);
+    /* Frosted header-pill material (theme-aware). Dark bumped (see :root dark block). */
+    --pill-bg: rgba(34,31,24,0.64);
+    --pill-border: rgba(255,255,255,0.14);
     --code-bg: rgba(255,255,255,0.05);
     --code-border: rgba(255,255,255,0.09);
     --code-text: #E8E4D8;

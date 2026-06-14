@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo, startTransition } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useQueryClient } from "@tanstack/react-query"
-import { ChevronDown, Clock3, Compass, Copy, EllipsisVertical, Pencil, Pin, Plus, Search, Trash2, X } from "lucide-react"
+import { ChevronDown, Clock3, Copy, EllipsisVertical, Menu, Pencil, Pin, Plus, Search, Trash2, X } from "lucide-react"
 import { api, type BackgroundActivity, type Employee, type SessionsResponse } from "@/lib/api"
 import { useOrg } from "@/hooks/use-employees"
 import { EmployeeAvatar } from "@/components/ui/employee-avatar"
@@ -257,12 +257,26 @@ export function hasBackgroundActivity(session: Pick<Session, "status" | "backgro
   )
 }
 
-function getStatusDotColor(session: Session, readSet: Set<string>): string {
-  if (session.status === "running") return "var(--system-blue)"
-  if (session.status === "error") return "var(--system-red)"
-  if (hasBackgroundActivity(session)) return "var(--system-orange)"
-  if (readSet.has(session.id)) return "var(--text-quaternary)"
-  return "var(--system-green)"
+interface StatusDotState {
+  color: string
+  label: string
+  pulse: boolean
+}
+
+// Resolve the attention-state dot for a session. Returns null for the resting
+// "read" state so no dot is painted (quiet at rest). Optionally treat the row
+// as unread even when this session is read (e.g. a grouped employee row whose
+// other chats are unread).
+function getStatusDot(
+  session: Session,
+  readSet: Set<string>,
+  forceUnread = false,
+): StatusDotState | null {
+  if (session.status === "running") return { color: "var(--system-blue)", label: "running", pulse: true }
+  if (session.status === "error") return { color: "var(--system-red)", label: "error", pulse: false }
+  if (hasBackgroundActivity(session)) return { color: "var(--system-orange)", label: "background work running", pulse: true }
+  if (forceUnread || !readSet.has(session.id)) return { color: "var(--accent)", label: "unread", pulse: false }
+  return null
 }
 
 function StatusDot({
@@ -280,6 +294,8 @@ function StatusDot({
     <span
       className={cn("shrink-0 rounded-full", className)}
       title={title}
+      role={title ? "img" : undefined}
+      aria-label={title}
       style={{
         background: color,
         animation: pulse ? "sidebar-pulse 2s ease-in-out infinite" : "none",
@@ -289,25 +305,26 @@ function StatusDot({
   )
 }
 
+// One quiet, unified treatment for every sidebar section header
+// (Today/Yesterday, Older, Scheduled, Team): muted medium label with light
+// tracking and the count as a plain trailing number — no shouty uppercase, no
+// filled chip. Keep these constants the single source so the headers can't drift.
+const SECTION_LABEL_CLASS =
+  "text-[11px] font-[var(--weight-medium)] tracking-[0.06em] text-[var(--text-tertiary)]"
+const SECTION_COUNT_CLASS = "text-[10px] tabular-nums text-[var(--text-quaternary)]"
+
 function SectionLabel({
-  icon,
   label,
   count,
 }: {
-  icon: React.ReactNode
   label: string
   count?: number
 }) {
   return (
     <div className="flex items-center gap-2 px-4 py-2">
-      <span className="text-xs">{icon}</span>
-      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-        {label}
-      </span>
+      <span className={SECTION_LABEL_CLASS}>{label}</span>
       {typeof count === "number" && (
-        <span className="ml-auto rounded bg-[var(--fill-tertiary)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]">
-          {count}
-        </span>
+        <span className={cn("ml-auto", SECTION_COUNT_CLASS)}>{count}</span>
       )}
     </div>
   )
@@ -349,9 +366,7 @@ const SessionRow = React.memo(function SessionRow({
   updateSessionTitle,
 }: SessionRowProps) {
   const sessionIsActive = session.id === selectedId
-  const sessionDotColor = getStatusDotColor(session, readSessions)
-  const sessionIsRunning = session.status === "running"
-  const sessionHasBackground = hasBackgroundActivity(session)
+  const sessionDot = getStatusDot(session, readSessions)
   const sessionTitle = fixTitle(session.title, session.employee)
   const displayTitle = cleanPreview(sessionTitle) || sessionTitle
   const sessionTime = formatTime(getSessionActivity(session))
@@ -373,16 +388,18 @@ const SessionRow = React.memo(function SessionRow({
               ? "pl-11"
               : "pl-6",
             sessionIsActive
-              ? "border-l-[var(--accent)] bg-[var(--fill-secondary)]"
-              : "border-l-transparent hover:bg-accent"
+              ? "border-l-[var(--accent)] bg-[var(--accent-fill)]"
+              : "border-l-transparent hover:bg-[var(--fill-tertiary)]"
           )}
         >
-          <StatusDot
-            color={sessionDotColor}
-            pulse={sessionIsRunning || sessionHasBackground}
-            title={sessionHasBackground ? "background work running" : undefined}
-            className="size-1.5"
-          />
+          {sessionDot ? (
+            <StatusDot
+              color={sessionDot.color}
+              pulse={sessionDot.pulse}
+              title={sessionDot.label}
+              className="size-1.5"
+            />
+          ) : null}
           {isRenaming ? (
             <input
               autoFocus
@@ -432,7 +449,8 @@ const SessionRow = React.memo(function SessionRow({
             <DropdownMenuTrigger asChild>
               <button
                 onClick={(e) => e.stopPropagation()}
-                className="hidden shrink-0 text-muted-foreground transition-colors hover:text-foreground group-hover/session:lg:block group-has-[[data-state=open]]/session:lg:block"
+                aria-label="Session actions"
+                className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground lg:size-7 lg:hidden group-hover/session:lg:flex group-has-[[data-state=open]]/session:lg:flex"
               >
                 <EllipsisVertical className="size-3.5" />
               </button>
@@ -518,9 +536,7 @@ const FlatSessionRow = React.memo(function FlatSessionRow({
   updateSessionTitle,
 }: FlatSessionRowProps) {
   const isActive = session.id === selectedId
-  const dotColor = getStatusDotColor(session, readSessions)
-  const isRunning = session.status === "running"
-  const sessionHasBackground = hasBackgroundActivity(session)
+  const dot = getStatusDot(session, readSessions)
   const rawTitle = fixTitle(session.title, session.employee)
   const displayTitle = cleanPreview(rawTitle) || "Untitled"
   const time = formatTime(getSessionActivity(session))
@@ -554,8 +570,8 @@ const FlatSessionRow = React.memo(function FlatSessionRow({
           className={cn(
             "group/flat relative flex w-full items-center gap-3 border-l-2 px-4 py-2 text-left transition-colors",
             isActive
-              ? "border-l-[var(--accent)] bg-[var(--fill-secondary)]"
-              : "border-l-transparent hover:bg-accent"
+              ? "border-l-[var(--accent)] bg-[var(--accent-fill)]"
+              : "border-l-transparent hover:bg-[var(--fill-tertiary)]"
           )}
         >
           <button
@@ -567,12 +583,14 @@ const FlatSessionRow = React.memo(function FlatSessionRow({
           >
             <div className="relative flex size-9 shrink-0 items-center justify-center">
               <EmployeeAvatar name={avatarName} size={36} />
-              <StatusDot
-                color={dotColor}
-                pulse={isRunning || sessionHasBackground}
-                title={sessionHasBackground ? "background work running" : undefined}
-                className="absolute -bottom-0.5 -right-0 size-2.5 border-2 border-[var(--sidebar-bg)]"
-              />
+              {dot ? (
+                <StatusDot
+                  color={dot.color}
+                  pulse={dot.pulse}
+                  title={dot.label}
+                  className="absolute -bottom-0.5 -right-0 size-2.5 border-2 border-[var(--sidebar-bg)]"
+                />
+              ) : null}
             </div>
 
             <div className="min-w-0 flex-1">
@@ -619,7 +637,8 @@ const FlatSessionRow = React.memo(function FlatSessionRow({
             <DropdownMenuTrigger asChild>
               <button
                 onClick={(e) => e.stopPropagation()}
-                className="hidden shrink-0 text-muted-foreground transition-colors hover:text-foreground group-hover/flat:lg:block group-has-[[data-state=open]]/flat:lg:block"
+                aria-label="Chat actions"
+                className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground lg:size-7 lg:hidden group-hover/flat:lg:flex group-has-[[data-state=open]]/flat:lg:flex"
               >
                 <EllipsisVertical className="size-3.5" />
               </button>
@@ -698,9 +717,6 @@ const EmployeeRow = React.memo(function EmployeeRow({
   const displayName = empInfo?.displayName || titleCase(empName)
   const department = empInfo?.department || ""
   const timeLabel = formatTime(getSessionActivity(latestSession))
-  const dotColor = getStatusDotColor(latestSession, readSessions)
-  const latestHasBackground = hasBackgroundActivity(latestSession)
-  const pulse = latestSession.status === "running" || latestHasBackground
   const isActive = empSessions.some((s) => s.id === selectedId)
   const isPinned = pinnedSessions.has(item.pinKey)
   const loadedCount = empSessions.length
@@ -712,6 +728,9 @@ const EmployeeRow = React.memo(function EmployeeRow({
   const hasUnread = empSessions.some(
     (s) => !readSessions.has(s.id) && s.status !== "running" && s.status !== "error"
   )
+  // The group dot reflects the latest session's live state, but escalates to an
+  // "unread" accent dot when any chat in the group is unread.
+  const empDot = getStatusDot(latestSession, readSessions, hasUnread)
 
   const sessionRowProps = {
     selectedId,
@@ -738,22 +757,24 @@ const EmployeeRow = React.memo(function EmployeeRow({
             className={cn(
               "group/emp relative flex w-full items-center gap-3 border-l-2 px-4 py-3 text-left transition-colors",
               isActive
-                ? "border-l-[var(--accent)] bg-[var(--fill-secondary)]"
-                : "border-l-transparent hover:bg-accent"
+                ? "border-l-[var(--accent)] bg-[var(--accent-fill)]"
+                : "border-l-transparent hover:bg-[var(--fill-tertiary)]"
             )}
           >
             <div className="relative flex size-9 shrink-0 items-center justify-center">
               <EmployeeAvatar name={empName} size={36} />
-              <StatusDot
-                color={dotColor}
-                pulse={pulse}
-                title={latestHasBackground ? "background work running" : undefined}
-                className="absolute -bottom-0.5 -right-0 size-2.5 border-2 border-[var(--sidebar-bg)]"
-              />
+              {empDot ? (
+                <StatusDot
+                  color={empDot.color}
+                  pulse={empDot.pulse}
+                  title={empDot.label}
+                  className="absolute -bottom-0.5 -right-0 size-2.5 border-2 border-[var(--sidebar-bg)]"
+                />
+              ) : null}
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="mb-0.5 flex items-baseline gap-2">
+              <div className="mb-0.5 flex items-baseline gap-2 pr-9 lg:pr-0">
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-[13px] tracking-[-0.2px] text-foreground",
@@ -767,7 +788,8 @@ const EmployeeRow = React.memo(function EmployeeRow({
                   <DropdownMenuTrigger asChild>
                     <button
                       onClick={(e) => e.stopPropagation()}
-                      className="hidden shrink-0 text-muted-foreground transition-colors hover:text-foreground group-hover/emp:lg:block group-has-[[data-state=open]]/emp:lg:block"
+                      aria-label="Employee chat actions"
+                      className="absolute right-1 top-1/2 flex size-9 shrink-0 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground lg:static lg:size-7 lg:translate-y-0 lg:hidden group-hover/emp:lg:flex group-has-[[data-state=open]]/emp:lg:flex"
                     >
                       <EllipsisVertical className="size-3.5" />
                     </button>
@@ -1475,16 +1497,11 @@ export function ChatSidebar({
   const cronHeader = (
     <button
       onClick={toggleCronCollapsed}
-      className="flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-accent"
+      className="flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-[var(--fill-tertiary)]"
     >
-      <Clock3 className="size-3.5 text-muted-foreground" />
-      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-        Scheduled
-      </span>
-      <span className="ml-auto rounded bg-[var(--fill-tertiary)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]">
-        {cronTotal}
-      </span>
-      <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", cronCollapsed && "-rotate-90")} />
+      <span className={SECTION_LABEL_CLASS}>Scheduled</span>
+      <span className={cn("ml-auto", SECTION_COUNT_CLASS)}>{cronTotal}</span>
+      <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--text-quaternary)] transition-transform", cronCollapsed && "-rotate-90")} />
     </button>
   )
 
@@ -1495,11 +1512,9 @@ export function ChatSidebar({
       case "section":
         return (
           <div className="flex items-center gap-2 px-4 pb-1 pt-3">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              {vi.label}
-            </span>
+            <span className={SECTION_LABEL_CLASS}>{vi.label}</span>
             {typeof vi.count === "number" && (
-              <span className="text-[10px] text-[var(--text-quaternary)]">{vi.count}</span>
+              <span className={SECTION_COUNT_CLASS}>{vi.count}</span>
             )}
           </div>
         )
@@ -1516,7 +1531,7 @@ export function ChatSidebar({
         return (
           <button
             onClick={toggleOlderExpanded}
-            className="mt-1 flex w-full items-center gap-2 px-4 py-2.5 text-left text-[12px] text-[var(--text-tertiary)] transition-colors hover:bg-accent hover:text-[var(--text-secondary)]"
+            className="mt-1 flex w-full items-center gap-2 px-4 py-2.5 text-left text-[12px] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--fill-tertiary)] hover:text-[var(--text-secondary)]"
           >
             <Clock3 className="size-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate">{olderLineLabel}</span>
@@ -1527,15 +1542,11 @@ export function ChatSidebar({
         return (
           <button
             onClick={toggleOlderExpanded}
-            className="mt-1 flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-accent"
+            className="mt-1 flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-[var(--fill-tertiary)]"
           >
-            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Older
-            </span>
-            <span className="ml-auto rounded bg-[var(--fill-tertiary)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]">
-              {olderSummary.chats}
-            </span>
-            <ChevronDown className="size-3.5 text-muted-foreground" />
+            <span className={SECTION_LABEL_CLASS}>Older</span>
+            <span className={cn("ml-auto", SECTION_COUNT_CLASS)}>{olderSummary.chats}</span>
+            <ChevronDown className="size-3.5 shrink-0 text-[var(--text-quaternary)]" />
           </button>
         )
       case "employee":
@@ -1570,8 +1581,8 @@ export function ChatSidebar({
   }
 
   return (
-    <div className="flex h-full flex-col border-r border-border bg-[var(--sidebar-bg)]">
-      <div className="shrink-0 border-b border-border bg-[var(--material-thick)] px-4 pb-3 pt-3">
+    <div className="relative z-10 flex h-full flex-col bg-[var(--sidebar-bg)] shadow-[var(--shadow-card)]">
+      <div className="shrink-0 bg-[var(--material-thick)] px-4 pb-3 pt-3">
         <div className="mb-2 flex items-center justify-between gap-3">
           <h2 className="text-xl font-bold tracking-[-0.03em] text-foreground">Chats</h2>
           <div className="flex items-center gap-1.5">
@@ -1580,9 +1591,9 @@ export function ChatSidebar({
                 onClick={onOpenNav}
                 title="Menu"
                 aria-label="Open navigation"
-                className="inline-flex size-8 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground"
+                className="inline-flex size-8 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground lg:hidden"
               >
-                <Compass className="size-[18px]" />
+                <Menu className="size-[18px]" />
               </button>
             )}
             <Button size="sm" className="gap-1.5" onClick={onNewChat} title="New chat (N)">
@@ -1605,7 +1616,7 @@ export function ChatSidebar({
               className={cn(
                 "flex-1 rounded-full px-2.5 py-1 capitalize transition-all",
                 focusMode === mode
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-[var(--bg-secondary)] text-foreground shadow-[var(--shadow-subtle)]"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
@@ -1637,7 +1648,15 @@ export function ChatSidebar({
         </div>
       </div>
 
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1">
+        {/* C10: short top scrim so rows dissolve under the header instead of
+            clipping at a hard seam (the header border is gone). Theme-aware. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-3"
+          style={{ background: "linear-gradient(to bottom, var(--sidebar-bg), transparent)" }}
+        />
+        <div ref={scrollContainerRef} className="h-full overflow-y-auto">
         {loading ? (
           <div className="px-4 py-8 text-center text-xs text-[var(--text-quaternary)]">
             Loading sessions...
@@ -1690,14 +1709,14 @@ export function ChatSidebar({
         )}
 
         {!loading && onContactEmployee && contactableEmployees.length > 0 ? (
-          <div className="mt-2 border-t border-border pt-1">
-            <SectionLabel icon={<Plus className="size-3.5 text-muted-foreground" />} label="Team" count={contactableEmployees.length} />
+          <div className="mt-3 pt-1">
+            <SectionLabel label="Team" count={contactableEmployees.length} />
             {contactableEmployees.map((emp) => (
               <button
                 key={emp.name}
                 onClick={() => onContactEmployee(emp.name)}
                 title={`Start a chat with ${emp.displayName || titleCase(emp.name)}`}
-                className="group/contact relative flex w-full items-center gap-3 border-l-2 border-l-transparent px-4 py-2.5 text-left transition-colors hover:bg-accent"
+                className="group/contact relative flex w-full items-center gap-3 border-l-2 border-l-transparent px-4 py-2.5 text-left transition-colors hover:bg-[var(--fill-tertiary)]"
               >
                 <div className="relative flex size-9 shrink-0 items-center justify-center">
                   <EmployeeAvatar name={emp.name} size={36} />
@@ -1715,6 +1734,7 @@ export function ChatSidebar({
             ))}
           </div>
         ) : null}
+        </div>
       </div>
 
       <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>

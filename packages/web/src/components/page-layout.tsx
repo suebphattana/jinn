@@ -25,13 +25,20 @@ export function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () 
   const portalName = settings.portalName ?? "Jinn"
   if (!open) return null
   return (
-    // Not lg:hidden: the chat route opens this drawer from the chat-list header
-    // on desktop too (the 56px rail covers default pages, but the chat list's
-    // nav button reuses this drawer at all breakpoints).
+    // Shared mobile global-nav drawer: opened from the default MobileHeader and
+    // from the chat route's mobile-only header menu button. On desktop the 56px
+    // rail is the single nav, so this drawer is only triggered below `lg`.
     <div className="fixed inset-0 z-[120]">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]" onClick={onClose} />
-      <nav className="absolute inset-y-0 left-0 flex w-[260px] animate-slide-in flex-col border-r border-border bg-[var(--bg-secondary)]">
-        <div className="flex items-center justify-between border-b border-border px-3.5 py-3">
+      <div
+        className="absolute inset-0 backdrop-blur-md"
+        style={{ background: "color-mix(in srgb, var(--bg) 60%, transparent)" }}
+        onClick={onClose}
+      />
+      <nav
+        className="absolute inset-y-0 left-0 flex w-[260px] flex-col bg-[var(--bg-secondary)] shadow-[var(--shadow-overlay)]"
+        style={{ animation: "slideInLeft 200ms var(--ease-smooth)" }}
+      >
+        <div className="flex items-center justify-between px-3.5 py-3">
           <div className="flex items-center gap-2">
             <span className="text-[22px]">{emoji}</span>
             <span className="text-base font-semibold text-foreground">{portalName}</span>

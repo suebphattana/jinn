@@ -19,7 +19,7 @@ import { useSettings } from '@/routes/settings-provider'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import { cn } from '@/lib/utils'
-import { Check, Copy, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
+import { Check, Copy, MoreHorizontal, Search, Share2, Trash2 } from 'lucide-react'
 import { writeViewMode, type ViewMode } from '@/lib/view-mode'
 import { shareDebugLog, clearDebugLog } from '@/lib/debug-log'
 
@@ -104,7 +104,6 @@ function ChatPage() {
   }, [])
   // Frosted-pill header: global-nav drawer (opened from the chat-list header).
   const [navDrawerOpen, setNavDrawerOpen] = useState(false)
-  const paneScrollRef = useRef<HTMLDivElement>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('chat')
   // Pending user message from new-chat send — passed to the new ChatPane so the user bubble appears before loadSession resolves
   const [pendingUserMessage, setPendingUserMessage] = useState<{ sessionId: string; message: Message } | null>(null)
@@ -174,6 +173,15 @@ function ChatPage() {
     setCopiedField(field)
     setShowMoreMenu(false)
     setTimeout(() => setCopiedField(null), 1500)
+  }, [])
+
+  // D4: open the existing global search (⌘K). GlobalSearch listens for a
+  // meta/ctrl+K keydown on window, so synthesize one — same mechanism the old
+  // header search button used. Desktop lost its only visible search entry when
+  // the header became pills; this restores it inside the ⋯ menu.
+  const openGlobalSearch = useCallback(() => {
+    setShowMoreMenu(false)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true, bubbles: true }))
   }, [])
 
   // Update tab label/status when session meta changes.
@@ -519,100 +527,126 @@ function ChatPage() {
   const effectiveViewMode: ViewMode = cliModeAvailable ? viewMode : 'chat'
 
   // More (…) menu — rendered as the last control inside the right header pill.
-  const moreMenu = selectedId ? (
+  // D7: ALWAYS rendered (even on a new chat, where it carries Search + the view
+  // toggle) so the right pill is consistent. When a session is selected the items
+  // are grouped: primary (Search · view toggle · Duplicate) → Developer cluster →
+  // destructive Delete, each separated.
+  const moreMenu = (
     <div data-more-menu className="relative">
       <button
         onClick={() => setShowMoreMenu((v) => !v)}
         aria-label="More options"
-        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground"
+        className="inline-flex size-9 lg:size-8 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground"
       >
         <MoreHorizontal className="size-[18px]" />
       </button>
 
       {showMoreMenu && (
         <div className="absolute right-0 top-full z-[200] mt-2 min-w-[220px] overflow-hidden rounded-[var(--radius-md)] border border-border bg-[var(--material-thick)] shadow-[var(--shadow-overlay)] backdrop-blur-xl">
-          {/* Chat/CLI view toggle (moved here from the old tab bar so it stays
-              reachable now that the header is a pill). */}
-          <>
-            <div className="flex items-center gap-1 px-3 py-2">
-              <button
-                onClick={() => { if (!viewSwitchLocked) { setAndPersistViewMode('chat'); setShowMoreMenu(false) } }}
-                disabled={viewSwitchLocked}
-                title={viewSwitchLocked ? cliTitle : undefined}
-                className={cn(
-                  "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                  effectiveViewMode === 'chat' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent",
-                  viewSwitchLocked && "opacity-60 cursor-not-allowed"
-                )}
-              >
-                Chat
-              </button>
-              <button
-                onClick={() => { if (cliModeAvailable && !viewSwitchLocked) { setAndPersistViewMode('cli'); setShowMoreMenu(false) } }}
-                disabled={!cliModeAvailable || viewSwitchLocked}
-                title={cliTitle}
-                className={cn(
-                  "flex-1 rounded-md px-2 py-1 font-mono text-xs font-medium transition-colors",
-                  effectiveViewMode === 'cli' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent",
-                  (!cliModeAvailable || viewSwitchLocked) && "opacity-45 cursor-not-allowed"
-                )}
-              >
-                CLI
-              </button>
-            </div>
-            <div className="my-0.5 border-t border-border" />
-          </>
+          {/* PRIMARY group — Search (⌘K), then the Chat/CLI view toggle, then
+              Duplicate (only when a session is selected). */}
+          {/* D4: Search lives at the very top — the only visible ⌘K entry point on desktop. */}
           <button
-            onClick={() => copyToClipboard(selectedId, 'id')}
-            className="block w-full px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
-          >
-            Copy Session ID
-          </button>
-          {sessionMeta?.engineSessionId && (
-            <button
-              onClick={() => {
-                const cli = sessionMeta.engine === 'codex' ? 'codex' : 'claude'
-                copyToClipboard(`${cli} --resume ${sessionMeta.engineSessionId}`, 'cli')
-              }}
-              className="block w-full px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
-            >
-              Copy CLI Resume Command
-            </button>
-          )}
-          <button
-            onClick={() => { if (selectedId) handleDuplicate(selectedId) }}
-            disabled={duplicateSessionMutation.isPending}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-          >
-            <Copy className="size-3.5" />
-            <span className="flex-1">{duplicateSessionMutation.isPending ? 'Duplicating...' : 'Duplicate...'}</span>
-          </button>
-          <button
-            onClick={() => { setShowMoreMenu(false); shareDebugLog() }}
+            onClick={openGlobalSearch}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
           >
-            <Share2 className="size-3.5" />
-            <span className="flex-1">Share debug log</span>
+            <Search className="size-3.5" />
+            <span className="flex-1">Search…</span>
+            <kbd className="font-mono text-[10px] text-[var(--text-quaternary)]">⌘K</kbd>
           </button>
-          <button
-            onClick={() => { setShowMoreMenu(false); clearDebugLog() }}
-            className="block w-full px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent"
-          >
-            Clear debug log
-          </button>
-          <div className="my-0.5 border-t border-border" />
-          <button
-            onClick={() => { setShowMoreMenu(false); if (selectedId && window.confirm('Delete this session?')) handleDeleteSession(selectedId) }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--system-red)] transition-colors hover:bg-accent"
-          >
-            <Trash2 className="size-3.5" />
-            <span className="flex-1">Delete Session</span>
-            <kbd className="font-mono text-[10px] text-[var(--text-quaternary)]">⌫</kbd>
-          </button>
+          {/* Chat/CLI view toggle (moved here from the old tab bar so it stays
+              reachable now that the header is a pill). */}
+          <div className="flex items-center gap-1 px-3 py-2">
+            <button
+              onClick={() => { if (!viewSwitchLocked) { setAndPersistViewMode('chat'); setShowMoreMenu(false) } }}
+              disabled={viewSwitchLocked}
+              title={viewSwitchLocked ? cliTitle : undefined}
+              className={cn(
+                "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                effectiveViewMode === 'chat' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent",
+                viewSwitchLocked && "opacity-60 cursor-not-allowed"
+              )}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => { if (cliModeAvailable && !viewSwitchLocked) { setAndPersistViewMode('cli'); setShowMoreMenu(false) } }}
+              disabled={!cliModeAvailable || viewSwitchLocked}
+              title={cliTitle}
+              className={cn(
+                "flex-1 rounded-md px-2 py-1 font-mono text-xs font-medium transition-colors",
+                effectiveViewMode === 'cli' ? "bg-[var(--accent-fill)] text-[var(--accent)]" : "text-muted-foreground hover:bg-accent",
+                (!cliModeAvailable || viewSwitchLocked) && "opacity-45 cursor-not-allowed"
+              )}
+            >
+              CLI
+            </button>
+          </div>
+          {selectedId && (
+            <button
+              onClick={() => { if (selectedId) handleDuplicate(selectedId) }}
+              disabled={duplicateSessionMutation.isPending}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            >
+              <Copy className="size-3.5" />
+              <span className="flex-1">{duplicateSessionMutation.isPending ? 'Duplicating...' : 'Duplicate...'}</span>
+            </button>
+          )}
+
+          {selectedId && (
+            <>
+              {/* DEVELOPER cluster */}
+              <div className="my-0.5 border-t border-border" />
+              <div className="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
+                Developer
+              </div>
+              <button
+                onClick={() => copyToClipboard(selectedId, 'id')}
+                className="block w-full px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
+              >
+                Copy Session ID
+              </button>
+              {sessionMeta?.engineSessionId && (
+                <button
+                  onClick={() => {
+                    const cli = sessionMeta.engine === 'codex' ? 'codex' : 'claude'
+                    copyToClipboard(`${cli} --resume ${sessionMeta.engineSessionId}`, 'cli')
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
+                >
+                  Copy CLI Resume Command
+                </button>
+              )}
+              <button
+                onClick={() => { setShowMoreMenu(false); shareDebugLog() }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
+              >
+                <Share2 className="size-3.5" />
+                <span className="flex-1">Share debug log</span>
+              </button>
+              <button
+                onClick={() => { setShowMoreMenu(false); clearDebugLog() }}
+                className="block w-full px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent"
+              >
+                Clear debug log
+              </button>
+
+              {/* DESTRUCTIVE */}
+              <div className="my-0.5 border-t border-border" />
+              <button
+                onClick={() => { setShowMoreMenu(false); if (selectedId && window.confirm('Delete this session?')) handleDeleteSession(selectedId) }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--system-red)] transition-colors hover:bg-accent"
+              >
+                <Trash2 className="size-3.5" />
+                <span className="flex-1">Delete Session</span>
+                <kbd className="font-mono text-[10px] text-[var(--text-quaternary)]">⌫</kbd>
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
-  ) : null
+  )
 
   // Left-pill identity: employee for the avatar slug (avatar is always shown;
   // the pill no longer renders a title/breadcrumb).
@@ -649,14 +683,17 @@ function ChatPage() {
         </div>
 
         <div className="chat-pills-layout relative min-w-0 flex-1 flex-col overflow-hidden bg-background flex">
-          {/* Soft top scrim (gradient, not a border) — content scrolls under it. */}
+          {/* Soft top scrim (gradient, not a border) — content scrolls under it.
+              D3: hold it near-opaque through the pill band (~44px) so bright content
+              (tool chips, text) can't read through under/between the two pills, then
+              fade. Theme-aware via var(--bg). */}
           <div
             aria-hidden
             className={cn(
-              "pointer-events-none absolute inset-x-0 top-0 z-[5] h-[92px]",
+              "pointer-events-none absolute inset-x-0 top-0 z-[5] h-[104px]",
               onMobileList && "hidden lg:block",
             )}
-            style={{ background: 'linear-gradient(to bottom, var(--bg), color-mix(in srgb, var(--bg) 55%, transparent) 45%, transparent)' }}
+            style={{ background: 'linear-gradient(to bottom, var(--bg) 0, var(--bg) 44px, color-mix(in srgb, var(--bg) 70%, transparent) 72px, transparent 100%)' }}
           />
 
           {/* Frosted corner pills replace the solid header. Hidden over the mobile
@@ -698,7 +735,7 @@ function ChatPage() {
             />
           </div>
 
-          <div ref={paneScrollRef} className={cn(
+          <div className={cn(
             "flex-1 overflow-hidden flex flex-col",
             mobileView === 'sidebar' ? 'hidden lg:flex' : 'flex'
           )}>
@@ -748,10 +785,16 @@ function ChatPage() {
       {/* Mobile global nav (the 56px rail is desktop-only; the pill's ≡ opens this). */}
       <MobileNavDrawer open={navDrawerOpen} onClose={() => setNavDrawerOpen(false)} />
 
-      {/* Clear the floating pills/scrim: push the thread's first row down so it
-          isn't hidden under the header (content still scrolls beneath the scrim). */}
+      {/* D8: clear the floating pills/scrim by padding the scroll container itself
+          and aligning scroll anchoring to the same offset. Driven by the shared
+          token (pill height + gap + safe-area) so it auto-tracks notched devices —
+          no fragile `:first-child` coupling or magic number. Content still scrolls
+          beneath the translucent scrim. */}
       <style>{`
-        .chat-pills-layout .chat-messages-scroll > :first-child { padding-top: 64px; }
+        .chat-pills-layout .chat-messages-scroll {
+          padding-top: var(--chat-top-clearance);
+          scroll-padding-top: var(--chat-top-clearance);
+        }
       `}</style>
     </PageLayout>
     </FileOpenContext.Provider>

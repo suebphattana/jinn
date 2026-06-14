@@ -581,7 +581,7 @@ const MessageRow = React.memo(function MessageRow({ msg, index: i, messages, loa
 
       {/* User message */}
       {isUser && (
-        <div className="flex flex-col items-end px-[var(--space-3)] lg:px-[var(--space-8)] mb-[var(--space-1)]">
+        <div className="flex flex-col items-end px-[var(--space-3)] lg:px-[var(--space-8)]">
           {textContent && (
             <div className="user-msg-bubble py-[var(--space-3)] px-[var(--space-4)] rounded-[var(--radius-lg)_var(--radius-lg)_var(--radius-sm)_var(--radius-lg)] bg-[var(--accent-fill)] text-[var(--text-primary)] text-[length:var(--text-subheadline)] leading-[var(--leading-relaxed)] font-[var(--weight-medium)] shadow-[var(--shadow-subtle)]">
               {formattedContent}

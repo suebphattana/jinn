@@ -3,9 +3,9 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { resolveDeepLink } from '@/components/chat/chat-route-helpers'
 import { useGateway } from '@/hooks/use-gateway'
-import { PageLayout } from '@/components/page-layout'
+import { PageLayout, MobileNavDrawer } from '@/components/page-layout'
 import { ChatSidebar, type SidebarOrder } from '@/components/chat/chat-sidebar'
-import { ChatTabBar } from '@/components/chat/chat-tabs'
+import { ChatHeaderPills } from '@/components/chat/chat-tabs'
 import { ChatPane } from '@/components/chat/chat-pane'
 import { FileView } from '@/components/chat/file-view'
 import { FileOpenContext } from '@/components/chat/file-open-context'
@@ -14,12 +14,13 @@ import { useChatTabs } from '@/hooks/use-chat-tabs'
 import { useKeyboardShortcuts, type ShortcutDef } from '@/hooks/use-keyboard-shortcuts'
 import { useDeleteSession, useDuplicateSession, useSessions } from '@/hooks/use-sessions'
 import { clearIntermediateMessages } from '@/lib/conversations'
+import { cleanPreview } from '@/lib/clean-preview'
 import type { Message } from '@/lib/conversations'
 import { useSettings } from '@/routes/settings-provider'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import { cn } from '@/lib/utils'
-import { Check, Copy, EllipsisVertical, PanelLeftClose, PanelLeftOpen, Plus, Share2, Trash2 } from 'lucide-react'
+import { Check, Copy, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
 import { writeViewMode, type ViewMode } from '@/lib/view-mode'
 import { shareDebugLog, clearDebugLog } from '@/lib/debug-log'
 
@@ -102,6 +103,11 @@ function ChatPage() {
       })
     }
   }, [])
+  // Frosted-pill header: mobile global-nav drawer + thread scroll state (the
+  // left pill sheds its title and shrinks to an avatar once the thread scrolls).
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false)
+  const [threadScrolled, setThreadScrolled] = useState(false)
+  const paneScrollRef = useRef<HTMLDivElement>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('chat')
   // Pending user message from new-chat send — passed to the new ChatPane so the user bubble appears before loadSession resolves
   const [pendingUserMessage, setPendingUserMessage] = useState<{ sessionId: string; message: Message } | null>(null)
@@ -267,6 +273,23 @@ function ChatPage() {
   useEffect(() => {
     setFocusTrigger(prev => prev + 1)
   }, [selectedId])
+
+  // Thread-scroll → pill collapse. The thread's scroll container lives inside
+  // ChatPane (which we don't modify), so listen in the CAPTURE phase on the pane
+  // wrapper — scroll doesn't bubble, but capture catches descendant scrolls.
+  useEffect(() => {
+    const el = paneScrollRef.current
+    if (!el) return
+    const onScroll = (e: Event) => {
+      const t = e.target as HTMLElement | null
+      if (!t || typeof t.scrollTop !== 'number') return
+      setThreadScrolled(t.scrollTop > 24)
+    }
+    el.addEventListener('scroll', onScroll, true)
+    return () => el.removeEventListener('scroll', onScroll, true)
+  }, [])
+  // New thread / switch starts at the top → reset the collapsed pill.
+  useEffect(() => { setThreadScrolled(false) }, [selectedId])
 
   const handleNewChat = useCallback(() => {
     newChatIntentRef.current = true
@@ -515,22 +538,23 @@ function ChatPage() {
     : cliModeAvailable ? undefined : 'CLI view is not available for this engine'
   const effectiveViewMode: ViewMode = cliModeAvailable ? viewMode : 'chat'
 
-  // More menu (shared between desktop tab bar and mobile header)
+  // More (…) menu — rendered as the last control inside the right header pill.
   const moreMenu = selectedId ? (
     <div data-more-menu className="relative">
       <button
         onClick={() => setShowMoreMenu((v) => !v)}
         aria-label="More options"
-        className="flex items-center rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground"
       >
-        <EllipsisVertical className="size-[18px]" />
+        <MoreHorizontal className="size-[18px]" />
       </button>
 
       {showMoreMenu && (
-        <div className="absolute right-0 top-full z-[200] mt-1 min-w-[220px] overflow-hidden rounded-[var(--radius-md)] border border-border bg-[var(--material-thick)] shadow-[var(--shadow-overlay)] backdrop-blur-xl">
-          {/* Mobile-only Chat/CLI toggle — the desktop one lives in the tab bar's toolbarActions */}
+        <div className="absolute right-0 top-full z-[200] mt-2 min-w-[220px] overflow-hidden rounded-[var(--radius-md)] border border-border bg-[var(--material-thick)] shadow-[var(--shadow-overlay)] backdrop-blur-xl">
+          {/* Chat/CLI view toggle (moved here from the old tab bar so it stays
+              reachable now that the header is a pill). */}
           <>
-            <div className="flex items-center gap-1 px-3 py-2 md:hidden">
+            <div className="flex items-center gap-1 px-3 py-2">
               <button
                 onClick={() => { if (!viewSwitchLocked) { setAndPersistViewMode('chat'); setShowMoreMenu(false) } }}
                 disabled={viewSwitchLocked}
@@ -556,7 +580,7 @@ function ChatPage() {
                 CLI
               </button>
             </div>
-            <div className="my-0.5 border-t border-border md:hidden" />
+            <div className="my-0.5 border-t border-border" />
           </>
           <button
             onClick={() => copyToClipboard(selectedId, 'id')}
@@ -610,78 +634,25 @@ function ChatPage() {
     </div>
   ) : null
 
-  // Build toolbar actions to pass into tab bar (desktop only content)
-  const toolbarActions = (
-    <>
-      <div className="flex items-center gap-0.5 rounded-full bg-[var(--fill-tertiary)] p-0.5">
-        <button
-          onClick={() => { if (!viewSwitchLocked) setAndPersistViewMode('chat') }}
-          disabled={viewSwitchLocked}
-          title={viewSwitchLocked ? cliTitle : undefined}
-          className={cn(
-            "rounded-full px-2.5 py-1 text-[11px] font-medium transition-all",
-            effectiveViewMode === 'chat'
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-            viewSwitchLocked && "opacity-60 cursor-not-allowed"
-          )}
-        >
-          Chat
-        </button>
-        <button
-          onClick={() => { if (cliModeAvailable && !viewSwitchLocked) setAndPersistViewMode('cli') }}
-          disabled={!cliModeAvailable || viewSwitchLocked}
-          title={cliTitle}
-          className={cn(
-            "rounded-full px-2.5 py-1 font-mono text-[11px] font-medium transition-all",
-            effectiveViewMode === 'cli'
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-            (!cliModeAvailable || viewSwitchLocked) && "opacity-45 cursor-not-allowed"
-          )}
-        >
-          CLI
-        </button>
-      </div>
+  // Left-pill breadcrumb: employee crumb + chat title (or "New chat").
+  const titleCase = (s: string) => s.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+  const headerEmployee = sessionMeta?.employee || (selectedId ? undefined : pendingEmployee || undefined)
+  const headerTitle = selectedId
+    ? (sessionMeta?.title || (activeSessionTab?.label && cleanPreview(activeSessionTab.label)) || 'Chat')
+    : 'New chat'
+  const headerCrumb = headerEmployee ? titleCase(headerEmployee) : (selectedId ? portalName : undefined)
+  const headerAvatar = headerEmployee || portalName.toLowerCase()
 
-      <div className="hidden lg:block">{moreMenu}</div>
+  // Search pill → reuse the existing global search (⌘K) without modifying it.
+  const openGlobalSearch = useCallback(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true, bubbles: true }))
+  }, [])
 
-      {copiedField && (
-        <div className="flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[var(--accent)]">
-          <Check className="size-3" />
-          Copied!
-        </div>
-      )}
-    </>
-  )
-
-  const mobileSidebarToggle = (
-    <button
-      onClick={toggleSidebar}
-      aria-label={mobileView === 'sidebar' ? 'Hide chats' : 'Show chats'}
-      className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-    >
-      {mobileView === 'sidebar' ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
-    </button>
-  )
-
-  const mobileRightActions = (
-    <>
-      <button
-        onClick={handleNewChat}
-        aria-label="New chat"
-        title="New chat"
-        className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      >
-        <Plus size={18} />
-      </button>
-      {moreMenu}
-    </>
-  )
+  const onMobileList = mobileView === 'sidebar'
 
   return (
     <FileOpenContext.Provider value={openFile}>
-    <PageLayout mobileHeaderActions={mobileRightActions} mobileHeaderLeftActions={mobileSidebarToggle}>
+    <PageLayout chromeless>
       <div className="flex overflow-hidden h-full">
         <div
           className="hidden h-full shrink-0 overflow-hidden lg:block"
@@ -705,19 +676,43 @@ function ChatPage() {
           </div>
         </div>
 
-        <div className="min-w-0 flex-1 flex-col overflow-hidden bg-background flex">
-          <ChatTabBar
+        <div className="chat-pills-layout relative min-w-0 flex-1 flex-col overflow-hidden bg-background flex">
+          {/* Soft top scrim (gradient, not a border) — content scrolls under it. */}
+          <div
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute inset-x-0 top-0 z-[5] h-[92px]",
+              onMobileList && "hidden lg:block",
+            )}
+            style={{ background: 'linear-gradient(to bottom, rgba(20,18,15,0.92), rgba(20,18,15,0.55) 45%, rgba(20,18,15,0))' }}
+          />
+
+          {/* Frosted corner pills replace the solid header. Hidden over the mobile
+              chat-list view (the sidebar has its own header); shown on desktop + thread. */}
+          <ChatHeaderPills
+            hideOnMobile={onMobileList}
+            sidebarCollapsed={mobileView === 'chat' || sidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+            onOpenNav={() => setNavDrawerOpen(true)}
+            employeeName={headerEmployee}
+            crumbLabel={headerCrumb}
+            title={headerTitle}
+            avatarName={headerAvatar}
+            scrolled={threadScrolled}
             tabs={chatTabs.tabs}
             activeIndex={chatTabs.activeIndex}
             onSwitch={chatTabs.switchTab}
             onClose={chatTabs.closeTab}
             onNew={handleNewChat}
-            onPin={chatTabs.pinTab}
-            onMove={chatTabs.moveTab}
-            toolbarActions={toolbarActions}
-            sidebarCollapsed={mobileView === 'chat' || sidebarCollapsed}
-            onToggleSidebar={toggleSidebar}
+            onSearch={openGlobalSearch}
+            moreMenu={moreMenu}
           />
+
+          {copiedField && (
+            <div className="absolute right-4 top-[58px] z-10 flex items-center gap-1 rounded-full bg-[var(--material-thick)] px-2.5 py-1 text-xs font-medium text-[var(--accent)] shadow-[var(--shadow-overlay)]">
+              <Check className="size-3" /> Copied!
+            </div>
+          )}
 
           <div
             className={mobileView === 'sidebar' ? 'flex-1 overflow-hidden lg:hidden' : 'hidden'}
@@ -735,7 +730,7 @@ function ChatPage() {
             />
           </div>
 
-          <div className={cn(
+          <div ref={paneScrollRef} className={cn(
             "flex-1 overflow-hidden flex flex-col",
             mobileView === 'sidebar' ? 'hidden lg:flex' : 'flex'
           )}>
@@ -782,6 +777,14 @@ function ChatPage() {
         />
       )}
 
+      {/* Mobile global nav (the 56px rail is desktop-only; the pill's ≡ opens this). */}
+      <MobileNavDrawer open={navDrawerOpen} onClose={() => setNavDrawerOpen(false)} />
+
+      {/* Clear the floating pills/scrim: push the thread's first row down so it
+          isn't hidden under the header (content still scrolls beneath the scrim). */}
+      <style>{`
+        .chat-pills-layout .chat-messages-scroll > :first-child { padding-top: 64px; }
+      `}</style>
     </PageLayout>
     </FileOpenContext.Provider>
   )

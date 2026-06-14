@@ -13,9 +13,69 @@ const GlobalSearch = lazy(() => import("./global-search").then(m => ({ default: 
 const LiveStreamWidget = lazy(() => import("./live-stream-widget").then(m => ({ default: m.LiveStreamWidget })))
 const OnboardingWizard = lazy(() => import("./onboarding-wizard").then(m => ({ default: m.OnboardingWizard })))
 
+/**
+ * The mobile global-nav drawer (NAV_ITEMS). Extracted so it can be opened both
+ * from the default MobileHeader and from the chat route's frosted header pill
+ * (which replaces the mobile bar) — neither path should lose access to nav.
+ */
+export function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const pathname = useLocation().pathname
+  const { settings } = useSettings()
+  const emoji = settings.portalEmoji ?? "\u{1F9DE}"
+  const portalName = settings.portalName ?? "Jinn"
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-[120] lg:hidden">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]" onClick={onClose} />
+      <nav className="absolute inset-y-0 left-0 flex w-[260px] animate-slide-in flex-col border-r border-border bg-[var(--bg-secondary)]">
+        <div className="flex items-center justify-between border-b border-border px-3.5 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[22px]">{emoji}</span>
+            <span className="text-base font-semibold text-foreground">{portalName}</span>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close menu"
+            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex flex-1 flex-col gap-1 p-2">
+          {NAV_ITEMS.map((item) => {
+            const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
+            const Icon = item.icon
+            return (
+              <Link
+                key={item.href}
+                to={item.href}
+                onClick={onClose}
+                className={cn(
+                  "flex h-11 items-center gap-3 rounded-[10px] px-3.5 text-[15px] transition-colors",
+                  isActive
+                    ? "bg-[var(--accent-fill)] font-semibold text-[var(--accent)]"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                )}
+              >
+                <Icon size={18} className="shrink-0" />
+                {item.label}
+              </Link>
+            )
+          })}
+        </div>
+      </nav>
+      <style>{`
+        @keyframes slideInLeft {
+          from { transform: translateX(-100%); }
+          to { transform: translateX(0); }
+        }
+      `}</style>
+    </div>
+  )
+}
+
 function MobileHeader({ actions, leftActions }: { actions?: React.ReactNode; leftActions?: React.ReactNode }) {
   const [open, setOpen] = useState(false)
-  const pathname = useLocation().pathname
   const { settings } = useSettings()
   const emoji = settings.portalEmoji ?? "\u{1F9DE}"
   const portalName = settings.portalName ?? "Jinn"
@@ -40,56 +100,7 @@ function MobileHeader({ actions, leftActions }: { actions?: React.ReactNode; lef
         </div>
       </div>
 
-      {open && (
-        <div className="fixed inset-0 z-[120] lg:hidden">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]" onClick={() => setOpen(false)} />
-          <nav className="absolute inset-y-0 left-0 flex w-[260px] animate-slide-in flex-col border-r border-border bg-[var(--bg-secondary)]">
-            <div className="flex items-center justify-between border-b border-border px-3.5 py-3">
-              <div className="flex items-center gap-2">
-                <span className="text-[22px]">{emoji}</span>
-                <span className="text-base font-semibold text-foreground">{portalName}</span>
-              </div>
-              <button
-                onClick={() => setOpen(false)}
-                aria-label="Close menu"
-                className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="flex flex-1 flex-col gap-1 p-2">
-              {NAV_ITEMS.map((item) => {
-                const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
-                const Icon = item.icon
-                return (
-                  <Link
-                    key={item.href}
-                    to={item.href}
-                    onClick={() => setOpen(false)}
-                    className={cn(
-                      "flex h-11 items-center gap-3 rounded-[10px] px-3.5 text-[15px] transition-colors",
-                      isActive
-                        ? "bg-[var(--accent-fill)] font-semibold text-[var(--accent)]"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    )}
-                  >
-                    <Icon size={18} className="shrink-0" />
-                    {item.label}
-                  </Link>
-                )
-              })}
-            </div>
-          </nav>
-        </div>
-      )}
-
-      {/* CSS animation */}
-      <style>{`
-        @keyframes slideInLeft {
-          from { transform: translateX(-100%); }
-          to { transform: translateX(0); }
-        }
-      `}</style>
+      <MobileNavDrawer open={open} onClose={() => setOpen(false)} />
     </>
   )
 }
@@ -112,7 +123,7 @@ function DesktopHeader() {
   )
 }
 
-export function PageLayout({ children, mobileHeaderActions, mobileHeaderLeftActions }: { children: React.ReactNode; mobileHeaderActions?: React.ReactNode; mobileHeaderLeftActions?: React.ReactNode }) {
+export function PageLayout({ children, mobileHeaderActions, mobileHeaderLeftActions, chromeless }: { children: React.ReactNode; mobileHeaderActions?: React.ReactNode; mobileHeaderLeftActions?: React.ReactNode; chromeless?: boolean }) {
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
       <Sidebar />
@@ -120,8 +131,10 @@ export function PageLayout({ children, mobileHeaderActions, mobileHeaderLeftActi
         <GlobalSearch />
       </Suspense>
       <main className="flex-1 overflow-hidden flex flex-col lg:ml-[56px]">
-        <MobileHeader actions={mobileHeaderActions} leftActions={mobileHeaderLeftActions} />
-        <DesktopHeader />
+        {/* chromeless: the page draws its own header (chat route's frosted pills),
+            so suppress the solid mobile bar + desktop breadcrumb header entirely. */}
+        {!chromeless && <MobileHeader actions={mobileHeaderActions} leftActions={mobileHeaderLeftActions} />}
+        {!chromeless && <DesktopHeader />}
         <div className="flex-1 overflow-hidden">
           {children}
         </div>

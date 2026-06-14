@@ -74,9 +74,9 @@ vi.mock('@/lib/clean-preview', () => ({
   cleanPreview: (s: string) => s,
 }))
 
-import { ChatTabBar } from '../chat-tabs'
+import { ChatHeaderPills } from '../chat-tabs'
 
-describe('ChatTabBar shortcut hints', () => {
+describe('ChatHeaderPills shortcut hints', () => {
   const defaultProps = {
     tabs: [],
     activeIndex: -1,
@@ -85,9 +85,9 @@ describe('ChatTabBar shortcut hints', () => {
     onNew: vi.fn(),
   }
 
-  it('renders new tab button with shortcut hint in title', () => {
-    render(<ChatTabBar {...defaultProps} />)
-    // The + button should show "N" shortcut in its title
+  it('renders new chat button with shortcut hint in title', () => {
+    render(<ChatHeaderPills {...defaultProps} />)
+    // The accent + button should show "N" shortcut in its title
     const newBtn = screen.getByTitle(/\(N\)/i)
     expect(newBtn).toBeTruthy()
   })

@@ -119,11 +119,61 @@ toggle, pool gating, focused-Older flat rows, nav/empty-state).
 - Screenshots in /tmp/chat-redesign/: focused-desktop-crop.png / all-desktop-crop.png,
   focused-mobile.png / all-mobile.png (Focused TODAY 4 vs All TODAY 13).
 
+## Header phase — transparent header → frosted pills
+
+Dropped the solid h-12 chat header; main content is full-bleed under a soft top
+gradient SCRIM, with two frosted corner pills (reusing the mockup `.pill` recipe:
+backdrop-blur(20px) saturate(1.3) over rgba(30,28,22,0.55), 0.5px white border,
+overlay shadow, full radius).
+
+- **LEFT pill**: sidebar/list toggle + breadcrumb (`crumb employee / chat title`).
+  On scroll (thread scrollTop > 24) it sheds the title → [toggle + 24px avatar].
+  Mobile adds a leading ≡ that opens the global-nav drawer (the 56px rail is
+  desktop-only, so nav isn't lost).
+- **RIGHT pill**: search (⌘K) · tabs/grid (open-tabs popover, replaces the strip) ·
+  ┊ · new (+, accent) · more (…). The Chat/CLI view toggle moved into the … menu.
+- **Scrim**: gradient (not a border); content scrolls *under* it. Thread first row
+  gets 64px top padding via a scoped CSS rule on `.chat-messages-scroll` (no edits
+  to chat-pane/chat-messages).
+- **Mobile**: the two pills REPLACE the 48px "≡ Jimbo +" bar. Thread edge-to-edge.
+  Pills hidden over the mobile chat-LIST view (the sidebar keeps its own header);
+  shown over the thread. Collapse to icons-only on scroll.
+
+**Constraints honored:** thread stays FULL-WIDTH (ignored the mockup's 720px
+centered column); NO avatars/sender labels added inside message rows; only
+page-layout.tsx, chat-tabs.tsx, routes/chat/page.tsx touched (+ the ChatTabBar→
+ChatHeaderPills test rename). Scroll detection is a capture-phase listener on the
+pane wrapper — ChatPane untouched.
+
+**How it works:** PageLayout gains a `chromeless` prop (chat route passes it) that
+drops MobileHeader + DesktopHeader. MobileNavDrawer extracted from MobileHeader and
+reused by the pill's ≡. Search reuses the existing GlobalSearch via a synthetic ⌘K
+(global-search.tsx untouched).
+
+Known minor follow-up: CLI view's top row sits a touch high under the pills (no
+class to pad cleanly without touching chat-pane). Chat view is correct.
+
+### Extending the pill/transparent header to OTHER pages (assessment, not built)
+- The pieces are already generic: `MobileNavDrawer` + `chromeless` live in
+  page-layout; the pill primitives (`ChatHeaderPills`/`PILL_CLASS`) are
+  self-contained in chat-tabs. Lifting `PILL_CLASS` + a small `<Pill>/<PillButton>`
+  into a shared `components/ui/pill.tsx` would make them reusable.
+- Other pages (org/kanban/cron/logs/limits) currently render their chrome via the
+  default MobileHeader + DesktopHeader (breadcrumbs). To pill-ify them: pass
+  `chromeless`, then add a per-page right-pill of page actions + a left-pill title.
+  The scroll-collapse + scrim only matter for scrolling content (logs/kanban);
+  static pages can use a static (non-collapsing) pill.
+- Recommendation: it's a clean ~half-day generalization — extract a shared
+  `<PageHeaderPills>` (title + actions + optional scroll-collapse) and adopt it
+  page-by-page. NOT a single shared component drop-in, because each page's actions
+  differ; but the material, drawer, and chromeless plumbing are shared. Low risk.
+
 ## Status
 - [x] data-layer investigation (no backend change needed)
 - [x] date-bucketing helper + tests
 - [x] focused sidebar layout (Variant A)
 - [x] focused-filter (user-initiated default + All toggle)
-- [x] preview screenshots — both states, desktop 1440 + mobile 390
-- [ ] report → STOP for review  ← HERE
-- [ ] header pills (after approval)
+- [x] frosted-pill header (scrim + corner pills, mobile, scroll-collapse)
+- [x] preview screenshots — header top + scrolled, desktop 1440 + mobile 390
+- [ ] report → STOP for final review  ← HERE
+- nothing merged/deployed

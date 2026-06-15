@@ -106,6 +106,10 @@ interface FlatRow {
 const DIRECT_GROUP = "__direct__"
 const CRON_GROUP = "__cron__"
 const BACKGROUND_ACTIVITY_STALE_MS = 5 * 60 * 1000
+// A red error dot is only worth surfacing while the failure is fresh; older
+// errored sessions fall back to the normal idle/unread treatment so the list
+// isn't littered with stale red dots.
+const RECENT_ERROR_WINDOW_MS = 24 * 60 * 60 * 1000
 
 const COLLAPSE_STORAGE_KEY = "jinn-sidebar-collapsed"
 const EXPANDED_STORAGE_KEY = "jinn-sidebar-expanded"
@@ -281,6 +285,23 @@ interface StatusDotState {
   pulse: boolean
 }
 
+/** A red error dot fires only for a *recently* errored session — `status` is
+ *  "error" AND its last activity is inside the recency window. `nowMs` is passed
+ *  in (rather than read at module load) so the window is evaluated at call time
+ *  and the helper stays pure/testable. A missing or unparseable timestamp is
+ *  treated as not-recent so the row falls through to the quiet treatment. */
+export function isRecentError(
+  status: string | undefined,
+  lastActivityISO: string,
+  nowMs: number,
+): boolean {
+  if (status !== "error") return false
+  if (!lastActivityISO) return false
+  const ts = new Date(lastActivityISO).getTime()
+  if (Number.isNaN(ts)) return false
+  return nowMs - ts < RECENT_ERROR_WINDOW_MS
+}
+
 // Resolve the attention-state dot for a session. Returns null for the resting
 // "read" state so no dot is painted (quiet at rest). Optionally treat the row
 // as unread even when this session is read (e.g. a grouped employee row whose
@@ -291,7 +312,9 @@ function getStatusDot(
   forceUnread = false,
 ): StatusDotState | null {
   if (session.status === "running") return { color: "var(--system-blue)", label: "running", pulse: true }
-  if (session.status === "error") return { color: "var(--system-red)", label: "error", pulse: false }
+  if (isRecentError(session.status, getSessionActivity(session), Date.now())) {
+    return { color: "var(--system-red)", label: "error", pulse: false }
+  }
   if (hasBackgroundActivity(session)) return { color: "var(--system-orange)", label: "background work running", pulse: true }
   if (forceUnread || !readSet.has(session.id)) return { color: "var(--accent)", label: "unread", pulse: false }
   return null
@@ -911,6 +934,15 @@ export function ChatSidebar({
   const [search, setSearch] = useState("")
   // Search spans ALL sessions server-side (the loaded page is only a subset).
   const { data: searchResults } = useSessionSearch(search)
+  // The slim control row morphs between the Focused/All segmented control and an
+  // inline search field; `searchOpen` drives that reveal. Collapsing always
+  // clears the query so a hidden field can never leave the list silently filtered.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    setSearch("")
+  }, [])
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
   const renameCancelledRef = useRef(false)
   const [readSessions, setReadSessions] = useState<Set<string>>(new Set())
@@ -972,6 +1004,11 @@ export function ChatSidebar({
     }
   }, [selectedId])
 
+
+  // Focus the inline search field once it has morphed open.
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus()
+  }, [searchOpen])
 
   const selectFocusMode = useCallback((mode: FocusMode) => {
     setFocusMode(mode)
@@ -1597,69 +1634,101 @@ export function ChatSidebar({
 
   return (
     <div className="relative z-10 flex h-full flex-col bg-[var(--sidebar-bg)] shadow-[var(--shadow-card)]">
-      <div className="shrink-0 bg-[var(--material-thick)] px-4 pb-3 pt-3">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="text-xl font-bold tracking-[-0.03em] text-foreground">Chats</h2>
-          <div className="flex items-center gap-1.5">
+      {/* One slim control row. At rest it shows the Focused/All segmented
+          control (left) + a borderless search icon (right); tapping search
+          morphs the whole row into an inline search field. The page title and
+          "+ New" affordance now live in the header pill, so neither lives here.
+          Separation is fills only — no hairlines at rest. */}
+      <div className="shrink-0 bg-[var(--material-thick)] px-3 py-2">
+        <div className="relative flex h-9 items-center">
+          {/* Resting controls — fade/disable while the search field is open. */}
+          <div
+            className={cn(
+              "flex w-full items-center gap-2 transition-opacity duration-200 [transition-timing-function:var(--ease-smooth)] motion-reduce:transition-none",
+              searchOpen ? "pointer-events-none opacity-0" : "opacity-100",
+            )}
+            aria-hidden={searchOpen}
+          >
+            {/* Mobile-only nav: now swaps the left surface to the in-surface nav. */}
             {onOpenNav && (
               <button
                 onClick={onOpenNav}
                 title="Menu"
                 aria-label="Open navigation"
-                className="inline-flex size-8 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground lg:hidden"
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground lg:hidden"
               >
                 <Menu className="size-[18px]" />
               </button>
             )}
-            <Button size="sm" className="gap-1.5" onClick={onNewChat} title="New chat (N)">
-              <Plus className="size-3.5" />
-              New
-            </Button>
+
+            {/* Focused (default) shows only the operator's own top-level chats;
+                All reveals delegated/automated sessions too. Persisted; search
+                spans everything regardless. */}
+            <div className="flex items-center gap-0.5 rounded-full bg-[var(--fill-tertiary)] p-0.5 text-[11px] font-medium">
+              {(["focused", "all"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => selectFocusMode(mode)}
+                  aria-pressed={focusMode === mode}
+                  title={mode === "focused" ? "Only chats you started" : "Include automated & delegated sessions"}
+                  className={cn(
+                    "rounded-full px-2.5 py-1 capitalize transition-all",
+                    focusMode === mode
+                      ? "bg-[var(--bg-secondary)] text-foreground shadow-[var(--shadow-subtle)]"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1" />
+
+            <button
+              onClick={() => setSearchOpen(true)}
+              title="Search chats"
+              aria-label="Search chats"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground"
+            >
+              <Search className="size-[18px]" />
+            </button>
           </div>
-        </div>
 
-        {/* Focused (default) shows only the operator's own top-level chats;
-            All reveals delegated/automated sessions too. Persisted; search
-            spans everything regardless. */}
-        <div className="mb-2 flex items-center gap-0.5 rounded-full bg-[var(--fill-tertiary)] p-0.5 text-[11px] font-medium">
-          {(["focused", "all"] as const).map((mode) => (
+          {/* Inline search field — morphs in from the right (width + opacity). */}
+          <div
+            className={cn(
+              "absolute inset-y-0 right-0 flex items-center gap-2 overflow-hidden rounded-[var(--radius-md)] bg-[var(--fill-tertiary)] transition-[width,opacity] duration-200 [transition-timing-function:var(--ease-smooth)] motion-reduce:transition-none",
+              searchOpen ? "w-full px-3 opacity-100" : "w-0 px-0 opacity-0",
+            )}
+          >
+            <Search className="size-3.5 shrink-0 text-[var(--text-tertiary)]" />
+            <input
+              id="chat-search"
+              ref={searchInputRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault()
+                  closeSearch()
+                }
+              }}
+              placeholder="Search..."
+              aria-label="Search chats"
+              tabIndex={searchOpen ? 0 : -1}
+              className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-[var(--text-tertiary)]"
+            />
             <button
-              key={mode}
-              onClick={() => selectFocusMode(mode)}
-              aria-pressed={focusMode === mode}
-              title={mode === "focused" ? "Only chats you started" : "Include automated & delegated sessions"}
-              className={cn(
-                "flex-1 rounded-full px-2.5 py-1 capitalize transition-all",
-                focusMode === mode
-                  ? "bg-[var(--bg-secondary)] text-foreground shadow-[var(--shadow-subtle)]"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
+              onClick={closeSearch}
+              tabIndex={searchOpen ? 0 : -1}
+              aria-label="Close search"
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground"
             >
-              {mode}
+              <X className="size-3.5" />
             </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--fill-tertiary)] px-3 py-2">
-          <Search className="size-3.5 shrink-0 text-[var(--text-tertiary)]" />
-          <input
-            id="chat-search"
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search..."
-            aria-label="Search chats"
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-[var(--text-tertiary)]"
-          />
-          {search.trim() ? (
-            <button
-              onClick={() => setSearch("")}
-              aria-label="Clear search"
-              className="rounded-full p-0.5 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-foreground"
-            >
-              <X className="size-3" />
-            </button>
-          ) : null}
+          </div>
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { hasBackgroundActivity, isDirectSession, resolveRowIdentity } from '../chat-sidebar'
+import { hasBackgroundActivity, isDirectSession, isRecentError, resolveRowIdentity } from '../chat-sidebar'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -55,6 +55,41 @@ describe('chat sidebar background activity', () => {
         },
       }),
     ).toBe(true)
+  })
+})
+
+describe('chat sidebar recent-error dot gating', () => {
+  // Fixed "now"; the helper takes nowMs so we never read Date.now() at module load.
+  const now = new Date('2026-06-15T12:00:00Z').getTime()
+  const HOUR = 60 * 60 * 1000
+
+  it('flags an error whose last activity is within the 24h window (→ red)', () => {
+    const oneHourAgo = new Date(now - HOUR).toISOString()
+    expect(isRecentError('error', oneHourAgo, now)).toBe(true)
+  })
+
+  it('does NOT flag an error whose last activity is older than 24h (→ not red)', () => {
+    const twoDaysAgo = new Date(now - 48 * HOUR).toISOString()
+    expect(isRecentError('error', twoDaysAgo, now)).toBe(false)
+  })
+
+  it('never flags a non-error status, even when recent', () => {
+    const oneHourAgo = new Date(now - HOUR).toISOString()
+    expect(isRecentError('idle', oneHourAgo, now)).toBe(false)
+    expect(isRecentError('running', oneHourAgo, now)).toBe(false)
+    expect(isRecentError(undefined, oneHourAgo, now)).toBe(false)
+  })
+
+  it('treats a missing or unparseable timestamp as not-recent (→ not red)', () => {
+    expect(isRecentError('error', '', now)).toBe(false)
+    expect(isRecentError('error', 'not-a-date', now)).toBe(false)
+  })
+
+  it('treats the 24h boundary as stale (strictly inside the window is red)', () => {
+    const exactly24h = new Date(now - 24 * HOUR).toISOString()
+    expect(isRecentError('error', exactly24h, now)).toBe(false)
+    const justInside = new Date(now - 24 * HOUR + 1000).toISOString()
+    expect(isRecentError('error', justInside, now)).toBe(true)
   })
 })
 

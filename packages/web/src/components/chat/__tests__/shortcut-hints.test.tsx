@@ -49,13 +49,10 @@ describe('ChatSidebar shortcut hints', () => {
     onNewChat: vi.fn(),
   }
 
-  it('renders "New" button with shortcut hint in title/aria-label', () => {
-    render(withQueryClient(<ChatSidebar {...defaultProps} />))
-    // The New button should have a title attribute containing "N" shortcut
-    const newBtn = screen.getByRole('button', { name: /new/i })
-    const title = newBtn.getAttribute('title') ?? newBtn.getAttribute('aria-label') ?? ''
-    expect(title.toLowerCase()).toContain('n')
-  })
+  // The "+ New" affordance moved out of the sidebar into the header pill
+  // (see the "ChatHeaderPills shortcut hints" suite below, which asserts the
+  // New-chat button + its (N) shortcut hint). The sidebar header no longer
+  // renders a New button.
 
   it('renders search input with placeholder', () => {
     render(withQueryClient(<ChatSidebar {...defaultProps} />))

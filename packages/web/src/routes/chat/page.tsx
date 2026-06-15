@@ -3,9 +3,10 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { resolveDeepLink } from '@/components/chat/chat-route-helpers'
 import { useGateway } from '@/hooks/use-gateway'
-import { PageLayout, MobileNavDrawer } from '@/components/page-layout'
+import { PageLayout } from '@/components/page-layout'
 import { ChatSidebar, type SidebarOrder } from '@/components/chat/chat-sidebar'
 import { ChatHeaderPills } from '@/components/chat/chat-tabs'
+import { NavList, NavFooter } from '@/components/pill-nav'
 import { ChatPane } from '@/components/chat/chat-pane'
 import { FileView } from '@/components/chat/file-view'
 import { FileOpenContext } from '@/components/chat/file-open-context'
@@ -19,7 +20,7 @@ import { useSettings } from '@/routes/settings-provider'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import { cn } from '@/lib/utils'
-import { Check, Copy, MoreHorizontal, Search, Share2, Trash2 } from 'lucide-react'
+import { Check, ChevronLeft, Copy, MoreHorizontal, Search, Share2, Trash2 } from 'lucide-react'
 import { writeViewMode, type ViewMode } from '@/lib/view-mode'
 import { shareDebugLog, clearDebugLog } from '@/lib/debug-log'
 
@@ -83,27 +84,22 @@ function ChatPage() {
   // Employee to preselect for a brand-new chat (contacting a session-less
   // employee from the sidebar, or via an ?employee= deep-link). Null = none.
   const [pendingEmployee, setPendingEmployee] = useState<string | null>(null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('jinn-chat-sidebar-collapsed') === 'true'
-    }
-    return false
-  })
+  // What the left surface shows: the chat list, or the global nav links. The
+  // left-pill button swaps between them in place (no second aside / drawer).
+  const [leftSurface, setLeftSurface] = useState<'list' | 'nav'>('list')
   const toggleSidebar = useCallback(() => {
-    // Mobile: toggle mobileView between sidebar and chat
     const isMobile = window.innerWidth < 1024
     if (isMobile) {
-      setMobileView((prev) => (prev === 'sidebar' ? 'chat' : 'sidebar'))
+      // On mobile the pill only shows over the thread → go back to the list.
+      setMobileView('sidebar')
     } else {
-      setSidebarCollapsed((prev) => {
-        const next = !prev
-        localStorage.setItem('jinn-chat-sidebar-collapsed', String(next))
-        return next
-      })
+      // On desktop the left column swaps between the chat list and the nav.
+      setLeftSurface((prev) => (prev === 'list' ? 'nav' : 'list'))
     }
   }, [])
-  // Frosted-pill header: global-nav drawer (opened from the chat-list header).
-  const [navDrawerOpen, setNavDrawerOpen] = useState(false)
+  // Open the nav surface in place (from the sidebar's mobile nav button).
+  const openNav = useCallback(() => setLeftSurface('nav'), [])
+  const closeNav = useCallback(() => setLeftSurface('list'), [])
   const [viewMode, setViewMode] = useState<ViewMode>('chat')
   // Pending user message from new-chat send — passed to the new ChatPane so the user bubble appears before loadSession resolves
   const [pendingUserMessage, setPendingUserMessage] = useState<{ sessionId: string; message: Message } | null>(null)
@@ -648,25 +644,44 @@ function ChatPage() {
     </div>
   )
 
-  // Left-pill identity: employee for the avatar slug (avatar is always shown;
-  // the pill no longer renders a title/breadcrumb).
+  // Left-pill identity: employee for the avatar slug + the conversation title.
   const headerEmployee = sessionMeta?.employee || (selectedId ? undefined : pendingEmployee || undefined)
   const headerAvatar = headerEmployee || portalName.toLowerCase()
+  // Title in the left pill (C3 consistency): the conversation title when known,
+  // "New chat" on a fresh composer, else nothing (the avatar carries identity).
+  const headerTitle = sessionMeta?.title?.trim() || (selectedId ? '' : 'New chat')
 
   const onMobileList = mobileView === 'sidebar'
+  const showNav = leftSurface === 'nav'
+
+  // The in-surface nav (replaces the old stacked MobileNavDrawer): a back-to-list
+  // header + the shared NavList + NavFooter, filling the same left column.
+  const leftNav = (
+    <div className="flex h-full flex-col overflow-y-auto bg-[var(--bg-secondary)] [animation:chatNavIn_160ms_var(--ease-smooth)]">
+      <div className="px-1.5 pt-2.5">
+        <button
+          onClick={closeNav}
+          aria-label="Back to chats"
+          className="flex h-9 items-center gap-1 rounded-[10px] pl-1.5 pr-3 text-[length:var(--text-subheadline)] font-[var(--weight-semibold)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)]"
+        >
+          <ChevronLeft size={18} className="shrink-0" />
+          Chats
+        </button>
+      </div>
+      <NavList pathname="/" onNavigate={closeNav} />
+      <div className="mx-2 h-px bg-[var(--separator)]" />
+      <NavFooter />
+    </div>
+  )
 
   return (
     <FileOpenContext.Provider value={openFile}>
     <PageLayout chromeless>
       <div className="flex overflow-hidden h-full">
-        <div
-          className="hidden h-full shrink-0 overflow-hidden lg:block"
-          style={{
-            width: sidebarCollapsed ? 0 : 280,
-            transition: 'width 200ms ease-in-out',
-          }}
-        >
-          <div className="h-full w-[280px]">
+        <div className="hidden h-full w-[280px] shrink-0 overflow-hidden lg:block">
+          {/* Chat list stays mounted (preserves search/scroll) and is hidden when
+              the nav surface is showing, which swaps in over the same column. */}
+          <div className={cn("h-full w-[280px]", showNav && "hidden")}>
             <ChatSidebar
               selectedId={selectedId}
               onSelect={handleSelect}
@@ -677,9 +692,10 @@ function ChatPage() {
               onEmployeeSessionsAvailable={handleEmployeeSessionsAvailable}
               onOrderComputed={handleOrderComputed}
               onContactEmployee={contactEmployee}
-              onOpenNav={() => setNavDrawerOpen(true)}
+              onOpenNav={openNav}
             />
           </div>
+          {showNav && <div className="h-full w-[280px]">{leftNav}</div>}
         </div>
 
         <div className="chat-pills-layout relative min-w-0 flex-1 flex-col overflow-hidden bg-background flex">
@@ -700,10 +716,11 @@ function ChatPage() {
               chat-list view (the sidebar has its own header); shown on desktop + thread. */}
           <ChatHeaderPills
             hideOnMobile={onMobileList}
-            sidebarCollapsed={mobileView === 'chat' || sidebarCollapsed}
             onToggleSidebar={toggleSidebar}
             employeeName={headerEmployee}
             avatarName={headerAvatar}
+            title={headerTitle}
+            navActive={showNav}
             tabs={chatTabs.tabs}
             activeIndex={chatTabs.activeIndex}
             onSwitch={chatTabs.switchTab}
@@ -721,18 +738,21 @@ function ChatPage() {
           <div
             className={mobileView === 'sidebar' ? 'flex-1 overflow-hidden lg:hidden' : 'hidden'}
           >
-            <ChatSidebar
-              selectedId={selectedId}
-              onSelect={handleSelect}
-              onNewChat={handleNewChat}
-              onDelete={handleDeleteSession}
-              onDuplicate={handleDuplicateFromSidebar}
-              onSessionsLoaded={handleSessionsLoaded}
-              onEmployeeSessionsAvailable={handleEmployeeSessionsAvailable}
-              onOrderComputed={handleOrderComputed}
-              onContactEmployee={contactEmployee}
-              onOpenNav={() => setNavDrawerOpen(true)}
-            />
+            {/* Mobile: the nav swaps in over the SAME column (no stacked drawer). */}
+            {showNav ? leftNav : (
+              <ChatSidebar
+                selectedId={selectedId}
+                onSelect={handleSelect}
+                onNewChat={handleNewChat}
+                onDelete={handleDeleteSession}
+                onDuplicate={handleDuplicateFromSidebar}
+                onSessionsLoaded={handleSessionsLoaded}
+                onEmployeeSessionsAvailable={handleEmployeeSessionsAvailable}
+                onOrderComputed={handleOrderComputed}
+                onContactEmployee={contactEmployee}
+                onOpenNav={openNav}
+              />
+            )}
           </div>
 
           <div className={cn(
@@ -782,9 +802,6 @@ function ChatPage() {
         />
       )}
 
-      {/* Mobile global nav (the 56px rail is desktop-only; the pill's ≡ opens this). */}
-      <MobileNavDrawer open={navDrawerOpen} onClose={() => setNavDrawerOpen(false)} />
-
       {/* D8: clear the floating pills/scrim by padding the scroll container itself
           and aligning scroll anchoring to the same offset. Driven by the shared
           token (pill height + gap + safe-area) so it auto-tracks notched devices —
@@ -794,6 +811,10 @@ function ChatPage() {
         .chat-pills-layout .chat-messages-scroll {
           padding-top: var(--chat-top-clearance);
           scroll-padding-top: var(--chat-top-clearance);
+        }
+        @keyframes chatNavIn {
+          from { opacity: 0; transform: translateX(-6px); }
+          to { opacity: 1; transform: translateX(0); }
         }
       `}</style>
     </PageLayout>

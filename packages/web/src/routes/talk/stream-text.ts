@@ -4,7 +4,7 @@
  * Within one orchestrator turn the engine can emit MULTIPLE text content
  * blocks (e.g. narration before and after a tool call). The deltas arrive as
  * raw fragments with no separator at block boundaries, so naive concatenation
- * renders "…the MoveKit Lead now.On it. I'll surface…". We can't see block
+ * renders "…the Platform Lead now.On it. I'll surface…". We can't see block
  * boundaries from the delta stream, but a boundary is recognizable in the
  * text itself: accumulated text ending in sentence punctuation followed by a
  * fragment starting with a non-whitespace character. Mid-sentence token

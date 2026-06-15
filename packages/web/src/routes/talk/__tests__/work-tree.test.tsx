@@ -33,7 +33,7 @@ const at = (n: number) => new Date(2026, 5, 10, 0, 0, n).toISOString()
 
 /** A 3-deep delegation tree: lead → analyst → runner. */
 const tree = (): GraphNode[] => [
-  d1("t1", { label: "Movekit Lead", status: "running", lastActivity: at(9) }),
+  d1("t1", { label: "Platform Lead", status: "running", lastActivity: at(9) }),
   sub("g1", "t1", 2, { label: "Funnel Analyst", status: "running" }),
   sub("gg1", "g1", 3, { label: "Query Runner", status: "idle" }),
 ]
@@ -175,13 +175,13 @@ describe("WorkTree — ported dock behaviors", () => {
 
   it("opens the root thread from its label button", () => {
     const { props } = renderTree()
-    fireEvent.click(screen.getByRole("button", { name: "Open thread: Movekit Lead — working" }))
+    fireEvent.click(screen.getByRole("button", { name: "Open thread: Platform Lead — working" }))
     expect(props.onOpenThread).toHaveBeenCalledWith("t1")
   })
 
   it("excludes dismissed (tombstoned) roots and their sub-rows", () => {
     renderTree({ sideState: new Map([["t1", { dismissed: true }]]) })
-    expect(screen.queryByText("Movekit Lead")).toBeNull()
+    expect(screen.queryByText("Platform Lead")).toBeNull()
     expect(screen.queryByText("Funnel Analyst")).toBeNull()
   })
 
@@ -208,24 +208,24 @@ describe("WorkTree — ported dock behaviors", () => {
 
   it("pins as route target via the ⋯ menu", () => {
     const { props } = renderTree()
-    fireEvent.click(screen.getByRole("button", { name: /actions for movekit lead/i }))
+    fireEvent.click(screen.getByRole("button", { name: /actions for platform lead/i }))
     fireEvent.click(screen.getByRole("menuitem", { name: /pin as route target/i }))
     expect(props.onSelectTarget).toHaveBeenCalledWith("t1")
   })
 
   it("unpins via the ⋯ menu when already pinned", () => {
     const { props } = renderTree({ targetThreadId: "t1" })
-    fireEvent.click(screen.getByRole("button", { name: /actions for movekit lead/i }))
+    fireEvent.click(screen.getByRole("button", { name: /actions for platform lead/i }))
     fireEvent.click(screen.getByRole("menuitem", { name: /unpin route target/i }))
     expect(props.onSelectTarget).toHaveBeenCalledWith(null)
   })
 
   it("renames inline: menu → Rename → edit → Enter commits", () => {
     const { props } = renderTree()
-    fireEvent.click(screen.getByRole("button", { name: /actions for movekit lead/i }))
+    fireEvent.click(screen.getByRole("button", { name: /actions for platform lead/i }))
     fireEvent.click(screen.getByRole("menuitem", { name: /rename/i }))
     const input = screen.getByLabelText("Rename thread") as HTMLInputElement
-    expect(input.value).toBe("Movekit Lead")
+    expect(input.value).toBe("Platform Lead")
     fireEvent.change(input, { target: { value: "Funnel audit" } })
     fireEvent.keyDown(input, { key: "Enter" })
     expect(props.onRename).toHaveBeenCalledWith("t1", "Funnel audit")
@@ -233,7 +233,7 @@ describe("WorkTree — ported dock behaviors", () => {
 
   it("Escape cancels a rename without committing", () => {
     const { props } = renderTree()
-    fireEvent.click(screen.getByRole("button", { name: /actions for movekit lead/i }))
+    fireEvent.click(screen.getByRole("button", { name: /actions for platform lead/i }))
     fireEvent.click(screen.getByRole("menuitem", { name: /rename/i }))
     const input = screen.getByLabelText("Rename thread")
     fireEvent.change(input, { target: { value: "Nope" } })
@@ -245,24 +245,24 @@ describe("WorkTree — ported dock behaviors", () => {
   it("a user rename override wins over the server label", () => {
     renderTree({ sideState: new Map([["t1", { labelOverride: "My audit" }]]) })
     expect(screen.getByText("My audit")).toBeTruthy()
-    expect(screen.queryByText("Movekit Lead")).toBeNull()
+    expect(screen.queryByText("Platform Lead")).toBeNull()
   })
 
   it("dismisses via the ⋯ menu", () => {
     const { props } = renderTree()
-    fireEvent.click(screen.getByRole("button", { name: /actions for movekit lead/i }))
+    fireEvent.click(screen.getByRole("button", { name: /actions for platform lead/i }))
     fireEvent.click(screen.getByRole("menuitem", { name: /dismiss/i }))
     expect(props.onDismiss).toHaveBeenCalledWith("t1")
   })
 
   it("clears menuId when the node is evicted from the shown list (stale state prune)", () => {
     const twoRoots = [
-      d1("t1", { label: "Movekit Lead", status: "running", lastActivity: at(9) }),
+      d1("t1", { label: "Platform Lead", status: "running", lastActivity: at(9) }),
       d1("t2", { label: "Other Thread", status: "idle", lastActivity: at(1) }),
     ]
     const { rerender, props } = renderTree({ graph: twoRoots })
     // Open the context menu for t1
-    fireEvent.click(screen.getByRole("button", { name: /actions for movekit lead/i }))
+    fireEvent.click(screen.getByRole("button", { name: /actions for platform lead/i }))
     expect(screen.getByRole("menu")).toBeTruthy()
     // Dismiss t1 — it leaves the shown list while t2 remains
     rerender(<WorkTree {...props} graph={twoRoots} sideState={new Map([["t1", { dismissed: true }]])} />)

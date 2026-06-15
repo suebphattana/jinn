@@ -62,18 +62,18 @@ Drop the soft link when the topic closes (no message sent):
 
 **Response:**
 ```json
-{"ok":true,"results":[{"sessionId":"…","title":"…","employee":"movekit-eng"|null,"source":"talk"|"chat"|…,"lastActivity":"…","status":"idle"|"running"|…,"isTalkChild":true|false,"hits":[{"snippet":"…","role":"assistant","ts":1234567890}]}]}
+{"ok":true,"results":[{"sessionId":"…","title":"…","employee":"backend-eng"|null,"source":"talk"|"chat"|…,"lastActivity":"…","status":"idle"|"running"|…,"isTalkChild":true|false,"hits":[{"snippet":"…","role":"assistant","ts":1234567890}]}]}
 ```
 - `isTalkChild`: hint only. **true** → a talk-owned thread; continue with Shape 2 only if its id is in your roster, otherwise attach it (Shape 3). **false** → a foreign session — attach it (Shape 3). If a continue is rejected, attach instead.
 - `hits`: up to 3 content snippets per session (newest first); empty when only the title matched.
 
-### Worked example — "have the movekit engineer look at the failing build"
-1. Search: `GET /api/talk/search?q=movekit failing build`.
-2. A result comes back: `{"sessionId":"7f3a…","employee":"movekit-eng","isTalkChild":false,"hits":[{"snippet":"…build red on CI…"}]}`. `isTalkChild:false` → foreign session → attach + engage:
+### Worked example — "have the backend engineer look at the failing build"
+1. Search: `GET /api/talk/search?q=backend failing build`.
+2. A result comes back: `{"sessionId":"7f3a…","employee":"backend-eng","isTalkChild":false,"hits":[{"snippet":"…build red on CI…"}]}`. `isTalkChild:false` → foreign session → attach + engage:
 ```json
-{"sessionId":"<YOUR_OWN_SESSION_ID>","thread":"7f3a…","attach":true,"mode":"engage","brief":"Investigate the failing CI build and report the root cause + fix.","utterance":"have the movekit engineer look at the failing build"}
+{"sessionId":"<YOUR_OWN_SESSION_ID>","thread":"7f3a…","attach":true,"mode":"engage","brief":"Investigate the failing CI build and report the root cause + fix.","utterance":"have the backend engineer look at the failing build"}
 ```
-3. Say "On the movekit build now." and END YOUR TURN. When it reports back, narrate the outcome; detach with Shape 4 once resolved.
+3. Say "On the backend build now." and END YOUR TURN. When it reports back, narrate the outcome; detach with Shape 4 once resolved.
 (If search had returned `isTalkChild:true` and the id is in your roster, skip attach and continue with Shape 2; otherwise attach it.)
 
 ## All 13 card types

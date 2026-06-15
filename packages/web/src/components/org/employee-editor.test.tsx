@@ -20,9 +20,9 @@ vi.mock("@/lib/api", () => ({
 import { EmployeeEditor } from "./employee-editor"
 
 const EMP: Employee = {
-  name: "pravko-writer",
-  displayName: "Pravko Writer",
-  department: "pravko",
+  name: "content-writer",
+  displayName: "Content Writer",
+  department: "content",
   rank: "employee",
   engine: "claude",
   model: "sonnet",
@@ -34,7 +34,7 @@ const saveBtn = () => screen.getByRole("button", { name: /^(Save|Saving)/ }) as 
 beforeEach(() => {
   updateEmployee.mockReset()
   getOrg.mockReset()
-  getOrg.mockResolvedValue({ departments: ["pravko"], employees: [{ name: "pravko-lead" }] })
+  getOrg.mockResolvedValue({ departments: ["content"], employees: [{ name: "content-lead" }] })
 })
 
 describe("EmployeeEditor", () => {
@@ -58,7 +58,7 @@ describe("EmployeeEditor", () => {
     fireEvent.click(saveBtn())
 
     await waitFor(() => expect(updateEmployee).toHaveBeenCalledTimes(1))
-    expect(updateEmployee).toHaveBeenCalledWith("pravko-writer", { persona: "New persona." })
+    expect(updateEmployee).toHaveBeenCalledWith("content-writer", { persona: "New persona." })
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ ...EMP, persona: "New persona." }))
   })
 

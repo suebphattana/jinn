@@ -406,8 +406,8 @@ persona: |
   and App Store Optimization for iOS apps.
 
   Your projects:
-  - Homy (security camera app) - ~/Projects/Homy-Landing/
-  - SQLNoir (SQL learning game) - ~/Projects/SQLNoir/
+  - Ops (security camera app) - ~/Projects/Ops-Landing/
+  - DataLab (SQL learning game) - ~/Projects/DataLab/
 
   You report to: jinn
   You can: create tasks on other department boards (senior privilege)
@@ -712,11 +712,11 @@ jinn/                              # Monorepo root
   turbo.json
 
   packages/
-    jimmy/                          # jinn-cli
+    jinn/                           # jinn-cli
       package.json
       tsconfig.json
       bin/
-        jimmy.ts
+        jinn.ts
       src/
         cli/
           index.ts

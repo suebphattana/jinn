@@ -38,12 +38,12 @@ describe("messagesToEntries", () => {
         {
           id: "n1",
           role: "notification",
-          content: '📩 Thread "Pravko blog" reported back. Summary here.',
+          content: '📩 Thread "Content draft" reported back. Summary here.',
         },
       ],
     }
     expect(messagesToEntries(session)).toEqual([
-      { id: "n1", kind: "system", event: "reported", label: "Pravko blog" },
+      { id: "n1", kind: "system", event: "reported", label: "Content draft" },
     ])
   })
 
@@ -127,7 +127,7 @@ const wire = (over: Partial<TalkGraphNodeWire>): TalkGraphNodeWire => ({
   id: "t1",
   parentId: "root",
   depth: 1,
-  label: "Movekit Lead",
+  label: "Platform Lead",
   employee: null,
   status: "running",
   lastActivity: "2026-06-11T00:00:00Z",
@@ -141,7 +141,7 @@ describe("snapshotDelegationChips", () => {
     expect(chips[0]).toMatchObject({
       id: "sys-del-t1",
       event: "delegated",
-      label: "Movekit Lead",
+      label: "Platform Lead",
       threadId: "t1",
       ts: Date.parse("2026-06-11T00:00:00Z"),
     })
@@ -174,7 +174,7 @@ describe("snapshotDelegationChips", () => {
   it("a chip already added live (talk:graph delta) is not re-appended on snapshot", () => {
     let rows: StreamRow[] = []
     // Live "added" path uses the same sys-del-<id> id.
-    rows = conversationReducer(rows, { type: "system", id: "sys-del-t1", event: "delegated", label: "Movekit Lead", threadId: "t1", ts: 1 })
+    rows = conversationReducer(rows, { type: "system", id: "sys-del-t1", event: "delegated", label: "Platform Lead", threadId: "t1", ts: 1 })
     for (const chip of snapshotDelegationChips([wire({})])) rows = conversationReducer(rows, { type: "system", ...chip })
     expect(rows.filter((r) => r.id === "sys-del-t1")).toHaveLength(1)
   })

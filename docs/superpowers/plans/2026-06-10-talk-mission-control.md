@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-10-talk-mission-control-design.md`
 
-**Working directory:** `/Users/jimmyenglish/Projects/jinn-mission-control` (git worktree, branch `talk-mission-control`). NEVER touch `~/Projects/jinn` (live 7777 gateway) or `~/.jinn/talk/orchestrator-persona.md` (hot-reloads into production).
+**Working directory:** `<worktree>` (git worktree, branch `talk-mission-control`). NEVER touch `~/Projects/jinn` (live 7777 gateway) or `~/.jinn/talk/orchestrator-persona.md` (hot-reloads into production).
 
 ---
 
@@ -20,7 +20,7 @@
 
 - [ ] **Step 1: Install deps in the worktree** (worktrees don't share node_modules)
 
-Run: `cd /Users/jimmyenglish/Projects/jinn-mission-control && pnpm install`
+Run: `cd <worktree> && pnpm install`
 Expected: completes without errors.
 
 - [ ] **Step 2: Baseline test run**
@@ -180,7 +180,7 @@ function fakeSession(over: Partial<Session>): Session {
 function deps(over: Partial<DelegateDeps> = {}): DelegateDeps {
   return {
     getSession: (id) => (id === "t1" ? fakeSession({}) : undefined),
-    listChildSessions: () => [fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Pravko" })],
+    listChildSessions: () => [fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Content" })],
     spawnChild: vi.fn(async () => ({ id: "new-child" })),
     continueThread: vi.fn(async () => {}),
     updateSession: vi.fn(),
@@ -193,13 +193,13 @@ describe("delegateToThread", () => {
   it("spawns a new COO child with thread:'new', sets title, emits thread label", async () => {
     const d = deps()
     const r = await delegateToThread(
-      { sessionId: "t1", thread: "new", label: "Pravko pipeline", brief: "Run phase 2" }, d,
+      { sessionId: "t1", thread: "new", label: "Content pipeline", brief: "Run phase 2" }, d,
     )
     expect(r).toEqual({ ok: true, threadId: "new-child", created: true })
     expect(d.spawnChild).toHaveBeenCalledWith({ prompt: "Run phase 2", parentSessionId: "t1" })
-    expect(d.updateSession).toHaveBeenCalledWith("new-child", { title: "Pravko pipeline" })
+    expect(d.updateSession).toHaveBeenCalledWith("new-child", { title: "Content pipeline" })
     expect(d.emit).toHaveBeenCalledWith("talk:thread:label", {
-      sessionId: "t1", threadId: "new-child", label: "Pravko pipeline",
+      sessionId: "t1", threadId: "new-child", label: "Content pipeline",
     })
   })
 
@@ -215,7 +215,7 @@ describe("delegateToThread", () => {
     expect(r.ok).toBe(false)
     if (!r.ok) {
       expect(r.status).toBe(400)
-      expect(r.threads).toEqual([{ id: "c1", label: "Pravko", status: "idle" }])
+      expect(r.threads).toEqual([{ id: "c1", label: "Content", status: "idle" }])
     }
   })
 
@@ -233,8 +233,8 @@ describe("delegateToThread", () => {
 
   it("defaults the label from the brief when omitted on a new thread", async () => {
     const d = deps()
-    await delegateToThread({ sessionId: "t1", thread: "new", brief: "Check the MoveKit order status please" }, d)
-    expect(d.updateSession).toHaveBeenCalledWith("new-child", { title: "Check the MoveKit order status ple…" })
+    await delegateToThread({ sessionId: "t1", thread: "new", brief: "Check the Platform order status please" }, d)
+    expect(d.updateSession).toHaveBeenCalledWith("new-child", { title: "Check the Platform order status ple…" })
   })
 })
 ```
@@ -424,12 +424,12 @@ import { buildTalkThreadsSection } from "../context.js"
 describe("buildTalkThreadsSection", () => {
   it("renders a compact roster with delegate usage", () => {
     const s = buildTalkThreadsSection([
-      { id: "abc123", label: "Pravko pipeline", status: "running", lastActivity: "2026-06-10T08:00:00Z" },
-      { id: "def456", label: "MoveKit order", status: "idle", lastActivity: "2026-06-10T07:00:00Z" },
+      { id: "abc123", label: "Content pipeline", status: "running", lastActivity: "2026-06-10T08:00:00Z" },
+      { id: "def456", label: "Platform order", status: "idle", lastActivity: "2026-06-10T07:00:00Z" },
     ])
     expect(s).toContain("## Your open COO threads")
     expect(s).toContain("abc123")
-    expect(s).toContain("Pravko pipeline")
+    expect(s).toContain("Content pipeline")
     expect(s).toContain("running")
     expect(s).toContain("/api/talk/delegate")
   })
@@ -548,9 +548,9 @@ const listChildSessions = (pid: string) =>
 function seedTree() {
   sessions.clear()
   sessions.set("root", { ...s("root"), source: "talk" })
-  sessions.set("coo1", { ...s("coo1"), parentSessionId: "root", title: "Pravko", status: "running" })
-  sessions.set("coo2", { ...s("coo2"), parentSessionId: "root", title: "MoveKit" })
-  sessions.set("emp1", { ...s("emp1"), parentSessionId: "coo1", employee: "pravko-lead", status: "running" })
+  sessions.set("coo1", { ...s("coo1"), parentSessionId: "root", title: "Content", status: "running" })
+  sessions.set("coo2", { ...s("coo2"), parentSessionId: "root", title: "Platform" })
+  sessions.set("emp1", { ...s("emp1"), parentSessionId: "coo1", employee: "content-lead", status: "running" })
 }
 
 describe("resolveTalkRoot", () => {
@@ -578,10 +578,10 @@ describe("buildGraphSnapshot", () => {
     const emp = nodes.find((n) => n.id === "emp1")!
     expect(emp.depth).toBe(2)
     expect(emp.parentId).toBe("coo1")
-    expect(emp.label).toBe("pravko-lead") // employee fallback when no title
+    expect(emp.label).toBe("content-lead") // employee fallback when no title
     const coo = nodes.find((n) => n.id === "coo1")!
     expect(coo.depth).toBe(1)
-    expect(coo.label).toBe("Pravko")
+    expect(coo.label).toBe("Content")
     expect(coo.status).toBe("running")
   })
 })
@@ -1872,7 +1872,7 @@ git commit -m "feat(talk-web): history rail with tappable links; finalize entrie
 
 - [ ] **Step 1: Build the worktree**
 
-Run: `cd /Users/jimmyenglish/Projects/jinn-mission-control && pnpm build`
+Run: `cd <worktree> && pnpm build`
 Expected: clean. ⚠️ Never `pnpm --filter @jinn/web build --force` (vite rejects `--force` and ships a stale web/out). The jinn-cli build copies `web/out` → `dist/web`.
 
 - [ ] **Step 2: Write the smoke script**

@@ -1,7 +1,7 @@
 # ICI-419: Gemini CLI Engine - Design Spec
 
 **Date**: 2026-03-21
-**Author**: jimmy-dev
+**Author**: platform-dev
 **Ticket**: ICI-419
 **Status**: Approved
 

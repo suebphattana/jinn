@@ -177,7 +177,7 @@ const queryClient = new QueryClient({
 │  ├ Session title... │
 │  └ Session title... │
 ├─────────────────────┤
-│ ▼ pravko-lead (3)   │  ← expandable
+│ ▼ content-lead (3)   │  ← expandable
 │  │ 🟢 Latest msg... │  ← preview
 │  │    2 min ago     │
 │  ├ 🔵 Running task  │
@@ -185,8 +185,8 @@ const queryClient = new QueryClient({
 │  └ ⚪ Old session   │
 │      yesterday      │
 │                     │
-│ ▶ homy-lead (1)     │  ← collapsed
-│ ▶ sqlnoir-lead (2)  │
+│ ▶ ops-lead (1)     │  ← collapsed
+│ ▶ datalab-lead (2)  │
 │                     │
 │ 🤖 Direct (5)       │  ← Jimbo sessions
 │  ├ Session title... │
@@ -229,7 +229,7 @@ const queryClient = new QueryClient({
 **Layout** (between header and chat area, 36px height):
 ```
 ┌──────────────────────────────────────────────────┐
-│ [🟢 pravko-lead ×] [🔵 homy-lead ×] [+ New]    │
+│ [🟢 content-lead ×] [🔵 ops-lead ×] [+ New]    │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -264,7 +264,7 @@ const queryClient = new QueryClient({
 **Layout (dual)**:
 ```
 ┌─────────────────────┬─────────────────────┐
-│ Tab: pravko-lead    │ Tab: homy-lead      │
+│ Tab: content-lead    │ Tab: ops-lead      │
 ├─────────────────────┼─────────────────────┤
 │                     │                     │
 │  Chat messages      │  Chat messages      │
@@ -394,8 +394,8 @@ const queryClient = new QueryClient({
 
 **Examples**:
 - Dashboard → `Dashboard`
-- Chat with employee → `Chat > pravko-lead`
-- Chat with specific session → `Chat > pravko-lead > Blog Strategy`
+- Chat with employee → `Chat > content-lead`
+- Chat with specific session → `Chat > content-lead > Blog Strategy`
 - Cron job runs → `Cron > daily-report > Runs`
 - Settings → `Settings`
 
@@ -443,7 +443,7 @@ CREATE TABLE goals (
 - Filter bar: by status, department, level
 
 **Kanban integration**:
-- Kanban boards are currently stored as JSON files (`board.json`) in each department's org directory (e.g., `~/.jinn/org/pravko/board.json`)
+- Kanban boards are currently stored as JSON files (`board.json`) in each department's org directory (e.g., `~/.jinn/org/content/board.json`)
 - Board JSON format: `{ todo: Task[], in_progress: Task[], done: Task[] }` where each Task has `{ id, title, description, assignee, ... }`
 - Add optional `goalId: string` field to the Task type
 - When rendering kanban cards, display linked goal as small badge (goal title, truncated)
@@ -474,10 +474,10 @@ budgets:
     monthly: 100  # USD
     action: warn  # warn | pause
   employees:
-    pravko-lead:
+    content-lead:
       monthly: 30
       action: pause
-    homy-lead:
+    ops-lead:
       monthly: 20
       action: warn
 ```

@@ -196,7 +196,7 @@ describe("conversationReducer — rehydrate", () => {
   it("seeds the stream from mapped transcript + system entries", () => {
     const entries: Array<TranscriptEntry | SystemEntry> = [
       { id: "u1", role: "user", text: "hello", partial: false, full: "hello" },
-      { id: "n1", kind: "system", event: "reported", label: "Pravko blog" },
+      { id: "n1", kind: "system", event: "reported", label: "Content draft" },
       {
         id: "a1",
         role: "assistant",
@@ -207,7 +207,7 @@ describe("conversationReducer — rehydrate", () => {
     ]
     const rows = conversationReducer([], { type: "rehydrate", entries })
     expect(rows[0]).toEqual({ kind: "user", id: "u1", text: "hello" })
-    expect(rows[1]).toMatchObject({ kind: "system", id: "n1", event: "reported", label: "Pravko blog" })
+    expect(rows[1]).toMatchObject({ kind: "system", id: "n1", event: "reported", label: "Content draft" })
     // assistant seeded from `full`, re-split into sentences, finalized
     expect(rows[2]).toEqual({
       kind: "aura",

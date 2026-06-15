@@ -33,7 +33,7 @@ for subsidy. (Confirmed the strip exists and removes both vars.)
 
 ## EMPIRICAL: NOT captured this session (honest)
 Attempts that failed to yield an attributable value:
-- Transcript read: ~/.claude/projects/-Users-jimmyenglish--jinn/ is polluted by every
+- Transcript read: ~/.claude/projects/<repo-id>/ is polluted by every
   claude with cwd ~/.jinn (incl. this agent) ⇒ not attributable.
 - Forced --session-id PTY spawns: transcript "NOT FOUND" in-window (throwaway spawn
   killed before persist).

@@ -31,7 +31,7 @@ Anthropic stops subsidizing `claude -p` (headless one-shot) under the Max subscr
 **Functionally, interactive already covers a single turn end-to-end** (it returns a normal `EngineResult`; no human needs to watch). The blocker is **scale**, not capability.
 
 ## The key risk: concurrency under unattended load
-The org has **34 active cron jobs** plus employee/child delegations. These fire **headlessly and can overlap** (e.g. the pravko/asomaniac blog pipelines, weekly digests, proactive-research all share morning windows). With headless, 10 simultaneous turns = 10 short processes that exit. With interactive:
+The org has **34 active cron jobs** plus employee/child delegations. These fire **headlessly and can overlap** (e.g. the content/keywordtool blog pipelines, weekly digests, proactive-research all share morning windows). With headless, 10 simultaneous turns = 10 short processes that exit. With interactive:
 - Each turn spawns/holds a **warm PTY** (a full `claude` process) kept alive 10 min after the turn.
 - `maxLivePtys=8`; `evictLru` can't evict a PTY with a **running** turn → under a burst of >8 concurrent turns, live PTYs **grow past the cap** (no hard backpressure) → many heavyweight `claude` processes + node-pty FDs at once = memory/FD pressure, possible host instability.
 - Plus per-session hook-relay `--settings` files and a loopback hook callback per live session.

@@ -37,13 +37,13 @@ Frustrated OpenClaw users + Claude Code / Codex power users who want multi-agent
 ## Repo Foundation
 
 ### Rename
-- GitHub: `hristo2612/jimmy` → `hristo2612/jinn`
+- GitHub: `<owner>/legacy-cli` → `<owner>/jinn`
 - npm package already `jinn-cli` - no change needed
 
 ### README Updates
 - Keep current intro (already good)
 - Add demo GIF (`assets/jinn-showcase.gif` - converted from desktop recording)
-- Fix dev clone URL placeholder (`your-org/jinn` → `hristo2612/jinn`)
+- Fix dev clone URL placeholder (`<owner>/jinn` → `<owner>/jinn`)
 - Add "Why Jinn?" or "vs OpenClaw" comparison section (factual, link-backed)
 
 ## Marketing Architecture

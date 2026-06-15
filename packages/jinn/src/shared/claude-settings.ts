@@ -97,7 +97,7 @@ export function cleanupSessionSettings(dir: string, sessionId: string): void {
  * dialogs, so on any install where onboarding is not already complete (fresh,
  * headless/CI, or after a Claude Code upgrade resets onboarding for a new
  * version) every work turn hangs forever before reaching the API. Pre-seeding
- * these flags at gateway boot answers the dialogs up front. See hristo2612/jinn#66.
+ * these flags at gateway boot answers the dialogs up front. See upstream issue #66.
  */
 export function seedTrust(claudeJsonPath: string, projectDir: string): void {
   const realDir = fs.realpathSync(projectDir);

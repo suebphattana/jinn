@@ -38,7 +38,7 @@ describe("TurnResolver — native command never persists a stale Stop message", 
     // turn's text. A native turn must NOT persist that stale text.
     const r = new TurnResolver({ fallbackSessionId: "sid", assumeStarted: true, native: true });
     const get = probe(r);
-    r.onHook({ hook_event_name: "Stop", session_id: "sid", last_assistant_message: "Hey Hristo! 👋 (previous turn)" });
+    r.onHook({ hook_event_name: "Stop", session_id: "sid", last_assistant_message: "Previous assistant message (previous turn)" });
     await Promise.resolve();
     expect(get()?.result).toBe("");
   });

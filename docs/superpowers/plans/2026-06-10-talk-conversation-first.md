@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Fastify-style route handlers (existing patterns in `talk/routes.ts`), better-sqlite3 FTS5, React 18 (packages/web — NO semicolons), vitest both packages.
 
-**Repo:** worktree `/Users/jimmyenglish/Projects/jinn-mission-control`, branch `talk-conversation-first`. Backend code uses semicolons; web code does not. Run backend tests with `pnpm --filter jinn-cli test -- <file>` and web tests with `pnpm --filter @jinn/web test -- <file>` from the worktree root. NEVER touch `~/Projects/jinn` (live gateway) or `~/.jinn/talk/*` (live persona). No Co-Authored-By lines in commits.
+**Repo:** worktree `<worktree>`, branch `talk-conversation-first`. Backend code uses semicolons; web code does not. Run backend tests with `pnpm --filter jinn-cli test -- <file>` and web tests with `pnpm --filter @jinn/web test -- <file>` from the worktree root. NEVER touch `~/Projects/jinn` (live gateway) or `~/.jinn/talk/*` (live persona). No Co-Authored-By lines in commits.
 
 **Analysis references (read if you need context):** `docs/superpowers/specs/2026-06-10-talk-mission-control-design.md` (previous round). Root causes this round: (1) `tts-stream.ts` `flushTalkSpeech` deletes turn state before awaiting the synth chain → consecutive turns interleave, frontend `last:true` handling kills turn-2 audio; (2) zero server-side text sanitization before Kokoro + `callbacks.ts` wake message injects raw UUIDs into the model's context; (3) graph plumbing works but the persona never delegates, and delegation is invisible in the transcript.
 
@@ -81,7 +81,7 @@
 - Modify: `packages/web/src/routes/talk/types.ts` (entry kind)
 - Test: `packages/web/src/routes/talk/__tests__/rehydrate.test.ts`
 
-- [ ] **Step 1: Failing test:** `messagesToEntries` maps a `{role:"notification", content:"📩 Thread \"Pravko blog\" reported back. …"}` message to `{ kind: "system", event: "reported", label: "Pravko blog" }` (label parsed from the quoted segment; unparsable notification → `{kind:"system", event:"info", label: first 60 chars}`). User/assistant mapping unchanged.
+- [ ] **Step 1: Failing test:** `messagesToEntries` maps a `{role:"notification", content:"📩 Thread \"Content blog\" reported back. …"}` message to `{ kind: "system", event: "reported", label: "Content blog" }` (label parsed from the quoted segment; unparsable notification → `{kind:"system", event:"info", label: first 60 chars}`). User/assistant mapping unchanged.
 - [ ] **Step 2-4: red → implement → green.** Keep the entry type additions minimal — Task 9 consumes them.
 - [ ] **Step 5: Commit** `feat(talk): keep notification rows on rehydrate as system entries`
 

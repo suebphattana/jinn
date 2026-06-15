@@ -1,7 +1,7 @@
 # Interactive TUI Engine - Design Spec
 
 **Date**: 2026-05-14
-**Author**: jimmy-dev
+**Author**: platform-dev
 **Status**: Draft - pending review
 
 ## Summary

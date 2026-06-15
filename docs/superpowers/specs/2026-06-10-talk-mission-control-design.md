@@ -23,7 +23,7 @@ New route in `talk/routes.ts`. One endpoint owns spawn-vs-continue:
 
 ```json
 { "sessionId": "<talk-session-id>", "thread": "new" | "<coo-session-id>",
-  "label": "Pravko pipeline", "brief": "<expanded brief>" }
+  "label": "Content pipeline", "brief": "<expanded brief>" }
 ```
 
 - `thread: "new"` → creates a COO child (`parentSessionId = sessionId`, no employee, default engine), sets `title = label`, returns `{ threadId, created: true }`.
@@ -37,8 +37,8 @@ In `buildContext()` (`sessions/context.ts`, called from `api.ts:2176` for `sourc
 
 ```
 ## Your open COO threads
-- a3f9c2 "Pravko pipeline" — running, last activity 2m ago
-- 7b14e0 "MoveKit order" — idle, last activity 1h ago
+- a3f9c2 "Content pipeline" — running, last activity 2m ago
+- 7b14e0 "Platform order" — idle, last activity 1h ago
 (use POST /api/talk/delegate with thread:"<id>" to continue one, thread:"new" for a new topic)
 ```
 

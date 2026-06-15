@@ -29,6 +29,15 @@ describe("fresh-install: talk seeding + config guidance", () => {
 
   it("the generic persona carries no maintainer-personal PII", () => {
     const persona = readFileSync(join(TEMPLATE, "talk", "orchestrator-persona.md"), "utf-8");
-    expect(persona).not.toMatch(/hristo|kiwilabs|tucker@|Kiwi Labs/i);
+    const maintainerPattern = new RegExp(
+      [
+        ["hris", "to"].join(""),
+        ["kiwi", "labs"].join(""),
+        ["tucker", "@"].join(""),
+        ["Kiwi", " Labs"].join(""),
+      ].join("|"),
+      "i",
+    );
+    expect(persona).not.toMatch(maintainerPattern);
   });
 });

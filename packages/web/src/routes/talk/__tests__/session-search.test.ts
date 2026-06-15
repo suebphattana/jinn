@@ -95,7 +95,7 @@ describe("mapSearchResults", () => {
       {
         sessionId: "s1",
         title: "Stripe refunds",
-        employee: "movekit-support",
+        employee: "support-lead",
         source: "employee",
         lastActivity: "2026-06-10T00:00:00Z",
         status: "idle",
@@ -123,7 +123,7 @@ describe("mapSearchResults", () => {
 
   it("builds meta from employee · source · relative time", () => {
     const rows = mapSearchResults(apiResponse, [], Date.parse("2026-06-10T00:05:00Z"))
-    expect(rows[0].meta).toBe("movekit-support · employee · 5m ago")
+    expect(rows[0].meta).toBe("support-lead · employee · 5m ago")
     // No employee → source · time only.
     expect(rows[1].meta).toBe("direct · 5m ago")
   })

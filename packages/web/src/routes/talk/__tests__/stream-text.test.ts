@@ -3,8 +3,8 @@ import { joinStreamChunks } from "../stream-text"
 
 describe("joinStreamChunks", () => {
   it("inserts a space when prev ends with sentence punctuation and chunk starts with a capital", () => {
-    expect(joinStreamChunks("Delegating to the MoveKit Lead now.", "On it. I'll surface the rest."))
-      .toBe("Delegating to the MoveKit Lead now. On it. I'll surface the rest.")
+    expect(joinStreamChunks("Delegating to the Platform Lead now.", "On it. I'll surface the rest."))
+      .toBe("Delegating to the Platform Lead now. On it. I'll surface the rest.")
   })
 
   it("leaves chunks that already start with whitespace unchanged", () => {

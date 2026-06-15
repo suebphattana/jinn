@@ -46,9 +46,9 @@ const listChildSessions = (pid: string) =>
 function seedTree() {
   sessions.clear();
   sessions.set("root", s("root", { source: "talk" }));
-  sessions.set("coo1", s("coo1", { parentSessionId: "root", title: "Pravko", status: "running" }));
-  sessions.set("coo2", s("coo2", { parentSessionId: "root", title: "MoveKit" }));
-  sessions.set("emp1", s("emp1", { parentSessionId: "coo1", title: null, employee: "pravko-lead", status: "running" }));
+  sessions.set("coo1", s("coo1", { parentSessionId: "root", title: "Content", status: "running" }));
+  sessions.set("coo2", s("coo2", { parentSessionId: "root", title: "Support" }));
+  sessions.set("emp1", s("emp1", { parentSessionId: "coo1", title: null, employee: "content-lead", status: "running" }));
 }
 
 describe("resolveTalkRoot", () => {
@@ -76,10 +76,10 @@ describe("buildGraphSnapshot", () => {
     const emp = nodes.find((n) => n.id === "emp1")!;
     expect(emp.depth).toBe(2);
     expect(emp.parentId).toBe("coo1");
-    expect(emp.label).toBe("pravko-lead"); // employee fallback when no title
+    expect(emp.label).toBe("content-lead"); // employee fallback when no title
     const coo = nodes.find((n) => n.id === "coo1")!;
     expect(coo.depth).toBe(1);
-    expect(coo.label).toBe("Pravko");
+    expect(coo.label).toBe("Content");
     expect(coo.status).toBe("running");
   });
 });

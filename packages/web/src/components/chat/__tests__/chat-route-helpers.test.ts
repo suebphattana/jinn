@@ -28,11 +28,11 @@ describe('resolveDeepLink', () => {
 
   it('ignores whitespace-only values and trims real ones', () => {
     expect(link('session=%20%20')).toBeNull()
-    expect(link('employee=%20pravko-lead%20')).toEqual({ kind: 'employee', name: 'pravko-lead' })
+    expect(link('employee=%20content-lead%20')).toEqual({ kind: 'employee', name: 'content-lead' })
   })
 
   it('falls back to employee when session is empty but employee is set', () => {
-    expect(link('session=&employee=homy-lead')).toEqual({ kind: 'employee', name: 'homy-lead' })
+    expect(link('session=&employee=support-lead')).toEqual({ kind: 'employee', name: 'support-lead' })
   })
 })
 

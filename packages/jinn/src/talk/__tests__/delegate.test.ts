@@ -53,7 +53,7 @@ function deps(over: Partial<DelegateDeps> = {}): DelegateDeps {
   return {
     getSession: (id) => (id === "t1" ? fakeSession({}) : undefined),
     listChildSessions: () => [
-      fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Pravko" }),
+      fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Content" }),
     ],
     spawnChild: vi.fn(async () => ({ id: "new-child" })),
     continueThread: vi.fn(async () => {}),
@@ -68,16 +68,16 @@ describe("delegateToThread", () => {
   it("spawns a new COO child with thread:'new', sets title, emits thread label", async () => {
     const d = deps();
     const r = await delegateToThread(
-      { sessionId: "t1", thread: "new", label: "Pravko pipeline", brief: "Run phase 2" },
+      { sessionId: "t1", thread: "new", label: "Content pipeline", brief: "Run phase 2" },
       d,
     );
     expect(r).toEqual({ ok: true, threadId: "new-child", created: true });
     expect(d.spawnChild).toHaveBeenCalledWith({ prompt: "Run phase 2", parentSessionId: "t1" });
-    expect(d.updateSession).toHaveBeenCalledWith("new-child", { title: "Pravko pipeline" });
+    expect(d.updateSession).toHaveBeenCalledWith("new-child", { title: "Content pipeline" });
     expect(d.emit).toHaveBeenCalledWith("talk:thread:label", {
       sessionId: "t1",
       threadId: "new-child",
-      label: "Pravko pipeline",
+      label: "Content pipeline",
     });
   });
 
@@ -87,7 +87,7 @@ describe("delegateToThread", () => {
         id === "t1"
           ? fakeSession({})
           : id === "c1"
-            ? fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Pravko" })
+            ? fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Content" })
             : undefined,
     });
     const r = await delegateToThread({ sessionId: "t1", thread: "c1", brief: "Follow up" }, d);
@@ -100,7 +100,7 @@ describe("delegateToThread", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.status).toBe(400);
-      expect(r.threads).toEqual([{ id: "c1", label: "Pravko", status: "idle" }]);
+      expect(r.threads).toEqual([{ id: "c1", label: "Content", status: "idle" }]);
     }
   });
 
@@ -121,12 +121,12 @@ describe("delegateToThread", () => {
   it("defaults the label from the brief when omitted on a new thread", async () => {
     const d = deps();
     await delegateToThread(
-      { sessionId: "t1", thread: "new", brief: "Check the MoveKit order status please" },
+      { sessionId: "t1", thread: "new", brief: "Check the pipeline order status please" },
       d,
     );
     // Brief is 37 chars → slice(0,35).trimEnd() + "…"
     expect(d.updateSession).toHaveBeenCalledWith("new-child", {
-      title: "Check the MoveKit order status plea…",
+      title: "Check the pipeline order status ple…",
     });
   });
 
@@ -143,7 +143,7 @@ describe("delegateToThread", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.status).toBe(400);
-      expect(r.threads).toEqual([{ id: "c1", label: "Pravko", status: "idle" }]);
+      expect(r.threads).toEqual([{ id: "c1", label: "Content", status: "idle" }]);
     }
     expect(d.continueThread).not.toHaveBeenCalled();
   });
@@ -189,7 +189,7 @@ describe("delegateToThread", () => {
         id === "t1"
           ? fakeSession({})
           : id === "c1"
-            ? fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Pravko" })
+            ? fakeSession({ id: "c1", source: "web", parentSessionId: "t1", title: "Content" })
             : undefined,
     });
     await delegateToThread(
@@ -212,7 +212,7 @@ describe("delegateToThread", () => {
         id === "t1"
           ? fakeSession({})
           : id === "emp"
-            ? fakeSession({ id: "emp", source: "web", parentSessionId: "someone-else", title: "Pravko" })
+            ? fakeSession({ id: "emp", source: "web", parentSessionId: "someone-else", title: "Content" })
             : id === "talk2"
               ? fakeSession({ id: "talk2", source: "talk" })
               : undefined,

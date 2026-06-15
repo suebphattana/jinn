@@ -352,7 +352,7 @@ import { ThreadCard } from "../thread-card"
 import type { GraphNode } from "../graph-store"
 
 const node = (over: Partial<GraphNode>): GraphNode => ({
-  id: "t1", parentId: "root", depth: 1, label: "Movekit Lead", employee: null,
+  id: "t1", parentId: "root", depth: 1, label: "Platform Lead", employee: null,
   status: "running", lastActivity: "2026-06-11T00:00:00Z", ...over,
 })
 
@@ -360,8 +360,8 @@ describe("ThreadCard", () => {
   it("renders route, brief, live activity and status", () => {
     const graph = [node({ briefExcerpt: "Audit the funnel" })]
     const activity = new Map([["t1", { activity: "reading…" }]])
-    render(<ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Movekit Lead" />)
-    expect(screen.getByText(/AURA → Movekit Lead/)).toBeInTheDocument()
+    render(<ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Platform Lead" />)
+    expect(screen.getByText(/AURA → Platform Lead/)).toBeInTheDocument()
     expect(screen.getByText(/Audit the funnel/)).toBeInTheDocument()
     expect(screen.getByText("reading…")).toBeInTheDocument()
     expect(screen.getByText("working")).toBeInTheDocument()
@@ -373,7 +373,7 @@ describe("ThreadCard", () => {
       node({ id: "g1", parentId: "t1", depth: 2, label: "Funnel Analyst", status: "running" }),
       node({ id: "gg1", parentId: "g1", depth: 3, label: "Query Runner", status: "idle" }),
     ]
-    render(<ThreadCard threadId="t1" graph={graph} activity={new Map()} fallbackLabel="Movekit Lead" />)
+    render(<ThreadCard threadId="t1" graph={graph} activity={new Map()} fallbackLabel="Platform Lead" />)
     expect(screen.getByText(/Funnel Analyst/)).toBeInTheDocument()
     expect(screen.getByText(/Query Runner/)).toBeInTheDocument()
     const rows = screen.getAllByRole("button", { name: /open thread/i })
@@ -384,7 +384,7 @@ describe("ThreadCard", () => {
     const graph = [node({ status: "idle" })]
     const activity = new Map([["t1", { reportExcerpt: "Funnel audit done: 3 fixes." }]])
     const { container } = render(
-      <ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Movekit Lead" />,
+      <ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Platform Lead" />,
     )
     expect(screen.getByText(/Funnel audit done/)).toBeInTheDocument()
     expect(container.querySelector(".tcard")?.getAttribute("data-status")).toBe("done")

@@ -68,20 +68,20 @@ describe("searchTalkSessions", () => {
 
   describe("happy path — title hits only", () => {
     it("returns sessions with empty hits array when no message hits", () => {
-      const s1 = makeSession("s1", { title: "MoveKit pipeline", employee: null });
-      const s2 = makeSession("s2", { title: "MoveKit support", employee: "movekit-lead" });
+      const s1 = makeSession("s1", { title: "Build pipeline", employee: null });
+      const s2 = makeSession("s2", { title: "Support queue", employee: "support-lead" });
       const deps = makeDeps({
         searchSessions: () => [s1, s2],
         searchMessages: () => [],
         getSession: (id) => (id === "s1" ? s1 : id === "s2" ? s2 : undefined),
       });
-      const r = searchTalkSessions("movekit", deps);
+      const r = searchTalkSessions("support", deps);
       expect(r).toEqual({
         ok: true,
         results: [
           {
             sessionId: "s1",
-            title: "MoveKit pipeline",
+            title: "Build pipeline",
             employee: null,
             source: "web",
             lastActivity: "2026-06-10T00:00:00Z",
@@ -91,8 +91,8 @@ describe("searchTalkSessions", () => {
           },
           {
             sessionId: "s2",
-            title: "MoveKit support",
-            employee: "movekit-lead",
+            title: "Support queue",
+            employee: "support-lead",
             source: "web",
             lastActivity: "2026-06-10T00:00:00Z",
             status: "idle",
@@ -152,18 +152,18 @@ describe("searchTalkSessions", () => {
 
   describe("de-duplication — title hit wins position", () => {
     it("title-hit session keeps its position when also a content hit", () => {
-      const s1 = makeSession("s1", { title: "movekit pipeline" });
+      const s1 = makeSession("s1", { title: "release pipeline" });
       const s2 = makeSession("s2");
       const messageHits: MessageSearchResult[] = [
-        { sessionId: "s2", snippet: "«movekit» content", role: "user", timestamp: 2000 },
-        { sessionId: "s1", snippet: "«movekit» in body", role: "assistant", timestamp: 1500 },
+        { sessionId: "s2", snippet: "«release» content", role: "user", timestamp: 2000 },
+        { sessionId: "s1", snippet: "«release» in body", role: "assistant", timestamp: 1500 },
       ];
       const deps = makeDeps({
         searchSessions: () => [s1],
         searchMessages: () => messageHits,
         getSession: (id) => (id === "s1" ? s1 : id === "s2" ? s2 : undefined),
       });
-      const r = searchTalkSessions("movekit", deps);
+      const r = searchTalkSessions("release", deps);
       expect(r.ok).toBe(true);
       if (!r.ok) throw new Error("expected ok");
       expect(r.results).toHaveLength(2);
@@ -171,12 +171,12 @@ describe("searchTalkSessions", () => {
       expect(r.results[0].sessionId).toBe("s1");
       // s1 also has the content hit attached
       expect(r.results[0].hits).toEqual([
-        { snippet: "«movekit» in body", role: "assistant", ts: 1500 },
+        { snippet: "«release» in body", role: "assistant", ts: 1500 },
       ]);
       // s2 was content-only → second
       expect(r.results[1].sessionId).toBe("s2");
       expect(r.results[1].hits).toEqual([
-        { snippet: "«movekit» content", role: "user", ts: 2000 },
+        { snippet: "«release» content", role: "user", ts: 2000 },
       ]);
     });
 
@@ -342,7 +342,7 @@ describe("searchTalkSessions", () => {
     it("session found only via content carries full metadata from getSession", () => {
       const session = makeSession("cx1", {
         title: "Special Title",
-        employee: "movekit-support",
+        employee: "support-lead",
         source: "talk",
         status: "running",
         lastActivity: "2026-06-10T09:00:00Z",
@@ -363,7 +363,7 @@ describe("searchTalkSessions", () => {
       expect(r.results[0]).toEqual({
         sessionId: "cx1",
         title: "Special Title",
-        employee: "movekit-support",
+        employee: "support-lead",
         source: "talk",
         lastActivity: "2026-06-10T09:00:00Z",
         status: "running",

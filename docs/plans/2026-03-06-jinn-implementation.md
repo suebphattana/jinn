@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js, TypeScript, pnpm, Turborepo, better-sqlite3, node-cron, @slack/bolt, @openai/codex-sdk, commander, chokidar, ws, Next.js 15, Tailwind CSS
 
-**Design Doc:** `docs/plans/2026-03-06-jimmy-design.md`
+**Design Doc:** `docs/plans/2026-03-06-jinn-design.md`
 
 ---
 

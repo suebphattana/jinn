@@ -7,7 +7,7 @@ const node = (over: Partial<GraphNode>): GraphNode => ({
   id: "t1",
   parentId: "root",
   depth: 1,
-  label: "Movekit Lead",
+  label: "Platform Lead",
   employee: null,
   status: "running",
   lastActivity: "2026-06-11T00:00:00Z",
@@ -18,8 +18,8 @@ describe("ThreadCard", () => {
   it("renders route, brief, live activity and status", () => {
     const graph = [node({ briefExcerpt: "Audit the funnel" })]
     const activity = new Map([["t1", { activity: "reading…" }]])
-    render(<ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Movekit Lead" />)
-    expect(screen.getByText(/AURA → Movekit Lead/)).toBeTruthy()
+    render(<ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Platform Lead" />)
+    expect(screen.getByText(/AURA → Platform Lead/)).toBeTruthy()
     expect(screen.getByText(/Audit the funnel/)).toBeTruthy()
     expect(screen.getByText("reading…")).toBeTruthy()
     expect(screen.getByText("working")).toBeTruthy()
@@ -31,7 +31,7 @@ describe("ThreadCard", () => {
       node({ id: "g1", parentId: "t1", depth: 2, label: "Funnel Analyst", status: "running" }),
       node({ id: "gg1", parentId: "g1", depth: 3, label: "Query Runner", status: "idle" }),
     ]
-    render(<ThreadCard threadId="t1" graph={graph} activity={new Map()} fallbackLabel="Movekit Lead" />)
+    render(<ThreadCard threadId="t1" graph={graph} activity={new Map()} fallbackLabel="Platform Lead" />)
     expect(screen.getByText(/Funnel Analyst/)).toBeTruthy()
     expect(screen.getByText(/Query Runner/)).toBeTruthy()
     // After the listitem-wrapper fix: head + sub-row buttons are all role="button";
@@ -46,7 +46,7 @@ describe("ThreadCard", () => {
     const graph = [node({ status: "idle" })]
     const activity = new Map([["t1", { reportExcerpt: "Funnel audit done: 3 fixes." }]])
     const { container } = render(
-      <ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Movekit Lead" />,
+      <ThreadCard threadId="t1" graph={graph} activity={activity} fallbackLabel="Platform Lead" />,
     )
     expect(screen.getByText(/Funnel audit done/)).toBeTruthy()
     expect(container.querySelector(".tcard")?.getAttribute("data-status")).toBe("done")
@@ -78,12 +78,12 @@ describe("ThreadCard", () => {
         threadId="t1"
         graph={[node({})]}
         activity={new Map()}
-        fallbackLabel="Movekit Lead"
+        fallbackLabel="Platform Lead"
         sideState={new Map([["t1", { labelOverride: "My audit" }]])}
       />,
     )
     expect(screen.getByText(/AURA → My audit/)).toBeTruthy()
-    expect(screen.queryByText(/AURA → Movekit Lead/)).toBeNull()
+    expect(screen.queryByText(/AURA → Platform Lead/)).toBeNull()
   })
 
   it("a user rename override (sideState) wins on a sub-row label", () => {
@@ -96,7 +96,7 @@ describe("ThreadCard", () => {
         threadId="t1"
         graph={graph}
         activity={new Map()}
-        fallbackLabel="Movekit Lead"
+        fallbackLabel="Platform Lead"
         sideState={new Map([["g1", { labelOverride: "Renamed Analyst" }]])}
       />,
     )
@@ -125,7 +125,7 @@ describe("ThreadCard", () => {
         threadId="t1"
         graph={graph}
         activity={new Map()}
-        fallbackLabel="Movekit Lead"
+        fallbackLabel="Platform Lead"
         onOpenThread={onOpenThread}
       />,
     )

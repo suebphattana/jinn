@@ -14,7 +14,7 @@
 ## Problem diagnosis (grounded in code)
 
 1. **Off-center chat:** `.talk-main` is flex `stage + rail`; at ≥720px the WorkDock rail (`flex: 0 0 auto`) steals column width on the right, so the 640px transcript column centers in a *left-shifted* stage cell, not the viewport (`talk-layout.css:79-98`).
-2. **Delegation doesn't read as communication:** the entire delegation story in the transcript is a one-line pill ("⟶ delegated → Movekit Lead", `conversation-stream.tsx:77-93`). No brief, no live activity, no report content. The wealth of data the client *already receives* is discarded: `session:delta` events for every tree node (any depth) reach `use-talk.ts:656-659` and are used only to flip status to "running"; `session:completed` carries the child's final `result` text (`protocol.ts:66`) and is used only to flip status back.
+2. **Delegation doesn't read as communication:** the entire delegation story in the transcript is a one-line pill ("⟶ delegated → Platform Lead", `conversation-stream.tsx:77-93`). No brief, no live activity, no report content. The wealth of data the client *already receives* is discarded: `session:delta` events for every tree node (any depth) reach `use-talk.ts:656-659` and are used only to flip status to "running"; `session:completed` carries the child's final `result` text (`protocol.ts:66`) and is used only to flip status back.
 3. **Nesting is invisible:** the backend fully supports arbitrary-depth trees — `buildGraphSnapshot()` BFS-walks all descendants, `talk:graph` events carry `depth`, completion wakes chain up parent links — but the UI flattens depth-2+ into ≤6 anonymous 7px "mini-dots" under a chip (`work-dock.tsx:125`, `work-dock-layout.ts`).
 4. **Access is a dead-end modal:** session-peek is a centered modal that hides the conversation behind it, has no notion of where the session sits in the tree, and offers no way to descend into a sub-session.
 5. **Motion is unfinished:** the stage round deliberately deferred enter/exit choreography; per-component timings are inconsistent (460/600/320/200ms mix). The operator has now explicitly asked for "fluid animations for all the transitions" — the deferred item is in scope.
@@ -47,7 +47,7 @@ A new stream row kind `thread` (component `thread-card.tsx`) replaces the `deleg
 
 ```
 ┌──────────────────────────────────────────────┐
-│ ● AURA → Movekit Lead            ⟳ working   │   header: hue dot, route, status pill
+│ ● AURA → Platform Lead            ⟳ working   │   header: hue dot, route, status pill
 │ “Audit the funnel and split the fixes…”      │   brief excerpt (1-2 lines, quoted)
 │ ⋯ reading repo · searching pricing page      │   LIVE activity line (ticker crossfade)
 │   ↳ → Funnel Analyst        ⟳ working        │   nested sub-thread rows (indent + connector)
@@ -77,7 +77,7 @@ A new stream row kind `thread` (component `thread-card.tsx`) replaces the `deleg
 
 `thread-drawer.tsx` replaces session-peek's centered modal with a right-edge slide-in panel (width `min(480px, 92vw)`, height 100dvh, `--z-overlay`):
 
-- **Breadcrumb header:** the path from root, e.g. `AURA ▸ Movekit Lead ▸ Funnel Analyst` — each crumb clickable to navigate up. Built from graph `parentId` links.
+- **Breadcrumb header:** the path from root, e.g. `AURA ▸ Platform Lead ▸ Funnel Analyst` — each crumb clickable to navigate up. Built from graph `parentId` links.
 - **Sub-threads strip:** children of the open session as small rows (hue, label, status) — click to descend. Appears only when children exist.
 - **Transcript:** reuse `<ChatMessages>` exactly as session-peek does today (live streaming included).
 - **Attach/engage controls + engage composer:** carried over unchanged.
@@ -110,7 +110,7 @@ Backend delegate/attach endpoints, callbacks, graph BFS/events (except the addit
 - Work tree: depth rendering, collapse/expand state, click routing (replaces work-dock tests; rename/pin/dismiss behavior preserved).
 - Drawer: breadcrumb path from graph links, descend/ascend navigation, attach controls intact (port session-peek tests).
 - `briefExcerpt`: graph unit test (truncation, presence at depth 2).
-- Browser E2E on an isolated gateway: re-run prior scenarios + new nested-delegation scenario + centering assertion (transcript column centered within 8px of viewport center at 1280 and 1440 widths) + zero console errors. Fresh screenshots for Hristo.
+- Browser E2E on an isolated gateway: re-run prior scenarios + new nested-delegation scenario + centering assertion (transcript column centered within 8px of viewport center at 1280 and 1440 widths) + zero console errors. Fresh screenshots for operator.
 
 ## Error handling
 

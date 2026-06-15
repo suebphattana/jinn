@@ -41,7 +41,7 @@ export interface OrgNode {
   directReports: string[];
   /** Depth in tree (root = 0, root's reports = 1, etc.) */
   depth: number;
-  /** Path from root to this node (excluding virtual root), e.g. ["pravko-lead", "pravko-writer"] */
+  /** Path from root to this node (excluding virtual root), e.g. ["content-lead", "content-writer"] */
   chain: string[];
 }
 
@@ -410,7 +410,7 @@ describe("resolveOrgHierarchy", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd ~/Projects/jinn && pnpm --filter jimmy test -- --run src/gateway/__tests__/org-hierarchy.test.ts`
+Run: `cd ~/Projects/jinn && pnpm --filter jinn-cli test -- --run src/gateway/__tests__/org-hierarchy.test.ts`
 Expected: FAIL - module `../org-hierarchy.js` does not exist
 
 - [ ] **Step 3: Commit failing tests**
@@ -686,7 +686,7 @@ export function resolveOrgHierarchy(
 
 - [ ] **Step 2: Run tests to verify they pass**
 
-Run: `cd ~/Projects/jinn && pnpm --filter jimmy test -- --run src/gateway/__tests__/org-hierarchy.test.ts`
+Run: `cd ~/Projects/jinn && pnpm --filter jinn-cli test -- --run src/gateway/__tests__/org-hierarchy.test.ts`
 Expected: ALL PASS
 
 - [ ] **Step 3: Run full typecheck**
@@ -1970,10 +1970,10 @@ git commit -m "docs: add migration guide for hierarchical org system"
 For each department with a manager, add `reportsTo: <manager-name>` to the non-manager employees. This is optional - the smart defaults will infer the same relationships - but explicit is better.
 
 Example departments to update:
-- pravko: pravko-lead is manager → all others get `reportsTo: pravko-lead`
-- homy: homy-lead is manager → all others get `reportsTo: homy-lead`
-- sqlnoir: sqlnoir-lead is manager → sqlnoir-writer gets `reportsTo: sqlnoir-lead`
-- spycam: spycam-lead is manager → spycam-writer gets `reportsTo: spycam-lead`
+- content: content-lead is manager → all others get `reportsTo: content-lead`
+- ops: ops-lead is manager → all others get `reportsTo: ops-lead`
+- datalab: datalab-lead is manager → datalab-writer gets `reportsTo: datalab-lead`
+- cameraapp: cameraapp-lead is manager → cameraapp-writer gets `reportsTo: cameraapp-lead`
 
 Do NOT add reportsTo to:
 - Department leads/managers (they report to root via smart defaults)
@@ -2012,5 +2012,5 @@ Expected: Shows root, employee count matches org, no critical warnings
 
 - [ ] **Step 4: Test employee detail endpoint**
 
-Run: `curl -s http://0.0.0.0:7777/api/org/employees/pravko-lead | jq '{name, parentName, directReports, depth, chain}'`
-Expected: Shows hierarchy data for pravko-lead
+Run: `curl -s http://0.0.0.0:7777/api/org/employees/content-lead | jq '{name, parentName, directReports, depth, chain}'`
+Expected: Shows hierarchy data for content-lead

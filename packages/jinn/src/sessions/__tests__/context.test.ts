@@ -352,12 +352,12 @@ describe("buildContext — maxChars trimming", () => {
 describe("buildTalkThreadsSection", () => {
   it("renders a compact roster with delegate usage", () => {
     const s = buildTalkThreadsSection([
-      { id: "abc123", label: "Pravko pipeline", status: "running", lastActivity: "2026-06-10T08:00:00Z" },
-      { id: "def456", label: "MoveKit order", status: "idle", lastActivity: "2026-06-10T07:00:00Z" },
+      { id: "abc123", label: "Content pipeline", status: "running", lastActivity: "2026-06-10T08:00:00Z" },
+      { id: "def456", label: "Support order", status: "idle", lastActivity: "2026-06-10T07:00:00Z" },
     ]);
     expect(s).toContain("## Your open COO threads");
     expect(s).toContain("abc123");
-    expect(s).toContain("Pravko pipeline");
+    expect(s).toContain("Content pipeline");
     expect(s).toContain("running");
     expect(s).toContain("/api/talk/delegate");
   });

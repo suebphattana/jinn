@@ -24,8 +24,8 @@ interface ServiceDeclaration {
 Add `provides` field to employee YAMLs:
 
 ```yaml
-name: jimmy-dev
-displayName: Jimmy Dev
+name: platform-dev
+displayName: Platform Dev
 rank: senior
 department: platform
 provides:
@@ -81,8 +81,8 @@ List all available services across the org.
       "name": "code-review",
       "description": "Review PRs and provide feedback",
       "provider": {
-        "name": "jimmy-dev",
-        "displayName": "Jimmy Dev",
+        "name": "platform-dev",
+        "displayName": "Platform Dev",
         "department": "platform",
         "rank": "senior"
       }
@@ -100,7 +100,7 @@ Route a service request.
 **Request**:
 ```json
 {
-  "fromEmployee": "pravko-writer",
+  "fromEmployee": "content-writer",
   "service": "code-review",
   "prompt": "Review the new blog template component",
   "parentSessionId": "optional-parent-id"
@@ -112,12 +112,12 @@ Route a service request.
 {
   "sessionId": "new-session-id",
   "provider": {
-    "name": "jimmy-dev",
-    "displayName": "Jimmy Dev",
+    "name": "platform-dev",
+    "displayName": "Platform Dev",
     "department": "platform"
   },
-  "route": ["pravko-writer", "pravko-lead", "jimmy-dev"],
-  "managers": ["pravko-lead"],
+  "route": ["content-writer", "content-lead", "platform-dev"],
+  "managers": ["content-lead"],
   "service": "code-review"
 }
 ```
@@ -126,7 +126,7 @@ Route a service request.
 ```markdown
 ## Cross-service request
 
-**From**: Pravko Writer (pravko)
+**From**: Content Writer (content)
 **Service**: code-review - Review PRs and provide feedback
 
 ### Request
@@ -151,10 +151,10 @@ Replace the current 2-line `reportsToLine` / `directReportsLine` in `buildEmploy
 
 ```markdown
 ## Chain of command
-- **Department**: Pravko
-- **Your manager**: Pravko Lead (manager)
-- **Your direct reports**: Pravko Writer (employee), Pravko Designer (employee)
-- **Escalation path**: Pravko Lead -> Jimbo (COO)
+- **Department**: Content
+- **Your manager**: Content Lead (manager)
+- **Your direct reports**: Content Writer (employee), Content Designer (employee)
+- **Escalation path**: Content Lead -> Jimbo (COO)
 ```
 
 Built from existing `OrgNode` data: `parentName`, `directReports`, `chain`. The escalation path walks up `parentName` until root, appending `portalName (COO)` at the end.
@@ -168,7 +168,7 @@ Appended to employee prompts when services exist in the org:
 Other departments provide the following services. To request one, use the cross-request API:
 `POST http://0.0.0.0:7777/api/org/cross-request` with `{"fromEmployee": "your-name", "service": "<name>", "prompt": "<what you need>"}`
 
-- **code-review** -- provided by Jimmy Dev (senior, platform)
+- **code-review** -- provided by Platform Dev (senior, platform)
 - **keyword-research** -- provided by ASODev Growth (senior, asodev)
 ```
 

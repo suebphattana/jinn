@@ -367,7 +367,7 @@ function formatMessage(content: string): React.ReactNode {
       )
       continue
     }
-    result.push(<div key={i} className="mb-[var(--space-2)]">{inlineFormat(line)}</div>)
+    result.push(<div key={i} className="mb-[var(--space-2)] last:mb-0">{inlineFormat(line)}</div>)
   }
 
   // Close unclosed code block

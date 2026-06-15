@@ -1,12 +1,11 @@
 
-import { lazy, Suspense, useState } from "react"
+import { lazy, Suspense } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { useSettings } from "@/routes/settings-provider"
-import { Sidebar } from "./sidebar"
-import { BreadcrumbBar } from "./breadcrumb-bar"
-import { useBreadcrumbs } from "@/context/breadcrumb-context"
-import { Menu, X } from "lucide-react"
+import { PillNav } from "./pill-nav"
+import { X } from "lucide-react"
 import { NAV_ITEMS } from "@/lib/nav"
+import { isNavItemActive } from "./pill-nav"
 import { cn } from "@/lib/utils"
 
 const GlobalSearch = lazy(() => import("./global-search").then(m => ({ default: m.GlobalSearch })))
@@ -14,9 +13,9 @@ const LiveStreamWidget = lazy(() => import("./live-stream-widget").then(m => ({ 
 const OnboardingWizard = lazy(() => import("./onboarding-wizard").then(m => ({ default: m.OnboardingWizard })))
 
 /**
- * The mobile global-nav drawer (NAV_ITEMS). Extracted so it can be opened both
- * from the default MobileHeader and from the chat route's frosted header pill
- * (which replaces the mobile bar) — neither path should lose access to nav.
+ * Legacy mobile global-nav drawer (NAV_ITEMS), still consumed by the chat route
+ * until it adopts the in-surface nav swap. Non-chat pages now reach nav through
+ * the PillNav popover, so PageLayout no longer renders this itself.
  */
 export function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = useLocation().pathname
@@ -25,9 +24,6 @@ export function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () 
   const portalName = settings.portalName ?? "Jinn"
   if (!open) return null
   return (
-    // Shared mobile global-nav drawer: opened from the default MobileHeader and
-    // from the chat route's mobile-only header menu button. On desktop the 56px
-    // rail is the single nav, so this drawer is only triggered below `lg`.
     <div className="fixed inset-0 z-[120]">
       <div
         className="absolute inset-0 backdrop-blur-md"
@@ -53,7 +49,7 @@ export function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () 
         </div>
         <div className="flex flex-1 flex-col gap-1 p-2">
           {NAV_ITEMS.map((item) => {
-            const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
+            const isActive = isNavItemActive(item.href, pathname)
             const Icon = item.icon
             return (
               <Link
@@ -84,37 +80,6 @@ export function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () 
   )
 }
 
-function MobileHeader({ actions, leftActions }: { actions?: React.ReactNode; leftActions?: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
-  const { settings } = useSettings()
-  const emoji = settings.portalEmoji ?? "\u{1F9DE}"
-  const portalName = settings.portalName ?? "Jinn"
-
-  return (
-    <>
-      <div className="relative z-60 flex h-12 shrink-0 items-center border-b border-border bg-[var(--material-thick)] px-3 lg:hidden">
-        <button
-          onClick={() => setOpen(true)}
-          aria-label="Open menu"
-          className="inline-flex size-9 items-center justify-center rounded-md text-foreground transition-colors hover:bg-accent"
-        >
-          <Menu size={20} />
-        </button>
-        {leftActions && <div className="flex items-center gap-1">{leftActions}</div>}
-        <div className="flex flex-1 items-center justify-center text-center">
-          <span className="mr-1.5 text-lg">{emoji}</span>
-          <span className="text-sm font-semibold text-foreground">{portalName}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {actions}
-        </div>
-      </div>
-
-      <MobileNavDrawer open={open} onClose={() => setOpen(false)} />
-    </>
-  )
-}
-
 export function ToolbarActions({ children }: { children?: React.ReactNode }) {
   return (
     <div className="hidden items-center gap-2 lg:flex">
@@ -123,29 +88,27 @@ export function ToolbarActions({ children }: { children?: React.ReactNode }) {
   )
 }
 
-function DesktopHeader() {
-  const { items } = useBreadcrumbs()
-  if (items.length === 0) return null
-  return (
-    <div className="hidden h-12 shrink-0 items-center border-b border-border bg-[var(--material-thick)] px-5 lg:flex">
-      <BreadcrumbBar />
-    </div>
-  )
-}
-
-export function PageLayout({ children, mobileHeaderActions, mobileHeaderLeftActions, chromeless }: { children: React.ReactNode; mobileHeaderActions?: React.ReactNode; mobileHeaderLeftActions?: React.ReactNode; chromeless?: boolean }) {
+/**
+ * App shell. The persistent left rail and the solid desktop/mobile header bars
+ * are gone — every non-chat page now carries the pinned PillNav (left pill =
+ * nav + page title, right pill = optional actions). Content clears the floating
+ * pills with a top inset. `chromeless` routes (chat) draw their own pills.
+ */
+export function PageLayout({ children, headerActions, chromeless }: { children: React.ReactNode; headerActions?: React.ReactNode; chromeless?: boolean }) {
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
-      <Sidebar />
       <Suspense fallback={null}>
         <GlobalSearch />
       </Suspense>
-      <main className="flex-1 overflow-hidden flex flex-col lg:ml-[56px]">
-        {/* chromeless: the page draws its own header (chat route's frosted pills),
-            so suppress the solid mobile bar + desktop breadcrumb header entirely. */}
-        {!chromeless && <MobileHeader actions={mobileHeaderActions} leftActions={mobileHeaderLeftActions} />}
-        {!chromeless && <DesktopHeader />}
-        <div className="flex-1 overflow-hidden">
+      <main className="relative flex flex-1 flex-col overflow-hidden">
+        {!chromeless && <PillNav actions={headerActions} />}
+        <div
+          className={cn(
+            "flex-1 overflow-hidden",
+            // Clear the floating pills so content doesn't start under them.
+            !chromeless && "pt-[calc(max(var(--safe-top),12px)+52px)]",
+          )}
+        >
           {children}
         </div>
       </main>

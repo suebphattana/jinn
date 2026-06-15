@@ -524,6 +524,10 @@ export interface JinnConfig {
     port: number;
     host: string;
     streaming?: boolean;
+    /** Opt-in unsafe local convenience: allow POST /api/files to write a custom managed path. Default false. */
+    allowFileCustomPaths?: boolean;
+    /** Opt-in unsafe local convenience: allow POST /api/files {open:true} to open uploaded files. Default false. */
+    allowFileOpen?: boolean;
     /** Opt-in: when set, POST /api/sessions reads the forwarded SSO identity
      *  from this request header (set by an auth proxy such as oauth2-proxy,
      *  Traefik forward-auth, or IAP) and persists it on the session. Accepts a

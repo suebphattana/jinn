@@ -347,21 +347,40 @@ function serverError(res: ServerResponse, message: string): void {
   json(res, { error: message }, 500);
 }
 
-const SANITIZED_KEYS = new Set(["token", "botToken", "signingSecret", "appToken"]);
+const REDACTED_SECRET = "***";
+
+export function isSensitiveConfigKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    normalized.includes("token") ||
+    normalized.includes("secret") ||
+    normalized.includes("apikey") ||
+    normalized.includes("privatekey") ||
+    normalized.includes("password") ||
+    normalized === "authorization"
+  );
+}
 
 /**
- * Replace any secret-bearing string fields in a connector-shaped object with
- * the "***" sentinel. Used by GET /api/config to sanitize per-connector
- * config blocks and individual instance entries before sending to the UI.
+ * Replace any secret-bearing fields with the "***" sentinel before sending
+ * config to the UI.
  * deepMerge round-trips the sentinel back to the original value on PUT.
  */
-function sanitizeConnectorObj<T extends Record<string, unknown>>(obj: T): T {
-  const out: Record<string, unknown> = { ...obj };
-  for (const key of SANITIZED_KEYS) {
-    if (out[key]) out[key] = "***";
-    else out[key] = undefined;
+export function sanitizeConfigForApi<T>(value: T, key = ""): T {
+  if (isSensitiveConfigKey(key) && value !== undefined && value !== null && value !== "") {
+    return REDACTED_SECRET as T;
   }
-  return out as T;
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeConfigForApi(item)) as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      out[childKey] = sanitizeConfigForApi(childValue, childKey);
+    }
+    return out as T;
+  }
+  return value;
 }
 
 function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
@@ -370,7 +389,7 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
     const sv = source[key];
     const tv = target[key];
     // Skip sanitized secret placeholders — keep original value
-    if (SANITIZED_KEYS.has(key) && sv === "***") continue;
+    if (isSensitiveConfigKey(key) && sv === REDACTED_SECRET) continue;
     if (Array.isArray(sv)) {
       // For arrays (e.g. instances), preserve secrets from matching items
       if (Array.isArray(tv)) {
@@ -397,7 +416,7 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
   return result;
 }
 
-function matchRoute(
+export function matchRoute(
   pattern: string,
   pathname: string,
 ): Record<string, string> | null {
@@ -408,7 +427,18 @@ function matchRoute(
   const params: Record<string, string> = {};
   for (let i = 0; i < patternParts.length; i++) {
     if (patternParts[i].startsWith(":")) {
-      params[patternParts[i].slice(1)] = decodeURIComponent(pathParts[i]);
+      const raw = pathParts[i];
+      if (/%2f|%5c/i.test(raw)) return null;
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(raw);
+      } catch {
+        return null;
+      }
+      if (!decoded || decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\") || decoded.includes("\0")) {
+        return null;
+      }
+      params[patternParts[i].slice(1)] = decoded;
     } else if (patternParts[i] !== pathParts[i]) {
       return null;
     }
@@ -1391,25 +1421,7 @@ export async function handleApiRequest(
     // GET /api/config
     if (method === "GET" && pathname === "/api/config") {
       const config = context.getConfig();
-      // Sanitize: remove any secrets/tokens from connectors
-      const rawConnectors = config.connectors || {};
-      const sanitizedConnectors: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(rawConnectors)) {
-        if (k === "instances" && Array.isArray(v)) {
-          sanitizedConnectors.instances = v.map((inst: any) =>
-            inst && typeof inst === "object" ? sanitizeConnectorObj(inst) : inst,
-          );
-        } else if (v && typeof v === "object") {
-          sanitizedConnectors[k] = sanitizeConnectorObj(v as Record<string, unknown>);
-        } else {
-          sanitizedConnectors[k] = v;
-        }
-      }
-      const sanitized = {
-        ...config,
-        connectors: sanitizedConnectors,
-      };
-      return json(res, sanitized);
+      return json(res, sanitizeConfigForApi(config));
     }
 
     // PUT /api/config

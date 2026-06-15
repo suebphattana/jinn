@@ -56,6 +56,22 @@ export function isServablePath(absPath: string): boolean {
   });
 }
 
+export function resolveCustomUploadPath(requestedPath: string | null | undefined): string | null {
+  if (!requestedPath) return null;
+  const resolved = path.resolve(expandPath(requestedPath));
+  return isServablePath(resolved) ? resolved : null;
+}
+
+function allowCustomUploadPaths(context: ApiContext): boolean {
+  return context.getConfig().gateway?.allowFileCustomPaths === true;
+}
+
+export function allowUploadedFileOpen(context: Pick<ApiContext, "getConfig">): boolean {
+  return context.getConfig().gateway?.allowFileOpen === true;
+}
+
+class FileRequestError extends Error {}
+
 /** Delete date-bucket directories under UPLOADS_DIR older than maxAgeDays. Returns count removed. */
 export function cleanupOldUploads(maxAgeDays = 30): number {
   if (!fs.existsSync(UPLOADS_DIR)) return 0;
@@ -277,6 +293,10 @@ interface UploadResult {
 async function saveFile(result: UploadResult, context: ApiContext): Promise<FileMeta> {
   // Always sanitize the filename — it ends up as a path segment on disk and in headers.
   const safeName = sanitizeUploadFilename(result.filename);
+  const customPath = resolveCustomUploadPath(result.customPath);
+  if (result.customPath && (!allowCustomUploadPaths(context) || !customPath)) {
+    throw new FileRequestError("custom upload paths are disabled or outside managed storage");
+  }
 
   // Session-scoped uploads land in date-bucketed dirs; everything else stays in FILES_DIR/<id>/.
   const sessionScoped = !!result.sessionId;
@@ -294,19 +314,18 @@ async function saveFile(result: UploadResult, context: ApiContext): Promise<File
     size: result.buffer.length,
     mimetype,
     // For session uploads, record the absolute on-disk path so download + path-injection can find it.
-    path: sessionScoped ? storagePath : result.customPath,
+    path: sessionScoped ? storagePath : customPath,
   });
 
   // Write to custom path if provided
-  if (result.customPath) {
-    const expanded = expandPath(result.customPath);
-    await fs.promises.mkdir(path.dirname(expanded), { recursive: true });
-    await fs.promises.writeFile(expanded, result.buffer);
+  if (customPath) {
+    await fs.promises.mkdir(path.dirname(customPath), { recursive: true });
+    await fs.promises.writeFile(customPath, result.buffer);
   }
 
   // Open file if requested
-  if (result.open) {
-    const targetPath = result.customPath ? expandPath(result.customPath) : storagePath;
+  if (result.open && allowUploadedFileOpen(context)) {
+    const targetPath = customPath || storagePath;
     const { spawn } = await import("node:child_process");
     spawn("open", [targetPath], { stdio: "ignore", detached: true }).unref();
   }
@@ -365,6 +384,11 @@ async function handleMultipartUpload(req: HttpRequest, res: ServerResponse, cont
         }, context);
         json(res, meta, 201);
       } catch (err) {
+        if (err instanceof FileRequestError) {
+          badRequest(res, err.message);
+          resolve();
+          return;
+        }
         serverError(res, err instanceof Error ? err.message : "Upload failed");
       }
       resolve();
@@ -433,6 +457,9 @@ async function handleJsonUpload(req: HttpRequest, res: ServerResponse, context: 
     }, context);
     json(res, meta, 201);
   } catch (err) {
+    if (err instanceof FileRequestError) {
+      return badRequest(res, err.message);
+    }
     serverError(res, err instanceof Error ? err.message : "Upload failed");
   }
 }

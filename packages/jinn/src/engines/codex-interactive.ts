@@ -22,6 +22,10 @@ const TAIL_POLL_MS = 250;
 const DISCOVER_POLL_MS = 200;
 const DISCOVER_TIMEOUT_MS = 30 * 1000;
 
+interface TranscriptFileStat {
+  mtimeMs: number;
+}
+
 interface ActiveTurn {
   interrupt: (reason: string) => void;
   tailer?: TranscriptTailer;
@@ -29,6 +33,15 @@ interface ActiveTurn {
   doneTimer?: NodeJS.Timeout;
   hardTimeout?: NodeJS.Timeout;
   boundProc?: pty.IPty;
+}
+
+interface CodexSpawnParams {
+  model?: string;
+  effortLevel?: string;
+  resumeSessionId?: string;
+  cwd?: string;
+  bin?: string;
+  cliFlags?: string[];
 }
 
 function pasteAndSubmit(proc: pty.IPty, text: string): void {
@@ -47,10 +60,13 @@ function walkJsonl(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function listTranscriptFiles(root = CODEX_SESSIONS_DIR): Map<string, number> {
-  const files = new Map<string, number>();
+function listTranscriptFiles(root = CODEX_SESSIONS_DIR): Map<string, TranscriptFileStat> {
+  const files = new Map<string, TranscriptFileStat>();
   for (const file of walkJsonl(root)) {
-    try { files.set(file, fs.statSync(file).mtimeMs); } catch { /* gone */ }
+    try {
+      const stat = fs.statSync(file);
+      files.set(file, { mtimeMs: stat.mtimeMs });
+    } catch { /* gone */ }
   }
   return files;
 }
@@ -160,7 +176,7 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
   private active = new Map<string, ActiveTurn>();
   private streams: PtyStreamManager;
   private lastGeom = new Map<string, { cols: number; rows: number }>();
-  private spawnParams = new Map<string, { model?: string; effortLevel?: string }>();
+  private spawnParams = new Map<string, CodexSpawnParams>();
 
   constructor(private lifecycle: PtyLifecycleManager) {
     this.streams = new PtyStreamManager("Codex PTY", (id) => this.lifecycle.getWarm(id) !== undefined);
@@ -205,17 +221,28 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
       resolveFn(r);
     };
     turn.interrupt = (reason: string) =>
-      finish({ sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: latestAnswer, error: reason });
+      finish({ sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: "", error: reason });
 
     const onParsed = (parsed: ReturnType<typeof codexTranscriptLineToDeltas>) => {
       if (settled) return;
-      if (parsed.sessionId && !codexSessionId) codexSessionId = parsed.sessionId;
+      if (parsed.sessionId && !codexSessionId) {
+        codexSessionId = parsed.sessionId;
+        this.updateSpawnResumeSessionId(jinnSessionId, codexSessionId);
+      }
       if (parsed.contextTokens) lastContextTokens = parsed.contextTokens;
       if (parsed.taskStarted) {
         sawTaskStarted = true;
         startedTurnId = parsed.taskStarted.turnId ?? startedTurnId;
       }
-      for (const d of parsed.deltas) opts.onStream?.(d);
+      for (const d of parsed.deltas) {
+        if (d.type === "tool_use" || d.type === "tool_result" || d.type === "status") {
+          if (turn.doneTimer) {
+            clearTimeout(turn.doneTimer);
+            turn.doneTimer = undefined;
+          }
+        }
+        opts.onStream?.(d);
+      }
       if (parsed.taskComplete || parsed.turnAborted) {
         // A terminal marker is only trustworthy if THIS tailer saw the matching
         // task_started: a late-flushed marker from the PREVIOUS turn (or one
@@ -252,7 +279,11 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
 
     const attachTail = (filePath: string, fromBeginning = false) => {
       if (turn.tailer) return;
-      codexSessionId ||= parseSessionIdFromFile(filePath);
+      const fileSessionId = parseSessionIdFromFile(filePath);
+      if (fileSessionId && !codexSessionId) {
+        codexSessionId = fileSessionId;
+        this.updateSpawnResumeSessionId(jinnSessionId, codexSessionId);
+      }
       let offset = 0;
       if (!fromBeginning) {
         try { offset = fs.statSync(filePath).size; } catch { /* not created yet */ }
@@ -267,11 +298,11 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
 
     this.active.set(jinnSessionId, turn);
     turn.hardTimeout = setTimeout(() => {
-      finish(
-        latestAnswer
-          ? { sessionId: codexSessionId ?? "", result: latestAnswer, numTurns: 1, contextTokens: lastContextTokens }
-          : { sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: "", error: "Codex interactive turn timed out" },
-      );
+      const result = latestAnswer
+        ? { sessionId: codexSessionId ?? "", result: latestAnswer, numTurns: 1, contextTokens: lastContextTokens }
+        : { sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: "", error: "Codex interactive turn timed out" };
+      finish(result);
+      this.lifecycle.releaseSession(jinnSessionId);
     }, TURN_TIMEOUT_MS);
     turn.hardTimeout.unref?.();
 
@@ -293,13 +324,21 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
           // mtime-bumped PRE-EXISTING file is another process's transcript —
           // replaying its history from the beginning would hijack this turn.
           .filter(([file]) => !before.has(file))
-          .sort((a, b) => b[1] - a[1]);
-        if (fresh.length > 0) {
+          .sort((a, b) => b[1].mtimeMs - a[1].mtimeMs);
+        if (fresh.length === 1) {
           clearInterval(discover);
           attachTail(fresh[0][0], true);
+        } else if (fresh.length > 1) {
+          logger.warn(`CodexInteractiveEngine: ambiguous fresh transcripts for ${jinnSessionId}; waiting for a unique candidate`);
+          if (Date.now() - startedAt > DISCOVER_TIMEOUT_MS) {
+            clearInterval(discover);
+            finish({ sessionId: "", result: "", error: "Codex interactive: multiple fresh transcripts appeared; refusing ambiguous attach" });
+            this.lifecycle.releaseSession(jinnSessionId);
+          }
         } else if (Date.now() - startedAt > DISCOVER_TIMEOUT_MS) {
           clearInterval(discover);
           finish({ sessionId: "", result: "", error: "Codex interactive: no session transcript appeared" });
+          this.lifecycle.releaseSession(jinnSessionId);
         }
       }, DISCOVER_POLL_MS);
       discover.unref?.();
@@ -355,7 +394,23 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
     const prev = this.spawnParams.get(jinnSessionId);
     if (!prev) return false;
     const norm = (v: string | undefined) => v && v !== "default" ? v : undefined;
-    return norm(prev.model) !== norm(opts.model) || norm(prev.effortLevel) !== norm(opts.effortLevel);
+    const flags = (v: string[] | undefined) => codexCliFlags(v).filter(Boolean);
+    const sameFlags = (a: string[] | undefined, b: string[] | undefined) => {
+      const aa = flags(a);
+      const bb = flags(b);
+      return aa.length === bb.length && aa.every((flag, i) => flag === bb[i]);
+    };
+    return norm(prev.model) !== norm(opts.model)
+      || norm(prev.effortLevel) !== norm(opts.effortLevel)
+      || norm(prev.resumeSessionId) !== norm(opts.resumeSessionId)
+      || norm(prev.cwd) !== norm(opts.cwd)
+      || norm(prev.bin) !== norm(opts.bin)
+      || !sameFlags(prev.cliFlags, opts.cliFlags);
+  }
+
+  private updateSpawnResumeSessionId(jinnSessionId: string, resumeSessionId: string): void {
+    const prev = this.spawnParams.get(jinnSessionId);
+    if (prev && !prev.resumeSessionId) this.spawnParams.set(jinnSessionId, { ...prev, resumeSessionId });
   }
 
   private spawn(jinnSessionId: string, opts: EngineRunOpts, prompt: string | undefined, resumeSessionId: string | undefined): PtyHandle {
@@ -370,7 +425,14 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
       cwd: opts.cwd || JINN_HOME,
       env: this.buildEnv(),
     });
-    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel });
+    this.spawnParams.set(jinnSessionId, {
+      model: opts.model,
+      effortLevel: opts.effortLevel,
+      resumeSessionId,
+      cwd: opts.cwd,
+      bin: opts.bin,
+      cliFlags: opts.cliFlags,
+    });
     return this.wireProcToStream(jinnSessionId, proc);
   }
 

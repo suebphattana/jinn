@@ -118,7 +118,15 @@ export function findTranscriptForSession(
  *  carries last_assistant_message) was lost (gateway restart deleting
  *  gateway.json mid-turn, PTY crash, or SSE drop), so the parent-session
  *  callback shows real output instead of "(no output)". Exported for tests. */
-export function lastAssistantTextFromTranscript(transcriptPath: string): string | undefined {
+function transcriptLineTimestampMs(msg: any): number | undefined {
+  const raw = msg?.timestamp ?? msg?.created_at ?? msg?.createdAt;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function lastAssistantTextFromTranscript(transcriptPath: string, afterMs?: number): string | undefined {
   let raw: string;
   try { raw = fs.readFileSync(transcriptPath, "utf-8"); } catch { return undefined; }
   let last: string | undefined;
@@ -128,6 +136,10 @@ export function lastAssistantTextFromTranscript(transcriptPath: string): string 
     let msg: any;
     try { msg = JSON.parse(t); } catch { continue; }
     if (msg.type !== "assistant") continue;
+    if (afterMs !== undefined) {
+      const ts = transcriptLineTimestampMs(msg);
+      if (ts === undefined || ts < afterMs) continue;
+    }
     const content = msg?.message?.content;
     if (!Array.isArray(content)) continue;
     const text = content.filter((b: any) => b?.type === "text").map((b: any) => String(b.text ?? "")).join("");
@@ -576,6 +588,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
   async run(opts: EngineRunOpts): Promise<EngineResult> {
     const jinnSessionId = opts.sessionId;
     if (!jinnSessionId) throw new Error("InteractiveClaudeEngine.run requires opts.sessionId");
+    const turnStartedAt = Date.now();
 
     // Guard: refuse a second concurrent turn for the same session.
     if (this.active.has(jinnSessionId)) {
@@ -724,7 +737,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
         } catch {
           return;
         }
-        const recovered = lastAssistantTextFromTranscript(transcript);
+        const recovered = lastAssistantTextFromTranscript(transcript, startedAt);
         if (recovered?.trim()) {
           logger.warn(`InteractiveClaudeEngine: recovered completed turn for ${jinnSessionId} after missing Stop hook`);
           resolver.completeRecovered(recovered, sid);
@@ -769,7 +782,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (!nativeCommand && !result.error && !result.result?.trim() && !resolver.stopFailure) {
       const sid = resolver.sessionId ?? opts.resumeSessionId ?? result.sessionId;
       const recoveryPath = sid ? findTranscriptForSession(sid) : undefined;
-      const recovered = recoveryPath ? lastAssistantTextFromTranscript(recoveryPath) : undefined;
+      const recovered = recoveryPath ? lastAssistantTextFromTranscript(recoveryPath, turnStartedAt) : undefined;
       if (recovered) {
         logger.info(`Recovered ${recovered.length} chars of lost turn text for session ${jinnSessionId} from transcript (Stop hook missing)`);
         result.result = recovered;

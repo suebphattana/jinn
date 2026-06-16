@@ -9,11 +9,17 @@ describe("claude-settings", () => {
     const s = buildSessionSettings({ sessionId: "jinn-abc", relayScript: "/h/relay.mjs", statusLineDir: "/tmp/limits", appendSystemPrompt: "SYS" });
     const stop = s.hooks.Stop[0].hooks[0];
     expect(stop.type).toBe("command");
-    expect(stop.command).toMatch(/relay\.mjs.*jinn-abc/);
+    expect(stop.command).toBe("node '/h/relay.mjs' 'jinn-abc'");
     expect(s.hooks.SessionStart && s.hooks.PreToolUse && s.hooks.PostToolUse && s.hooks.StopFailure).toBeTruthy();
     expect(s.statusLine?.command).toMatch(/jinn-abc/);
     expect(s.statusLine?.command).toMatch(/\/tmp\/limits/);
     expect(s.appendSystemPrompt).toBe("SYS");
+  });
+
+  it("shell-quotes hook relay paths and session ids", () => {
+    const s = buildSessionSettings({ sessionId: "jinn ' tricky", relayScript: "/tmp/path with spaces/relay's.mjs" });
+    const stop = s.hooks.Stop[0].hooks[0];
+    expect(stop.command).toBe("node '/tmp/path with spaces/relay'\\''s.mjs' 'jinn '\\'' tricky'");
   });
 
   it("writeSessionSettings writes atomically and is readable", () => {

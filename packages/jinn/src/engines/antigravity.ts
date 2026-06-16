@@ -69,14 +69,23 @@ interface ActiveTurn {
   boundProc?: pty.IPty;
 }
 
+interface AntigravitySpawnParams {
+  resumeSessionId?: string;
+  cwd?: string;
+  model?: string;
+  bin?: string;
+}
+
 export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
   name = "antigravity" as const;
   private active = new Map<string, ActiveTurn>();
   private streams: PtyStreamManager;
   private lastGeom = new Map<string, { cols: number; rows: number }>();
+  private spawnParams = new Map<string, AntigravitySpawnParams>();
 
   constructor(private lifecycle: PtyLifecycleManager) {
     this.streams = new PtyStreamManager("Antigravity PTY", (id) => this.lifecycle.getWarm(id) !== undefined);
+    this.lifecycle.onRelease((id) => this.spawnParams.delete(id));
   }
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
@@ -89,9 +98,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     // Use the realpath as cwd: agy records workspace trust by realpath, and on
     // macOS /tmp→/private/tmp, so spawning with the raw path while trusting the
     // realpath leaves agy stuck on the trust prompt (swallowing our input).
-    let cwd = opts.cwd || JINN_HOME;
-    try { cwd = fs.realpathSync(cwd); } catch { /* dir may not exist — use as-is */ }
-    ensureWorkspaceTrusted(cwd); // pre-trust so the interactive trust gate never blocks the spawn
+    const cwd = this.prepareCwd(opts.cwd);
 
     let convId = opts.resumeSessionId; // known iff resuming an existing conversation
     let latestAnswer: string | undefined;
@@ -118,7 +125,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       resolveFn(r);
     };
     turn.interrupt = (reason: string) =>
-      finish({ sessionId: convId ?? opts.resumeSessionId ?? "", result: latestAnswer ?? "", error: reason });
+      finish({ sessionId: convId ?? opts.resumeSessionId ?? "", result: "", error: reason });
 
     const scheduleDone = (delayMs = TURN_QUIET_DONE_MS) => {
       if (!latestAnswer) return;
@@ -152,6 +159,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     // as fresh deltas.
     const attachTail = (cid: string, fromBeginning = false) => {
       if (turn.tailer) return;
+      this.updateSpawnResumeSessionId(jinnSessionId, cid);
       const tp = transcriptPathFor(cid);
       let startOffset = 0;
       if (!fromBeginning) {
@@ -172,11 +180,13 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     this.active.set(jinnSessionId, turn);
 
     turn.hardTimeout = setTimeout(
-      () => finish(
-        latestAnswer
+      () => {
+        const result = latestAnswer
           ? { sessionId: convId ?? "", result: latestAnswer, numTurns: 1 }
-          : { sessionId: convId ?? opts.resumeSessionId ?? "", result: "", error: "Antigravity turn timed out" },
-      ),
+          : { sessionId: convId ?? opts.resumeSessionId ?? "", result: "", error: "Antigravity turn timed out" };
+        finish(result);
+        this.lifecycle.releaseSession(jinnSessionId);
+      },
       TURN_TIMEOUT_MS,
     );
     turn.hardTimeout.unref?.();
@@ -191,18 +201,22 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       const interval = setInterval(() => {
         if (settled) { clearInterval(interval); return; }
         const fresh = [...listConvDirs()].filter((d) => !before.has(d));
-        if (fresh.length > 0) {
+        if (fresh.length === 1) {
           clearInterval(interval);
-          convId = fresh
-            .map((id) => {
-              try { return { id, mtime: fs.statSync(transcriptPathFor(id)).mtimeMs }; } catch { return { id, mtime: 0 }; }
-            })
-            .sort((a, b) => b.mtime - a.mtime || a.id.localeCompare(b.id))[0].id;
+          convId = fresh[0];
           logger.info(`AntigravityEngine discovered conversation ${convId} for session ${jinnSessionId}`);
           attachTail(convId, true);
+        } else if (fresh.length > 1) {
+          logger.warn(`AntigravityEngine: ambiguous fresh conversations for ${jinnSessionId}; waiting for a unique candidate`);
+          if (Date.now() - startedAt > CONV_DISCOVER_TIMEOUT_MS) {
+            clearInterval(interval);
+            finish({ sessionId: "", result: "", error: "Antigravity: multiple fresh conversations appeared; refusing ambiguous attach" });
+            this.lifecycle.releaseSession(jinnSessionId);
+          }
         } else if (Date.now() - startedAt > CONV_DISCOVER_TIMEOUT_MS) {
           clearInterval(interval);
           finish({ sessionId: "", result: "", error: "Antigravity: no conversation transcript appeared" });
+          this.lifecycle.releaseSession(jinnSessionId);
         }
       }, CONV_POLL_MS);
       interval.unref?.();
@@ -210,7 +224,16 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     }
 
     // Spawn (cold) or inject (warm). Independent of conv-id discovery above.
-    const warm = this.lifecycle.getWarm(jinnSessionId);
+    let warm = this.lifecycle.getWarm(jinnSessionId);
+    if (warm && this.spawnParamsChanged(jinnSessionId, {
+      resumeSessionId: convId,
+      cwd,
+      model: opts.model,
+      bin: opts.bin,
+    })) {
+      this.lifecycle.releaseSession(jinnSessionId);
+      warm = undefined;
+    }
     if (warm) {
       turn.boundProc = (warm as any)._proc as pty.IPty | undefined;
       this.lifecycle.turnStarted(jinnSessionId);
@@ -244,6 +267,28 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     return args;
   }
 
+  private prepareCwd(cwd: string | undefined): string {
+    let resolved = cwd || JINN_HOME;
+    try { resolved = fs.realpathSync(resolved); } catch { /* dir may not exist — use as-is */ }
+    ensureWorkspaceTrusted(resolved);
+    return resolved;
+  }
+
+  private spawnParamsChanged(jinnSessionId: string, next: AntigravitySpawnParams): boolean {
+    const prev = this.spawnParams.get(jinnSessionId);
+    if (!prev) return false;
+    const norm = (v: string | undefined) => v || undefined;
+    return norm(prev.resumeSessionId) !== norm(next.resumeSessionId)
+      || norm(prev.cwd) !== norm(next.cwd)
+      || norm(prev.model) !== norm(next.model)
+      || norm(prev.bin) !== norm(next.bin);
+  }
+
+  private updateSpawnResumeSessionId(jinnSessionId: string, resumeSessionId: string): void {
+    const prev = this.spawnParams.get(jinnSessionId);
+    if (prev && !prev.resumeSessionId) this.spawnParams.set(jinnSessionId, { ...prev, resumeSessionId });
+  }
+
   private spawn(jinnSessionId: string, opts: EngineRunOpts, cwd: string, resumeConvId: string | undefined): PtyHandle {
     const bin = resolveBin("agy", opts.bin);
     const args = this.buildArgs(resumeConvId, opts.model);
@@ -255,6 +300,12 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       rows: geom?.rows ?? 40,
       cwd,
       env: this.buildPtyEnv(),
+    });
+    this.spawnParams.set(jinnSessionId, {
+      resumeSessionId: resumeConvId,
+      cwd,
+      model: opts.model,
+      bin: opts.bin,
     });
     // Inject once the TUI is ready. A fixed delay is unreliable — agy needs a
     // few seconds to render and start accepting input. Gate on output quiescence:
@@ -336,8 +387,16 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
   /** Spawn an idle PTY for the xterm view (before the user sends a message).
    *  Resumes `engineSessionId` if given, else a fresh agy TUI. */
   ensureIdleSpawn(jinnSessionId: string, opts: PtyIdleSpawnOpts): void {
-    if (this.lifecycle.getWarm(jinnSessionId)) return;
     if (this.active.has(jinnSessionId)) return; // a turn is starting — let run() spawn
+    const cwd = this.prepareCwd(opts.cwd);
+    const warm = this.lifecycle.getWarm(jinnSessionId);
+    if (warm && !this.spawnParamsChanged(jinnSessionId, {
+      resumeSessionId: opts.engineSessionId,
+      cwd,
+      model: opts.model,
+      bin: opts.bin,
+    })) return;
+    if (warm) this.lifecycle.releaseSession(jinnSessionId);
     const bin = resolveBin("agy", opts.bin);
     const args = this.buildArgs(opts.engineSessionId, opts.model);
     const cols = opts.cols ?? this.lastGeom.get(jinnSessionId)?.cols ?? 120;
@@ -348,8 +407,14 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
       name: "xterm-256color",
       cols,
       rows,
-      cwd: opts.cwd || JINN_HOME,
+      cwd,
       env: this.buildPtyEnv(),
+    });
+    this.spawnParams.set(jinnSessionId, {
+      resumeSessionId: opts.engineSessionId,
+      cwd,
+      model: opts.model,
+      bin: opts.bin,
     });
     const handle = this.wireProcToStream(jinnSessionId, proc);
     this.lifecycle.adopt(jinnSessionId, handle);

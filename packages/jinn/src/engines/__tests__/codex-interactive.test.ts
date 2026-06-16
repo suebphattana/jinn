@@ -291,6 +291,47 @@ describe("CodexInteractiveEngine — effort/model PTY args + respawn", () => {
     expect(args[args.indexOf("--model") + 1]).toBe("gpt-5.5-codex");
     lifecycle.dispose();
   });
+
+  it("respawns the idle PTY when the resume session id changes", () => {
+    engine.ensureIdleSpawn("sess-resume", { engineSessionId: "codex-a", cwd: "/tmp" });
+    expect(spawnCalls).toHaveLength(1);
+    engine.ensureIdleSpawn("sess-resume", { engineSessionId: "codex-b", cwd: "/tmp" });
+    expect(spawnCalls).toHaveLength(2);
+    const args = lastArgs();
+    expect(args).toContain("resume");
+    expect(args).toContain("codex-b");
+    lifecycle.dispose();
+  });
+
+  it("respawns the idle PTY when cwd or bin changes", () => {
+    engine.ensureIdleSpawn("sess-env", { cwd: "/tmp/a", bin: "/tmp/codex-a" });
+    expect(spawnCalls).toHaveLength(1);
+
+    engine.ensureIdleSpawn("sess-env", { cwd: "/tmp/b", bin: "/tmp/codex-a" });
+    expect(spawnCalls).toHaveLength(2);
+
+    engine.ensureIdleSpawn("sess-env", { cwd: "/tmp/b", bin: "/tmp/codex-b" });
+    expect(spawnCalls).toHaveLength(3);
+    expect(spawnCalls[2]!.bin).toBe("/tmp/codex-b");
+    lifecycle.dispose();
+  });
+
+  it("respawns a warm PTY when run-level cliFlags change", async () => {
+    engine.ensureIdleSpawn("sess-run-flags", { cwd: "/tmp" });
+    expect(spawnCalls).toHaveLength(1);
+
+    const run = engine.run({
+      prompt: "hello",
+      sessionId: "sess-run-flags",
+      cwd: "/tmp",
+      cliFlags: ["--some-codex-flag"],
+    } as any);
+    expect(spawnCalls).toHaveLength(2);
+    expect(lastArgs()).toContain("--some-codex-flag");
+    spawnCalls[spawnCalls.length - 1]!.proc._exit(0);
+    await run;
+    lifecycle.dispose();
+  });
 });
 
 describe("CodexInteractiveEngine — terminal-marker gating + transcript discovery (run level)", () => {
@@ -393,6 +434,27 @@ describe("CodexInteractiveEngine — terminal-marker gating + transcript discove
     const result = await run;
     expect(result.result).toBe("OWN");
     expect(result.sessionId).toBe("codex-own");
+    lifecycle.dispose();
+  }, 15000);
+
+  it("does not debounce-complete an assistant message when tool activity follows", async () => {
+    const run = engine.run({ prompt: "hi", sessionId: "it-tool-1", cwd: "/tmp" });
+    let settled = false;
+    void run.then(() => { settled = true; });
+
+    const file = freshTranscriptPath();
+    fs.writeFileSync(file, sessionMeta("codex-tool-1") + taskStarted("t-tool") + assistantMessage("working"));
+    await sleep(800);
+    fs.appendFileSync(file, line({
+      type: "response_item",
+      payload: { type: "function_call", name: "exec_command", call_id: "call-1" },
+    }));
+    await sleep(3500);
+    expect(settled).toBe(false);
+
+    fs.appendFileSync(file, taskComplete("t-tool", "finished"));
+    const result = await run;
+    expect(result.result).toBe("finished");
     lifecycle.dispose();
   }, 15000);
 });

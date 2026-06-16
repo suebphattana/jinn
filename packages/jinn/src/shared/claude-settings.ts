@@ -50,7 +50,7 @@ export function buildSessionSettings(opts: SessionSettingsOpts): ClaudeSettings 
   // Relay is invoked as: node <relayScript> <jinnSessionId>
   // It reads the hook JSON on stdin and POSTs to the gateway.
   const cmd = (): HookMatcher => ({
-    hooks: [{ type: "command", command: `node ${opts.relayScript} ${opts.sessionId}` }],
+    hooks: [{ type: "command", command: `node ${shellQuote(opts.relayScript)} ${shellQuote(opts.sessionId)}` }],
   });
   return {
     hooks: {

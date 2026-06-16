@@ -255,9 +255,17 @@ function buildPiEntry(
   available: boolean,
 ): EngineRegistryEntry {
   if (discoveredPiModels && discoveredPiModels.length > 0) {
-    const models = discoveredPiModels;
+    let models = discoveredPiModels;
     const pinned = config.engines.pi?.model;
-    const defaultModel = pinned && models.some((m) => m.id === pinned) ? pinned : models[0].id;
+    if (pinned && !models.some((m) => m.id === pinned)) {
+      models = [{
+        id: pinned,
+        label: pinned,
+        supportsEffort: false,
+        effortLevels: [],
+      }, ...models];
+    }
+    const defaultModel = pinned || models[0].id;
     return { name: "pi", available, defaultModel, effortMechanism: "pi-flag", models };
   }
   if (piBlock) return fromEngineModelsConfig("pi", piBlock, available, config.engines.pi?.model);

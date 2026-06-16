@@ -178,6 +178,7 @@ export class SessionManager {
     }
 
     session = maybeRevertEngineOverride(session);
+    this.queue.clearCancelled(msg.sessionKey);
 
     const target = connector.reconstructTarget(msg.replyContext);
     target.messageTs ??= msg.messageId;
@@ -218,6 +219,13 @@ export class SessionManager {
     target: Target,
     employee?: Employee,
   ): Promise<void> {
+    const liveSession = getSession(session.id);
+    if (!liveSession) {
+      logger.warn(`Skipping queued turn for deleted session ${session.id}`);
+      return;
+    }
+    session = liveSession;
+
     const engine = this.engines.get(session.engine);
     if (!engine) {
       logger.error(`Engine "${session.engine}" not found for session ${session.id}`);
@@ -619,6 +627,11 @@ export class SessionManager {
       const responseText = result.result?.trim()
         ? result.result
         : result.error || "(No response from engine)";
+
+      if (!getSession(session.id)) {
+        logger.warn(`Dropping engine result for deleted session ${session.id}`);
+        return;
+      }
 
       insertMessage(session.id, "assistant", responseText);
       if (result.cost || result.numTurns) {

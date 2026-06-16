@@ -17,9 +17,13 @@ interface LiveProcess {
   settled: boolean;
   resolve: (res: EngineResult) => void;
   sessionIdOut: string;
+  hardTimeout?: NodeJS.Timeout;
+  agentEndExitTimer?: NodeJS.Timeout;
 }
 
 const STDERR_MAX = 10 * 1024; // 10KB rolling window for error reporting
+const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+const AGENT_END_EXIT_GRACE_MS = 5000;
 
 /**
  * Pi coding agent (https://pi.dev) run headlessly against a local model.
@@ -157,6 +161,17 @@ export class PiEngine implements InterruptibleEngine {
         sessionIdOut: piSessionId,
       };
       this.liveProcesses.set(trackingId, live);
+      live.hardTimeout = setTimeout(() => {
+        const l = this.liveProcesses.get(trackingId);
+        if (!l || l.settled) return;
+        l.terminationReason = "Pi turn timed out";
+        logger.warn(`Pi turn timed out for session ${trackingId}; terminating process`);
+        this.signalProcess(l.proc, "SIGTERM");
+        setTimeout(() => {
+          if (l.proc.exitCode === null) this.signalProcess(l.proc, "SIGKILL");
+        }, 2000).unref?.();
+      }, TURN_TIMEOUT_MS);
+      live.hardTimeout.unref?.();
 
       const onStream = opts.onStream || null;
 
@@ -213,8 +228,17 @@ export class PiEngine implements InterruptibleEngine {
             const { text, error } = this.extractFromMessages(parsed.messages);
             if (text) live.resultText = text;
             if (error) live.turnError = error;
-            // Pi exits after agent_end in -p mode; settle now and reap the process.
-            this.settle(trackingId, 0);
+            if (live.agentEndExitTimer) clearTimeout(live.agentEndExitTimer);
+            live.agentEndExitTimer = setTimeout(() => {
+              const l = this.liveProcesses.get(trackingId);
+              if (!l || l.settled || l.proc.exitCode !== null) return;
+              logger.warn(`Pi emitted agent_end for session ${trackingId} but did not exit; terminating process`);
+              this.signalProcess(l.proc, "SIGTERM");
+              setTimeout(() => {
+                if (l.proc.exitCode === null) this.signalProcess(l.proc, "SIGKILL");
+              }, 2000).unref?.();
+            }, AGENT_END_EXIT_GRACE_MS);
+            live.agentEndExitTimer.unref?.();
             break;
           }
         }
@@ -235,6 +259,7 @@ export class PiEngine implements InterruptibleEngine {
         const l = this.liveProcesses.get(trackingId);
         if (!l || l.settled) return;
         l.settled = true;
+        this.clearTimers(l);
         this.liveProcesses.delete(trackingId);
         reject(new Error(`Failed to spawn Pi agent CLI: ${err.message}`));
       });
@@ -246,13 +271,15 @@ export class PiEngine implements InterruptibleEngine {
     const live = this.liveProcesses.get(trackingId);
     if (!live || live.settled) return;
     live.settled = true;
+    this.clearTimers(live);
 
     try {
       live.rl.close();
     } catch {
       /* ignore */
     }
-    // agent_end already fired → the process is exiting; otherwise make sure it dies.
+    // `close` should mean the child is gone, but keep this defensive guard for
+    // abnormal streams/errors where settle() is called before exit accounting lands.
     if (live.proc.exitCode === null) {
       try {
         live.proc.kill();
@@ -265,23 +292,33 @@ export class PiEngine implements InterruptibleEngine {
     const result = live.resultText;
 
     if (live.terminationReason) {
-      live.resolve({ sessionId: live.sessionIdOut, result, error: live.terminationReason });
+      live.resolve({ sessionId: live.sessionIdOut, result: "", error: live.terminationReason });
       return;
     }
     // A non-empty answer means the turn succeeded even if a benign error item
     // also appeared — don't surface it as a failure.
-    if (result.trim() || code === 0) {
+    if (result.trim()) {
       live.resolve({
         sessionId: live.sessionIdOut,
         result,
-        error: result.trim() ? undefined : (live.turnError ?? undefined),
+        error: undefined,
       });
       return;
     }
 
-    const errMsg = live.turnError || `Pi process exited with code ${code}: ${live.stderr.slice(0, 500)}`;
+    const errMsg = live.turnError
+      || (code === 0
+        ? "Pi process exited successfully without a final assistant response"
+        : `Pi process exited with code ${code}: ${live.stderr.slice(0, 500)}`);
     logger.error(errMsg);
     live.resolve({ sessionId: live.sessionIdOut, result, error: errMsg });
+  }
+
+  private clearTimers(live: LiveProcess): void {
+    if (live.hardTimeout) clearTimeout(live.hardTimeout);
+    if (live.agentEndExitTimer) clearTimeout(live.agentEndExitTimer);
+    live.hardTimeout = undefined;
+    live.agentEndExitTimer = undefined;
   }
 
   /**

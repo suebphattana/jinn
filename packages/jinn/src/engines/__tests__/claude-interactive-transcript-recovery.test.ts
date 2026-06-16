@@ -32,6 +32,32 @@ describe("transcript recovery (lost Stop hook → backfill from disk)", () => {
     expect(lastAssistantTextFromTranscript(file)).toBe("FINAL turn");
   });
 
+  it("can filter recovered assistant text to the current turn by timestamp", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "jinn-tr-"));
+    const file = path.join(tmp, "timed.jsonl");
+    fs.writeFileSync(file, [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-06-16T10:00:00.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "previous" }] },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-06-16T10:00:10.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "current" }] },
+      }),
+    ].join("\n") + "\n");
+
+    expect(lastAssistantTextFromTranscript(file, Date.parse("2026-06-16T10:00:05.000Z"))).toBe("current");
+    expect(lastAssistantTextFromTranscript(file, Date.parse("2026-06-16T10:00:11.000Z"))).toBeUndefined();
+  });
+
+  it("does not timestamp-filter untimed assistant rows", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "jinn-tr-"));
+    const file = writeTranscript(tmp, "untimed", ["previous"]);
+    expect(lastAssistantTextFromTranscript(file, Date.now())).toBeUndefined();
+  });
+
   it("returns undefined for a transcript with no assistant text", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "jinn-tr-"));
     const file = path.join(tmp, "empty.jsonl");

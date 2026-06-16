@@ -699,6 +699,7 @@ export async function handleApiRequest(
       // kill() is safe to call unconditionally — it's a no-op when nothing is running.
       logger.info(`Killing engine process for deleted session ${params.id}`);
       killSessionEngines(context, session, "Interrupted: session deleted");
+      context.sessionManager.getQueue().clearQueue(session.sessionKey || session.sourceRef || session.id);
 
       maybeEmitTalkGraph(params.id, "removed", { getSession, emit: context.emit });
       const deleted = deleteSession(params.id);
@@ -864,6 +865,7 @@ export async function handleApiRequest(
         const session = getSession(id);
         if (!session) continue;
         killSessionEngines(context, session, "Interrupted: session deleted");
+        context.sessionManager.getQueue().clearQueue(session.sessionKey || session.sourceRef || session.id);
       }
 
       for (const id of ids) {

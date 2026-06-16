@@ -928,7 +928,13 @@ export async function startGateway(
     // Dedicated per-session PTY channel for the live xterm CLI view.
     const ptyMatch = reqUrl.split("?")[0].match(/^\/ws\/pty\/([^/]+)$/);
     if (ptyMatch) {
-      const sessionId = decodeURIComponent(ptyMatch[1]);
+      let sessionId: string;
+      try {
+        sessionId = decodeURIComponent(ptyMatch[1]);
+      } catch {
+        socket.destroy();
+        return;
+      }
       const ptySession = getSession(sessionId);
       // Route to the session's OWN engine. Do NOT fall back to claude: codex has no
       // PTY view, and attaching the claude TUI to a codex session showed the wrong
@@ -938,7 +944,12 @@ export async function startGateway(
       if (!ptyEngine) { socket.destroy(); return; }
       ptyWss.handleUpgrade(req, socket, head, (ws) => {
         trackHeartbeat(ws);
-        attachPtyWebSocket(ws, sessionId, ptyEngine);
+        try {
+          attachPtyWebSocket(ws, sessionId, ptyEngine);
+        } catch (err) {
+          logger.warn(`PTY websocket attach failed for ${sessionId}: ${err instanceof Error ? err.message : err}`);
+          ws.close();
+        }
       });
       return;
     }

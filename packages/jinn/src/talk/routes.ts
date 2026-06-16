@@ -263,7 +263,7 @@ export async function handleTalkApi(
         }
         engine = body.engine.trim();
         if (!isKnownEngine(engine)) {
-          badRequest(res, `Unknown engine "${engine}" — expected one of claude, codex, antigravity, pi.`);
+          badRequest(res, `Unknown engine "${engine}" — expected one of claude, codex, antigravity, grok, pi.`);
           return true;
         }
       }

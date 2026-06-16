@@ -536,7 +536,7 @@ export interface JinnConfig {
     userHeader?: string | string[];
   };
   engines: {
-    default: "claude" | "codex" | "antigravity" | "pi";
+    default: "claude" | "codex" | "antigravity" | "grok" | "pi";
     claude: {
       bin: string;
       model: string;
@@ -550,6 +550,7 @@ export interface JinnConfig {
      *  (PATH + common install dirs) when absent. agy ignores model/effort flags
      *  today, so those fields are forward-looking. */
     antigravity?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
+    grok?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
     pi?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
   };
   /** Optional model + capability registry. When absent, synthesized from engines.<name>.model. */

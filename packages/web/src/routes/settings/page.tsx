@@ -40,6 +40,7 @@ interface Config {
     default?: string
     claude?: { bin?: string; model?: string; effortLevel?: string }
     codex?: { bin?: string; model?: string; effortLevel?: string }
+    grok?: { bin?: string; model?: string; effortLevel?: string }
   }
   sessions?: {
     maxDurationMinutes?: number
@@ -937,6 +938,7 @@ export default function SettingsPage() {
                     options={[
                       { value: "claude", label: "Claude" },
                       { value: "codex", label: "Codex" },
+                      { value: "grok", label: "Grok" },
                     ]}
                   />
                 </FieldRow>
@@ -1034,6 +1036,37 @@ export default function SettingsPage() {
                       { value: "medium", label: "Medium" },
                       { value: "high", label: "High" },
                       { value: "xhigh", label: "Extra High" },
+                    ])}
+                  />
+                </FieldRow>
+
+                <div
+                  className="border-t border-[var(--separator)] mt-[var(--space-3)] pt-[var(--space-3)]"
+                />
+
+                <div
+                  className="text-[length:var(--text-caption1)] font-[var(--weight-semibold)] text-[var(--text-tertiary)] mb-[var(--space-2)]"
+                >
+                  Grok
+                </div>
+                <FieldRow label="Binary Path">
+                  <SettingsInput
+                    value={config.engines?.grok?.bin ?? ""}
+                    onChange={(v) =>
+                      updateConfig(["engines", "grok", "bin"], v)
+                    }
+                    placeholder="grok"
+                  />
+                </FieldRow>
+                <FieldRow label="Model">
+                  <SettingsSelect
+                    value={config.engines?.grok?.model ?? "grok-build"}
+                    onChange={(v) =>
+                      updateConfig(["engines", "grok", "model"], v)
+                    }
+                    options={modelOptions("grok", [
+                      { value: "grok-build", label: "Grok Build" },
+                      { value: "grok-composer-2.5-fast", label: "Grok Composer 2.5 Fast" },
                     ])}
                   />
                 </FieldRow>

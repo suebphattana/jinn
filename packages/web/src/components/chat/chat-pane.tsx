@@ -25,7 +25,7 @@ export { shouldRecoverStuckTurn } from '@/hooks/use-live-session'
 type Listener = (event: string, payload: unknown) => void
 
 const NEW_SESSION_SELECTOR_KEY = 'jinn-chat-new-session-selector'
-const CLI_CAPABLE_ENGINES = new Set(['claude', 'codex', 'antigravity'])
+const CLI_CAPABLE_ENGINES = new Set(['claude', 'codex', 'antigravity', 'grok'])
 
 function readNewSessionSelector(): SelectorValue {
   if (typeof window === 'undefined') return {}

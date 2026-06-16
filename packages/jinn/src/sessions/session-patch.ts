@@ -20,11 +20,17 @@ export interface SessionPatchResult {
   error?: string;
 }
 
+export interface SessionPatchContext {
+  engineSessionId?: string | null;
+  defaultModel?: string | null;
+}
+
 export function validateSessionPatch(
   config: JinnConfig,
   engine: string,
   currentModel: string | null | undefined,
   body: { model?: unknown; effortLevel?: unknown },
+  context: SessionPatchContext = {},
 ): SessionPatchResult {
   const updates: { model?: string; effortLevel?: string } = {};
 
@@ -45,6 +51,13 @@ export function validateSessionPatch(
         const known = entry.models.map((m) => m.id).join(", ");
         return { ok: false, error: `unknown model "${modelId}" for engine "${engine}" (known: ${known || "none"})` };
       }
+    }
+    const effectiveCurrentModel = currentModel ?? context.defaultModel ?? undefined;
+    if (engine === "grok" && context.engineSessionId && effectiveCurrentModel && modelId !== effectiveCurrentModel) {
+      return {
+        ok: false,
+        error: "Grok model changes require a new session because Grok binds existing transcripts to a model-specific agent.",
+      };
     }
     updates.model = modelId;
   }

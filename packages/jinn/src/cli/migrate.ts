@@ -86,6 +86,8 @@ function buildMigrateArgs(engine: string, prompt: string): string[] {
     case "codex":
       // `codex exec` is Codex's own non-interactive mode (not a claude `-p`).
       return ["exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", prompt];
+    case "grok":
+      return ["--no-auto-update", "--always-approve", "-p", prompt];
     case "claude":
     default:
       // No `-p`: launch the interactive claude TUI (cc_entrypoint=cli, subsidy-safe)

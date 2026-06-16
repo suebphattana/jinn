@@ -10,7 +10,7 @@ import { PageLayout, ToolbarActions } from "@/components/page-layout"
 import { useBreadcrumbs } from "@/context/breadcrumb-context"
 import { Skeleton } from "@/components/ui/skeleton"
 
-const FEATURED_ENGINES = ["claude", "codex"]
+const FEATURED_ENGINES = ["claude", "codex", "grok"]
 const DANGER = 90
 
 function formatDuration(minutes?: number) {

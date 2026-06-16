@@ -25,7 +25,7 @@ import { discoverPiModels } from "./pi-models.js";
  */
 
 /** Engines registered in this build (mirrors server.ts engine map). */
-const ENGINE_NAMES = ["claude", "codex", "antigravity", "pi"] as const;
+const ENGINE_NAMES = ["claude", "codex", "antigravity", "grok", "pi"] as const;
 export type EngineName = (typeof ENGINE_NAMES)[number];
 
 /** Binary name probed for each engine's availability (override via engines.<name>.bin). */
@@ -33,6 +33,7 @@ const ENGINE_BIN: Record<EngineName, string> = {
   claude: "claude",
   codex: "codex",
   antigravity: "agy",
+  grok: "grok",
   pi: "pi",
 };
 
@@ -40,6 +41,7 @@ const EFFORT_MECHANISM: Record<EngineName, EffortMechanism> = {
   claude: "claude-flag",
   codex: "codex-config",
   antigravity: "none",
+  grok: "none",
   pi: "pi-flag",
 };
 
@@ -50,6 +52,7 @@ const SYNTH_DEFAULTS: Record<EngineName, { supportsEffort: boolean; effortLevels
   claude: { supportsEffort: true, effortLevels: ["low", "medium", "high"], fallbackModel: "opus" },
   codex: { supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"], fallbackModel: CODEX_DEFAULT_MODEL },
   antigravity: { supportsEffort: false, effortLevels: [], fallbackModel: "Gemini 3.5 Flash (Medium)" },
+  grok: { supportsEffort: false, effortLevels: [], fallbackModel: "grok-build" },
   // Placeholder shown only in the brief window before pi discovery completes; the
   // provider/id form keeps it well-typed for the engine's split.
   pi: { supportsEffort: false, effortLevels: [], fallbackModel: "ollama/gemma4:12b" },
@@ -78,6 +81,7 @@ const ENGINE_INSTALL_HINT: Record<EngineName, string> = {
   claude: "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex",
   antigravity: "install the Antigravity CLI (agy)",
+  grok: "npm install -g @xai-official/grok, then run grok once to authenticate",
   pi: "install the Pi CLI",
 };
 

@@ -468,6 +468,12 @@ export async function collectEngineLimits(
         name,
         "Pi exposes model capabilities and per-session usage, but no aggregate account quota endpoint.",
       );
+    } else if (name === "grok") {
+      engines[name] = collectUnsupported(
+        config,
+        name,
+        "Grok currently exposes model/session behavior through its CLI, but no stable local quota endpoint is registered.",
+      );
     } else {
       engines[name] = collectUnsupported(config, name, "No limit collector is registered for this engine.");
     }

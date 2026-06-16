@@ -11,6 +11,7 @@ function cfg(): JinnConfig {
       claude: { bin: "claude", model: "opus" },
       codex: { bin: "codex", model: "gpt-5.4" },
       antigravity: { model: "gemini-3-flash-preview" },
+      grok: { bin: "grok", model: "grok-build" },
     },
     models: {
       claude: {
@@ -22,6 +23,14 @@ function cfg(): JinnConfig {
       },
       codex: { default: "gpt-5.4", models: [{ id: "gpt-5.4", supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"] }] },
       antigravity: { models: [{ id: "gemini-3-flash-preview", supportsEffort: false, effortLevels: [] }] },
+      grok: {
+        default: "grok-build",
+        effortMechanism: "none",
+        models: [
+          { id: "grok-build", label: "Grok", supportsEffort: false, effortLevels: [] },
+          { id: "grok-composer-2.5-fast", label: "Grok Composer 2.5 Fast", supportsEffort: false, effortLevels: [] },
+        ],
+      },
     },
     connectors: {},
   } as unknown as JinnConfig;
@@ -73,6 +82,36 @@ describe("validateSessionPatch", () => {
     const r = validateSessionPatch(c, "antigravity", "gemini-3-flash-preview", { model: "gemini-3-pro-preview" });
     expect(r.ok).toBe(true);
     expect(r.updates).toEqual({ model: "gemini-3-pro-preview" });
+  });
+
+  it("allows setting a Grok model before a Grok engine session exists", () => {
+    const r = validateSessionPatch(cfg(), "grok", "grok-build", { model: "grok-composer-2.5-fast" });
+    expect(r.ok).toBe(true);
+    expect(r.updates).toEqual({ model: "grok-composer-2.5-fast" });
+  });
+
+  it("rejects changing Grok models after a Grok engine session exists", () => {
+    const r = validateSessionPatch(
+      cfg(),
+      "grok",
+      "grok-build",
+      { model: "grok-composer-2.5-fast" },
+      { engineSessionId: "grok-session-1", defaultModel: "grok-build" },
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/new session/i);
+  });
+
+  it("allows a no-op Grok model patch after a Grok engine session exists", () => {
+    const r = validateSessionPatch(
+      cfg(),
+      "grok",
+      null,
+      { model: "grok-build" },
+      { engineSessionId: "grok-session-1", defaultModel: "grok-build" },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.updates).toEqual({ model: "grok-build" });
   });
 
   it("rejects empty/typeless input", () => {

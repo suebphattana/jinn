@@ -7,7 +7,7 @@ function availableSet(...installed: string[]): (engine: string) => boolean {
   return (engine: string) => set.has(engine);
 }
 
-const CANDIDATES = ["claude", "codex", "antigravity", "pi"] as const;
+const CANDIDATES = ["claude", "codex", "antigravity", "grok", "pi"] as const;
 
 describe("resolveTalkEngine", () => {
   it("uses config.talk.engine when set AND available (no fallback)", () => {

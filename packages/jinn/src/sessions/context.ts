@@ -423,6 +423,9 @@ function buildConfigContext(config: JinnConfig, gatewayUrl: string): string {
   if (config.engines.antigravity) {
     lines.push(`- Antigravity model: ${config.engines.antigravity.model ?? "Gemini 3.5 Flash (Medium)"}`);
   }
+  if (config.engines.grok) {
+    lines.push(`- Grok model: ${config.engines.grok.model ?? "grok-build"}`);
+  }
   if (config.logging) {
     lines.push(`- Log level: ${config.logging.level || "info"}`);
   }

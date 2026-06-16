@@ -659,7 +659,13 @@ export async function handleApiRequest(
       // Mid-chat model / effort switch (applies from the next turn). Engine is
       // new-chat-only, so it's not mutable here. Validated against the registry.
       if (body.model !== undefined || body.effortLevel !== undefined) {
-        const patch = validateSessionPatch(context.getConfig(), session.engine, session.model, body);
+        const configForPatch = context.getConfig();
+        const engineConfigForPatch =
+          (configForPatch.engines as unknown as Record<string, { model?: string } | undefined>)[session.engine] ?? {};
+        const patch = validateSessionPatch(configForPatch, session.engine, session.model, body, {
+          engineSessionId: session.engineSessionId,
+          defaultModel: engineConfigForPatch.model,
+        });
         if (!patch.ok) return badRequest(res, patch.error || "invalid model/effort");
         if (patch.updates?.model !== undefined) updates.model = patch.updates.model;
         if (patch.updates?.effortLevel !== undefined) updates.effortLevel = patch.updates.effortLevel;

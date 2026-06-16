@@ -719,7 +719,7 @@ export class SessionManager {
         `Session: ${session.id}`,
         `Engine: ${session.engine}`,
         `Connector: ${session.connector || session.source}`,
-        `Model: ${session.model || this.config.engines[session.engine as "claude" | "codex" | "antigravity" | "pi"]?.model || "default"}`,
+        `Model: ${session.model || this.config.engines[session.engine as "claude" | "codex" | "antigravity" | "grok" | "pi"]?.model || "default"}`,
         `State: ${transportState}`,
         `Queue depth: ${queueDepth}`,
         `Created: ${session.createdAt}`,
@@ -765,6 +765,7 @@ export class SessionManager {
         `Claude: ${this.config.engines.claude.model}`,
         `Codex: ${this.config.engines.codex.model}`,
         ...(this.config.engines.antigravity ? [`Antigravity: ${this.config.engines.antigravity.model ?? "Gemini 3.5 Flash (Medium)"}`] : []),
+        ...(this.config.engines.grok ? [`Grok: ${this.config.engines.grok.model ?? "grok-build"}`] : []),
         "Connectors:",
         ...connectorLines,
       ].join("\n");

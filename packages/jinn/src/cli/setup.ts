@@ -251,6 +251,9 @@ engines:
   codex:
     bin: codex
     model: gpt-5.5
+  grok:
+    bin: grok
+    model: grok-build
 # Model + capability registry — single source of truth for the UI selectors.
 # Add a model here (id + label + capability flags); no code change needed.
 # effortLevels gate the effort picker (empty = no effort support). Omit the block
@@ -269,6 +272,12 @@ models:
     effortMechanism: codex-config
     models:
       - { id: gpt-5.5, label: "GPT-5.5 Codex", supportsEffort: true, effortLevels: [low, medium, high, xhigh], contextWindow: 258400 }
+  grok:
+    default: grok-build
+    effortMechanism: none
+    models:
+      - { id: grok-build, label: "Grok Build", supportsEffort: false, effortLevels: [], contextWindow: 256000 }
+      - { id: grok-composer-2.5-fast, label: "Grok Composer 2.5 Fast", supportsEffort: false, effortLevels: [], contextWindow: 256000 }
   antigravity:
     default: "Gemini 3.5 Flash (Medium)"
     effortMechanism: none
@@ -356,15 +365,24 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
     info("Install with: npm install -g @openai/codex");
   }
 
-  // 3b. Loudly warn if NO engine is installed — the gateway will start, but it
+  // 4. Check for grok binary
+  const grokPath = whichBin("grok");
+  if (grokPath) {
+    ok(`grok found at ${grokPath}`);
+  } else {
+    fail("grok not found");
+    info("Install with: npm install -g @xai-official/grok");
+  }
+
+  // 5. Loudly warn if NO engine is installed — the gateway will start, but it
   //     cannot run any session until at least one engine CLI is on PATH.
-  if (!claudePath && !codexPath) {
+  if (!claudePath && !codexPath && !grokPath) {
     console.log("");
-    warn("No AI engine CLI found (claude or codex).");
+    warn("No AI engine CLI found (claude, codex, or grok).");
     warn("The gateway will start, but sessions will fail until you install one above.");
   }
 
-  // 4. Check auth / versions
+  // 6. Check auth / versions
   console.log("");
   if (claudePath) {
     const ver = runVersion("claude");
@@ -376,12 +394,18 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
     if (ver) ok(`codex --version: ${ver}`);
     else warn("codex --version failed");
   }
+  if (grokPath) {
+    const ver = runVersion("grok");
+    if (ver) ok(`grok --version: ${ver}`);
+    else warn("grok --version failed");
+  }
   // A successful --version does NOT mean the engine is authenticated — the #1
   // silent fresh-install failure. Nudge the login step explicitly.
-  if (claudePath || codexPath) {
+  if (claudePath || codexPath || grokPath) {
     warn("A successful --version does NOT mean the engine is logged in.");
     if (claudePath) info("First run? Launch `claude` once and use /login to authenticate.");
     if (codexPath) info("First run? Launch `codex` once and sign in to authenticate.");
+    if (grokPath) info("First run? Launch `grok` once to authenticate, or configure XAI_API_KEY.");
     info("Do this before `jinn start`, or sessions will fail silently.");
   }
 
@@ -413,7 +437,8 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
     : "Jinn";
 
   let chosenName = defaultName;
-  let chosenEngine: "claude" | "codex" = "claude";
+  type SetupEngine = "claude" | "codex" | "grok";
+  let chosenEngine: SetupEngine = "claude";
 
   if (isInteractive) {
     console.log("");
@@ -423,12 +448,14 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
     const engines: string[] = [];
     if (claudePath) engines.push("claude");
     if (codexPath) engines.push("codex");
+    if (grokPath) engines.push("grok");
 
-    if (engines.length === 2) {
-      const engineAnswer = await prompt("Preferred engine? (claude/codex)", "claude");
-      chosenEngine = engineAnswer === "codex" ? "codex" : "claude";
+    if (engines.length > 1) {
+      const defaultEngine = engines.includes("claude") ? "claude" : engines[0];
+      const engineAnswer = await prompt(`Preferred engine? (${engines.join("/")})`, defaultEngine);
+      chosenEngine = engines.includes(engineAnswer) ? engineAnswer as SetupEngine : defaultEngine as SetupEngine;
     } else if (engines.length === 1) {
-      chosenEngine = engines[0] as "claude" | "codex";
+      chosenEngine = engines[0] as SetupEngine;
       ok(`Using ${chosenEngine} as default engine (only engine installed)`);
     }
   }

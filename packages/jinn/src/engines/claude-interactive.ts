@@ -766,7 +766,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // message is still on disk in the transcript; backfill it so the parent-session
     // callback shows real output instead of "(no output)". stopFailure turns are a
     // genuine no-output API error — leave those alone.
-    if (!nativeCommand && !result.result?.trim() && !resolver.stopFailure) {
+    if (!nativeCommand && !result.error && !result.result?.trim() && !resolver.stopFailure) {
       const sid = resolver.sessionId ?? opts.resumeSessionId ?? result.sessionId;
       const recoveryPath = sid ? findTranscriptForSession(sid) : undefined;
       const recovered = recoveryPath ? lastAssistantTextFromTranscript(recoveryPath) : undefined;

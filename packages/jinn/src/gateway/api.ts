@@ -71,7 +71,7 @@ import { readJsonlTail } from "./jsonl-tail.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel, notifyAttachedTalkSessions } from "../sessions/callbacks.js";
 import { loadInstances } from "../cli/instances.js";
 import { handleHookPost, isLoopback } from "./hook-endpoint.js";
-import { scheduleOnLoadTailSync, transcriptEntryText } from "./external-turns.js";
+import { markTranscriptSyncedThrough, scheduleOnLoadTailSync, transcriptEntryText } from "./external-turns.js";
 import { handleTalkApi } from "../talk/routes.js";
 import { getOrchestratorPersona } from "../talk/orchestrator-persona.js";
 import {
@@ -2715,6 +2715,9 @@ async function runWebSession(
       lastActivity: new Date().toISOString(),
       lastError: quietPreempted ? null : (result.error ?? null),
     });
+    if (!quietPreempted && currentSession.engine === "claude") {
+      markTranscriptSyncedThrough(currentSession.id, result.sessionId);
+    }
     if (syncRequested && !rateLimit.limited && !quietPreempted) {
       const meta = (getSession(currentSession.id)?.transportMeta || currentSession.transportMeta || {}) as Record<string, unknown>;
       if (meta && typeof meta === "object" && !Array.isArray(meta)) {

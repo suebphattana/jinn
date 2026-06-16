@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { logger } from "../shared/logger.js";
-import { getSession, getMessages, insertMessage, updateMessageContent, updateSession, initDb } from "../sessions/registry.js";
+import { getSession, getMessages, insertMessage, updateMessageContent, updateSession, initDb, type SessionMessage } from "../sessions/registry.js";
 import { findTranscriptForSession } from "../engines/claude-interactive.js";
 import type { HookPayload } from "./hook-registry.js";
 
@@ -42,7 +42,34 @@ function isControlText(content: string): boolean {
     t.startsWith("<command-name>") ||
     t.startsWith("<local-command-") ||
     t.startsWith("<task-notification>") ||
+    isInternalNotificationPrompt(t) ||
     t.startsWith("This session is being continued from a previous conversation")
+  );
+}
+
+function isInternalNotificationPrompt(content: string): boolean {
+  const t = content.trim();
+  return (
+    (
+      t.startsWith("📩 Employee ") &&
+      t.includes(" replied in child session ") &&
+      t.includes("To read the full reply:")
+    ) ||
+    (
+      t.startsWith("⚠️ Employee ") &&
+      t.includes(" (child session ") &&
+      t.includes(" hit an error and could not finish:")
+    ) ||
+    (
+      t.startsWith("📩 Thread ") &&
+      t.includes(" reported back.") &&
+      t.includes("To follow up,")
+    ) ||
+    (
+      t.startsWith("⚠️ Thread ") &&
+      t.includes(" hit an error.") &&
+      t.includes("Tell the operator plainly")
+    )
   );
 }
 
@@ -131,6 +158,69 @@ function setAnchor(sessionId: string, anchorIso: string): void {
   });
 }
 
+function latestTranscriptTimestampIso(transcriptPath: string): string | undefined {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(transcriptPath, "utf-8");
+  } catch {
+    return undefined;
+  }
+  let latestMs = 0;
+  let latestIso: string | undefined;
+  for (const line of raw.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    let obj: any;
+    try { obj = JSON.parse(t); } catch { continue; }
+    const iso = obj?.timestamp;
+    if (typeof iso !== "string") continue;
+    const ms = new Date(iso).getTime();
+    if (!Number.isFinite(ms) || ms <= latestMs) continue;
+    latestMs = ms;
+    latestIso = iso;
+  }
+  return latestIso;
+}
+
+/** Mark a Claude transcript as already owned by the gateway completion path. */
+export function markTranscriptSyncedThrough(sessionId: string, engineSessionId?: string, transcriptPathOverride?: string): void {
+  const session = getSession(sessionId);
+  if (!session || session.engine !== "claude") return;
+  const sid = engineSessionId || session.engineSessionId || undefined;
+  const transcriptPath = transcriptPathOverride || (sid ? findTranscriptForSession(sid) : undefined);
+  const anchorIso = transcriptPath ? latestTranscriptTimestampIso(transcriptPath) : undefined;
+  setAnchor(sessionId, anchorIso ?? new Date().toISOString());
+}
+
+function contentCompatible(persisted: string, transcript: string): boolean {
+  return persisted === transcript || persisted.startsWith(transcript) || transcript.startsWith(persisted);
+}
+
+function rolesCompatible(message: SessionMessage, entry: TranscriptTailEntry): boolean {
+  if (message.role === entry.role) return true;
+  return message.role === "notification" && entry.role === "user" && isInternalNotificationPrompt(entry.content);
+}
+
+function findPersistedSequence(existing: SessionMessage[], entries: TranscriptTailEntry[]): SessionMessage[] | null {
+  const recent = existing.filter((m) => !m.partial).slice(-Math.max(50, entries.length * 4));
+  const matched: SessionMessage[] = [];
+  let cursor = 0;
+  for (const entry of entries) {
+    let found: SessionMessage | undefined;
+    for (; cursor < recent.length; cursor += 1) {
+      const candidate = recent[cursor];
+      if (rolesCompatible(candidate, entry) && contentCompatible(candidate.content, entry.content)) {
+        found = candidate;
+        cursor += 1;
+        break;
+      }
+    }
+    if (!found) return null;
+    matched.push(found);
+  }
+  return matched;
+}
+
 /**
  * Persist any un-synced transcript tail for a session into the messages DB.
  * Primary trigger: an unclaimed Stop hook (PTY-native turn — no run() in
@@ -199,23 +289,15 @@ export function syncExternalTurn(
   // genuine CLI-native turn run() never saw — insert as before.
   const db = initDb();
   const existing = getMessages(sessionId);
-  const trailing = existing.slice(-entries.length);
-  const isAlreadyPersistedTurn =
-    trailing.length === entries.length &&
-    entries.every((e, i) => {
-      const m = trailing[i];
-      if (!m || m.role !== e.role || m.partial) return false;
-      const a = m.content;
-      const b = e.content;
-      return a === b || a.startsWith(b) || b.startsWith(a);
-    });
-  if (isAlreadyPersistedTurn) {
+  const matchedPersistedTurn = findPersistedSequence(existing, entries);
+  if (matchedPersistedTurn) {
     // run() already stored this turn — overwrite any truncated row with the
     // complete transcript text, write no new rows.
     const txn = db.transaction(() => {
       entries.forEach((e, i) => {
-        if (e.content.length > trailing[i].content.length) {
-          updateMessageContent(trailing[i].id, e.content);
+        const persisted = matchedPersistedTurn[i];
+        if (persisted.role === e.role && e.content.length > persisted.content.length) {
+          updateMessageContent(persisted.id, e.content);
         }
       });
     });

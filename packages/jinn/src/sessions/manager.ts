@@ -31,6 +31,7 @@ import { getClaudeExpectedResetAt, isLikelyNearClaudeUsageLimit } from "../share
 import { loadJobs } from "../cron/jobs.js";
 import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
 import { checkBudget } from "../gateway/budgets.js";
+import { markTranscriptSyncedThrough } from "../gateway/external-turns.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { handleRateLimit } from "./rate-limit-handler.js";
 
@@ -648,6 +649,9 @@ export class SessionManager {
         lastActivity: new Date().toISOString(),
         lastError: wasInterrupted ? null : (result.error ?? null),
       });
+      if (!wasInterrupted && session.engine === "claude") {
+        markTranscriptSyncedThrough(session.id, result.sessionId);
+      }
       if (updatedSession) {
         notifyParentSession(updatedSession, { result: result.result, error: wasInterrupted ? null : (result.error ?? null), cost: result.cost, durationMs: result.durationMs }, { alwaysNotify: employee?.alwaysNotify });
       }

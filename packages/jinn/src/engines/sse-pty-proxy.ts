@@ -267,7 +267,11 @@ export class SsePtyProxy {
           if (isSSE && tee) sseBuf = this.parseSse(sseBuf + chunk.toString("utf-8"));
         });
         uRes.on("end", () => { finish(); try { res.end(); } catch { /* already ended */ } });
-        uRes.on("error", () => { finish(); try { res.end(); } catch { /* ignore */ } });
+        uRes.on("error", (err) => {
+          logger.warn(`SsePtyProxy[${this.label}] upstream response error: ${err instanceof Error ? err.message : String(err)}`);
+          finish();
+          try { res.destroy(err instanceof Error ? err : undefined); } catch { /* ignore */ }
+        });
       },
     );
     inflight.current = upstream;
@@ -283,7 +287,14 @@ export class SsePtyProxy {
       }
       logger.warn(`SsePtyProxy[${this.label}] upstream error: ${err.message}`);
       finish();
-      try { if (!res.headersSent) res.writeHead(502); res.end(); } catch { /* ignore */ }
+      try {
+        if (!res.headersSent) {
+          res.writeHead(502);
+          res.end();
+        } else {
+          res.destroy(err);
+        }
+      } catch { /* ignore */ }
     });
     upstream.setTimeout(UPSTREAM_IDLE_TIMEOUT_MS, () => {
       logger.warn(`SsePtyProxy[${this.label}] upstream idle-timeout — destroying`);

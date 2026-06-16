@@ -97,6 +97,9 @@ describe("readTranscriptTail", () => {
       { type: "user", text: "<command-name>/compact</command-name>", ts: iso(12_000) },
       { type: "user", text: "<local-command-stdout>Compacted</local-command-stdout>", ts: iso(11_000) },
       { type: "user", text: "<task-notification><result>done</result></task-notification>", ts: iso(10_000), originKind: "task-notification" },
+      { type: "user", text: "📩 Employee \"worker\" replied in child session child-1.\n\nTo read the full reply: GET /api/sessions/child-1?last=20", ts: iso(9_500) },
+      { type: "user", text: "⚠️ Employee \"worker\" (child session child-1) hit an error and could not finish: failed", ts: iso(9_400) },
+      { type: "user", text: "📩 Thread \"worker\" reported back.\n\nReply preview:\ndone\n\nTo follow up, delegate to this thread via /api/talk/delegate.", ts: iso(9_300) },
       { type: "user", text: "tool result text", ts: iso(9_000), sourceTool: true },
       { type: "user", text: "system continuation", ts: iso(8_000), promptSource: "system" },
       { type: "assistant", text: "No response requested.", ts: iso(7_000), synthetic: true },
@@ -240,6 +243,63 @@ describe("syncExternalTurn", () => {
     ]);
     // Still emits so the chat view refetches the de-truncated content.
     expect(events).toEqual([{ event: "session:external-turn", payload: { sessionId: id } }]);
+  });
+
+  it("does not import an internal child callback prompt as a user message", () => {
+    const id = makeSession();
+    reg.insertMessage(id, "notification", "📩 worker replied in child session child-1");
+    reg.insertMessage(id, "assistant", "I read the child reply and here is the summary.");
+    const future = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const file = writeTranscript([
+      { type: "user", text: "📩 Employee \"worker\" replied in child session child-1.\n\nTo read the full reply: GET /api/sessions/child-1?last=20", ts: future(1_000) },
+      { type: "assistant", text: "I read the child reply and here is the summary.", ts: future(2_000) },
+    ]);
+    const n = ext.syncExternalTurn(id, emit, {
+      hook_event_name: "Stop",
+      transcript_path: file,
+      last_assistant_message: "I read the child reply and here is the summary.",
+    });
+    expect(n).toBe(0);
+    expect(reg.getMessages(id).map((m) => [m.role, m.content])).toEqual([
+      ["notification", "📩 worker replied in child session child-1"],
+      ["assistant", "I read the child reply and here is the summary."],
+    ]);
+  });
+
+  it("reconciles already-persisted gateway turns even when a notification sits between the user and assistant rows", () => {
+    const id = makeSession();
+    reg.insertMessage(id, "user", "gateway prompt");
+    reg.insertMessage(id, "notification", "background status");
+    reg.insertMessage(id, "assistant", "gateway answer");
+    const future = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const file = writeTranscript([
+      { type: "user", text: "gateway prompt", ts: future(1_000) },
+      { type: "assistant", text: "gateway answer", ts: future(2_000) },
+    ]);
+    const n = ext.syncExternalTurn(id, emit, {
+      hook_event_name: "Stop",
+      transcript_path: file,
+      last_assistant_message: "gateway answer",
+    });
+    expect(n).toBe(0);
+    expect(reg.getMessages(id).map((m) => [m.role, m.content])).toEqual([
+      ["user", "gateway prompt"],
+      ["notification", "background status"],
+      ["assistant", "gateway answer"],
+    ]);
+  });
+
+  it("can mark a gateway-owned Claude transcript as synced through its latest timestamp", () => {
+    const engineSessionId = `eng-${++seq}`;
+    const id = makeSession({ engineSessionId });
+    const file = path.join(tmp, `${engineSessionId}.jsonl`);
+    const latest = iso(1_000);
+    fs.writeFileSync(file, [
+      JSON.stringify({ type: "user", timestamp: iso(2_000), message: { role: "user", content: [{ type: "text", text: "prompt" }] } }),
+      JSON.stringify({ type: "assistant", timestamp: latest, message: { role: "assistant", content: [{ type: "text", text: "answer" }] } }),
+    ].join("\n") + "\n");
+    ext.markTranscriptSyncedThrough(id, engineSessionId, file);
+    expect((reg.getSession(id)!.transportMeta as any)?.[ext.TRANSCRIPT_SYNC_META_KEY]).toBe(latest);
   });
 
   it("does not mistake a genuinely new CLI turn for an already-persisted one (different content → normal insert)", () => {

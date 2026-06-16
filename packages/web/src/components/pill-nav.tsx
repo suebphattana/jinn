@@ -277,7 +277,10 @@ export function NavRibbon({
   const pathname = useLocation().pathname
   const { theme, setTheme } = useTheme()
   const { settings } = useSettings()
-  const emoji = settings.portalEmoji ?? "\u{1F9DE}"
+  // Default brand mark carries U+FE0F so the genie always renders as a COLOR
+  // emoji (never a text-presentation glyph that would inherit the slot's text
+  // color and look faded — see the brand-mark color note below).
+  const emoji = settings.portalEmoji ?? "\u{1F9DE}\u{FE0F}"
   const cycleTheme = () => {
     const ids = THEMES.map((t) => t.id)
     setTheme(ids[(ids.indexOf(theme) + 1) % ids.length])
@@ -309,9 +312,13 @@ export function NavRibbon({
             aria-expanded={listOpen}
             className="relative flex size-11 items-center justify-center rounded-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)]"
           >
+            {/* Full-strength brand color (NOT the button's --text-secondary) +
+                forced color-emoji presentation, so the genie — or a custom
+                monochrome/letter portalEmoji — reads crisp at rest in BOTH
+                themes instead of inheriting the muted secondary text token. */}
             <span
               aria-hidden
-              className="absolute inset-0 flex items-center justify-center text-[26px] leading-none transition-opacity duration-150 group-hover/sidebar:opacity-0 group-focus-within/logo:opacity-0"
+              className="absolute inset-0 flex items-center justify-center text-[26px] leading-none text-[var(--text-primary)] [font-variant-emoji:emoji] transition-opacity duration-150 group-hover/sidebar:opacity-0 group-focus-within/logo:opacity-0"
             >
               {emoji}
             </span>
@@ -390,7 +397,10 @@ export function PillNav({ actions }: { actions?: ReactNode }) {
   const pathname = useLocation().pathname
   const { items } = useBreadcrumbs()
   const { settings } = useSettings()
-  const emoji = settings.portalEmoji ?? "\u{1F9DE}"
+  // Default brand mark carries U+FE0F so the genie always renders as a COLOR
+  // emoji (never a text-presentation glyph that would inherit the slot's text
+  // color and look faded — see the brand-mark color note below).
+  const emoji = settings.portalEmoji ?? "\u{1F9DE}\u{FE0F}"
   const [navOpen, setNavOpen] = useState(false)
 
   const title = items[0]?.label ?? ""
@@ -415,7 +425,7 @@ export function PillNav({ actions }: { actions?: ReactNode }) {
             <span className="relative flex size-[17px] items-center justify-center">
               <span
                 aria-hidden
-                className="absolute inset-0 hidden items-center justify-center text-[14px] leading-none transition-opacity duration-150 lg:flex lg:group-hover/brand:opacity-0"
+                className="absolute inset-0 hidden items-center justify-center text-[14px] leading-none text-[var(--text-primary)] [font-variant-emoji:emoji] transition-opacity duration-150 lg:flex lg:group-hover/brand:opacity-0"
               >
                 {emoji}
               </span>

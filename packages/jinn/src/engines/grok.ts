@@ -1,14 +1,18 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { InterruptibleEngine, EngineRunOpts, EngineResult, StreamDelta } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
 import { resolveBin } from "../shared/resolve-bin.js";
+import { tailTranscriptLines, type TranscriptTailer } from "./transcript-tailer.js";
 
 export const GROK_DEFAULT_MODEL = "grok-build";
 export const GROK_SESSIONS_DIR = path.join(os.homedir(), ".grok", "sessions");
 
 const STDERR_MAX = 10 * 1024;
+const TRANSCRIPT_TAIL_POLL_MS = 250;
+const TRANSCRIPT_DISCOVER_POLL_MS = 200;
 
 interface LiveProcess {
   proc: ChildProcess;
@@ -41,6 +45,49 @@ export function buildGrokHeadlessArgs(opts: EngineRunOpts, prompt: string, sessi
   return args;
 }
 
+interface TranscriptStat {
+  mtimeMs: number;
+  size: number;
+}
+
+function walkFiles(dir: string, out: string[] = []): string[] {
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    const p = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) walkFiles(p, out);
+    else if (entry.isFile()) out.push(p);
+  }
+  return out;
+}
+
+function isGrokTranscriptFile(file: string): boolean {
+  return file.endsWith("/updates.jsonl") || file.endsWith("/chat_history.jsonl") || file.endsWith("/events.jsonl");
+}
+
+function sortGrokTranscriptFiles(files: string[]): string[] {
+  const rank = (file: string) => {
+    if (file.endsWith("/updates.jsonl")) return 0;
+    if (file.endsWith("/chat_history.jsonl")) return 1;
+    if (file.endsWith("/events.jsonl")) return 2;
+    return 3;
+  };
+  return files.filter(isGrokTranscriptFile).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+function listTranscriptStats(root = GROK_SESSIONS_DIR): Map<string, TranscriptStat> {
+  const files = new Map<string, TranscriptStat>();
+  for (const file of sortGrokTranscriptFiles(walkFiles(root))) {
+    try {
+      const stat = fs.statSync(file);
+      files.set(file, { mtimeMs: stat.mtimeMs, size: stat.size });
+    } catch {
+      // gone
+    }
+  }
+  return files;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -63,16 +110,75 @@ function textFromContent(value: unknown): string {
       if (typeof block === "string") return block;
       const b = asRecord(block);
       if (!b) return "";
-      return stringField(b, ["text", "content", "value", "output"]) ?? "";
+      const direct = stringField(b, ["text", "content", "value", "output"]);
+      if (direct) return direct;
+      const nested = asRecord(b.content);
+      if (nested) return stringField(nested, ["text", "content", "value", "output"]) ?? textFromContent(nested.content);
+      return Array.isArray(b.content) ? textFromContent(b.content) : "";
     })
     .join("");
 }
 
 function textFromUnknown(value: unknown): string {
   if (typeof value === "string") return value;
+  if (Array.isArray(value)) return textFromContent(value);
   const obj = asRecord(value);
   if (!obj) return "";
   return stringField(obj, ["text", "content", "value", "output", "message"]) ?? textFromContent(obj.content);
+}
+
+function compactText(text: string, max = 500): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
+}
+
+function safeJsonSnippet(value: unknown, max = 200): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return compactText(JSON.stringify(value), max);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeGrokToolName(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  if (/^[A-Z][A-Za-z0-9]*$/.test(name)) {
+    return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  }
+  return name;
+}
+
+function toolNameFromGrokUpdate(update: Record<string, unknown>): string | undefined {
+  const rawInput = asRecord(update.rawInput);
+  const rawOutput = asRecord(update.rawOutput);
+  return normalizeGrokToolName(
+    stringField(rawInput ?? {}, ["variant", "tool", "toolName", "name"]) ??
+    stringField(rawOutput ?? {}, ["type", "variant", "tool", "toolName", "name"]) ??
+    stringField(update, ["toolName", "tool_name", "name", "title", "kind"]),
+  );
+}
+
+function toolResultTextFromGrokUpdate(update: Record<string, unknown>): string {
+  const contentText = textFromUnknown(update.content);
+  if (contentText) return compactText(contentText);
+  const rawOutputText = textFromUnknown(update.rawOutput);
+  if (rawOutputText) return compactText(rawOutputText);
+  const status = stringField(update, ["status", "type", "outcome"]);
+  return status ? compactText(status) : "Done";
+}
+
+function planStatusFromGrokUpdate(update: Record<string, unknown>): string | undefined {
+  const entries = Array.isArray(update.entries) ? update.entries : [];
+  const parsed = entries
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  const active =
+    parsed.find((entry) => String(entry.status ?? "").toLowerCase() === "in_progress") ??
+    parsed.find((entry) => String(entry.status ?? "").toLowerCase() === "pending") ??
+    parsed[parsed.length - 1];
+  const text = active ? stringField(active, ["content", "title", "task"]) : undefined;
+  return text ? `Plan: ${compactText(text, 240)}` : undefined;
 }
 
 function extractText(obj: Record<string, unknown>, eventType: string, terminal: boolean): { text: string; snapshot: boolean } {
@@ -111,13 +217,16 @@ function extractError(obj: Record<string, unknown>): string | undefined {
 
 function extractContextTokens(obj: Record<string, unknown>): number | undefined {
   const usage = asRecord(obj.usage) ?? asRecord(obj.token_usage) ?? asRecord(obj.tokens);
+  const meta = asRecord(obj._meta);
   const candidate =
     usage?.input_tokens ??
     usage?.inputTokens ??
     usage?.context_tokens ??
     usage?.contextTokens ??
     obj.context_tokens ??
-    obj.contextTokens;
+    obj.contextTokens ??
+    meta?.totalTokens ??
+    meta?.contextTokens;
   const n = Number(candidate ?? 0);
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
@@ -143,16 +252,93 @@ export function parseGrokJsonLine(line: string): GrokParsedLine | null {
     const update = asRecord(params?.update);
     const updateType = String(update?.sessionUpdate ?? "").toLowerCase();
     const nestedSessionId = params ? stringField(params, ["sessionId", "session_id"]) : undefined;
+    const contextTokens = (update ? extractContextTokens(update) : undefined) ??
+      (params ? extractContextTokens(params) : undefined) ??
+      extractContextTokens(obj);
+    const deltas: StreamDelta[] = [];
+    if (contextTokens) deltas.push({ type: "context", content: String(contextTokens) });
     if (updateType === "agent_message_chunk") {
       const content = asRecord(update?.content);
       const text = textFromUnknown(content?.text ?? update?.content);
       return {
-        deltas: text ? [{ type: "text", content: text }] : [],
+        deltas: text ? [...deltas, { type: "text", content: text }] : deltas,
         sessionId: nestedSessionId,
         terminal: false,
+        contextTokens,
       };
     }
-    return { deltas: [], sessionId: nestedSessionId, terminal: false };
+    if (updateType === "agent_thought_chunk") {
+      const content = asRecord(update?.content);
+      const text = compactText(textFromUnknown(content?.text ?? update?.content));
+      return {
+        deltas: text ? [...deltas, { type: "status", content: text }] : deltas,
+        sessionId: nestedSessionId,
+        terminal: false,
+        contextTokens,
+      };
+    }
+    if (updateType === "tool_call") {
+      const toolName = update ? toolNameFromGrokUpdate(update) : undefined;
+      return {
+        deltas: [
+          ...deltas,
+          {
+            type: "tool_use",
+            content: toolName ? `Using ${toolName}` : "Using tool",
+            toolName,
+            toolId: update ? stringField(update, ["toolCallId", "tool_call_id", "id"]) : undefined,
+            input: update ? safeJsonSnippet(update.rawInput) : undefined,
+          },
+        ],
+        sessionId: nestedSessionId,
+        terminal: false,
+        contextTokens,
+      };
+    }
+    if (updateType === "tool_call_update") {
+      const status = String(update?.status ?? update?.type ?? "").toLowerCase();
+      const completed = ["completed", "complete", "done", "success", "failed", "failure", "error"].includes(status);
+      if (!completed) return { deltas, sessionId: nestedSessionId, terminal: false, contextTokens };
+      const toolName = update ? toolNameFromGrokUpdate(update) : undefined;
+      return {
+        deltas: [
+          ...deltas,
+          {
+            type: "tool_result",
+            content: update ? toolResultTextFromGrokUpdate(update) : "Done",
+            toolName,
+            toolId: update ? stringField(update, ["toolCallId", "tool_call_id", "id"]) : undefined,
+          },
+        ],
+        sessionId: nestedSessionId,
+        terminal: false,
+        contextTokens,
+      };
+    }
+    if (updateType === "plan") {
+      const status = update ? planStatusFromGrokUpdate(update) : undefined;
+      return {
+        deltas: status ? [...deltas, { type: "status", content: status }] : deltas,
+        sessionId: nestedSessionId,
+        terminal: false,
+        contextTokens,
+      };
+    }
+    if (updateType === "retry_state") {
+      const attempt = update?.attempt;
+      const max = update?.max_retries;
+      const attemptText = typeof attempt === "string" || typeof attempt === "number" ? String(attempt) : "";
+      const maxText = typeof max === "string" || typeof max === "number" ? String(max) : "";
+      const reason = update ? stringField(update, ["reason", "message", "error"]) : undefined;
+      const label = `Grok retrying${attemptText ? ` (${attemptText}${maxText ? `/${maxText}` : ""})` : ""}${reason ? `: ${compactText(reason, 180)}` : ""}`;
+      return {
+        deltas: [...deltas, { type: "status", content: label }],
+        sessionId: nestedSessionId,
+        terminal: false,
+        contextTokens,
+      };
+    }
+    return { deltas, sessionId: nestedSessionId, terminal: false, contextTokens };
   }
 
   const rawType = String(obj.type ?? obj.event ?? obj.kind ?? "");
@@ -173,6 +359,8 @@ export function parseGrokJsonLine(line: string): GrokParsedLine | null {
   }
 
   if (eventType === "thought") {
+    const text = compactText(textFromUnknown(obj.data) || textFromUnknown(obj.content));
+    if (text) deltas.push({ type: "status", content: text });
     return { deltas, sessionId, terminal, contextTokens };
   }
 
@@ -250,6 +438,7 @@ export class GrokEngine implements InterruptibleEngine {
     const bin = resolveBin("grok", opts.bin);
     const args = buildGrokHeadlessArgs(opts, prompt, grokSessionId);
     logger.info(`Grok engine starting: ${bin} --model ${opts.model || "default"} (session: ${grokSessionId})`);
+    const transcriptBaseline = listTranscriptStats();
 
     return new Promise((resolve, reject) => {
       const proc = spawn(bin, args, {
@@ -268,6 +457,17 @@ export class GrokEngine implements InterruptibleEngine {
       let lastContextTokens: number | undefined;
       let settled = false;
       let resolvedSessionId = grokSessionId;
+      let transcriptTailer: TranscriptTailer | undefined;
+      let transcriptDiscover: NodeJS.Timeout | undefined;
+
+      const stopTranscriptWatch = () => {
+        if (transcriptDiscover) {
+          clearInterval(transcriptDiscover);
+          transcriptDiscover = undefined;
+        }
+        transcriptTailer?.stop();
+        transcriptTailer = undefined;
+      };
 
       const handleParsed = (parsed: GrokParsedLine | null) => {
         if (!parsed) return;
@@ -281,6 +481,53 @@ export class GrokEngine implements InterruptibleEngine {
         }
         if (parsed.doneText) resultText = parsed.doneText;
       };
+
+      const handleTranscriptParsed = (parsed: GrokParsedLine | null) => {
+        if (!parsed) return;
+        if (parsed.sessionId) resolvedSessionId = parsed.sessionId;
+        if (parsed.contextTokens) lastContextTokens = parsed.contextTokens;
+        for (const delta of parsed.deltas) {
+          // Grok headless stdout currently carries thought/text chunks, but tool
+          // lifecycle updates only appear in updates.jsonl. Mirror the structural
+          // deltas from the transcript and leave answer text to stdout to avoid
+          // duplicate assistant content.
+          if (delta.type === "tool_use" || delta.type === "tool_result" || delta.type === "context") {
+            opts.onStream?.(delta);
+          }
+        }
+      };
+
+      const attachTranscriptTail = (filePath: string, offset: number) => {
+        if (transcriptTailer) return;
+        transcriptTailer = tailTranscriptLines(
+          filePath,
+          offset,
+          (line) => handleTranscriptParsed(parseGrokJsonLine(line)),
+          { pollMs: TRANSCRIPT_TAIL_POLL_MS, label: "Grok headless transcript" },
+        );
+      };
+
+      transcriptDiscover = setInterval(() => {
+        if (transcriptTailer) return;
+        const current = listTranscriptStats();
+        const candidates = sortGrokTranscriptFiles(
+          [...current.entries()]
+            .filter(([file, stat]) => {
+              const prev = transcriptBaseline.get(file);
+              return !prev || stat.mtimeMs > prev.mtimeMs || stat.size > prev.size;
+            })
+            .map(([file]) => file),
+        );
+        const first = candidates[0];
+        if (!first) return;
+        const prev = transcriptBaseline.get(first);
+        attachTranscriptTail(first, prev?.size ?? 0);
+        if (transcriptDiscover) {
+          clearInterval(transcriptDiscover);
+          transcriptDiscover = undefined;
+        }
+      }, TRANSCRIPT_DISCOVER_POLL_MS);
+      transcriptDiscover.unref?.();
 
       proc.stdout.on("data", (d: Buffer) => {
         lineBuf += d.toString();
@@ -300,6 +547,7 @@ export class GrokEngine implements InterruptibleEngine {
       proc.on("close", (code) => {
         if (settled) return;
         settled = true;
+        stopTranscriptWatch();
         handleParsed(parseGrokJsonLine(lineBuf));
         const terminationReason = this.liveProcesses.get(trackingId)?.terminationReason ?? null;
         this.liveProcesses.delete(trackingId);
@@ -338,6 +586,7 @@ export class GrokEngine implements InterruptibleEngine {
       proc.on("error", (err) => {
         if (settled) return;
         settled = true;
+        stopTranscriptWatch();
         this.liveProcesses.delete(trackingId);
         reject(new Error(`Failed to spawn Grok CLI: ${err.message}`));
       });
@@ -351,6 +600,8 @@ export class GrokEngine implements InterruptibleEngine {
       if (k === "CODEX" || k.startsWith("CODEX_")) continue;
       if (v !== undefined) cleanEnv[k] = v;
     }
+    cleanEnv.GROK_CLAUDE_MCPS_ENABLED = "false";
+    cleanEnv.GROK_CURSOR_MCPS_ENABLED = "false";
     return cleanEnv;
   }
 

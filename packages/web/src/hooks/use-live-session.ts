@@ -49,6 +49,18 @@ export function shouldRecoverStuckTurn(args: {
   return args.serverStatus !== 'running'
 }
 
+function appendStatusChunk(prev: string, next: string): string {
+  if (!prev) return next
+  if (!next) return prev
+  if (next.startsWith('_') || prev.endsWith('_')) return `${prev}${next}`
+  if (/^[,.:;!?)}\]"']/.test(next)) return `${prev}${next}`
+  return `${prev} ${next}`
+}
+
+function capStatusText(text: string): string {
+  return text.length > 500 ? `${text.slice(0, 499)}…` : text
+}
+
 export interface SessionMetaUpdate {
   engine?: string
   engineSessionId?: string
@@ -120,6 +132,7 @@ export function useLiveSession(
   const [liveContextTokens, setLiveContextTokens] = useState<number | null>(null)
   const [backgroundActivity, setBackgroundActivity] = useState<BackgroundActivity | null>(null)
   const intermediateStartRef = useRef<number>(-1)
+  const statusMessageIdRef = useRef<string | null>(null)
   const [currentSession, setCurrentSession] = useState<Record<string, unknown> | null>(null)
   const [loadError, setLoadError] = useState<Error | null>(null)
   const sessionIdRef = useRef(sessionId)
@@ -134,6 +147,43 @@ export function useLiveSession(
   useEffect(() => { onRefreshRef.current = opts.onRefresh }, [opts.onRefresh])
 
   useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
+
+  const clearStatusMessage = useCallback(() => {
+    const id = statusMessageIdRef.current
+    if (!id) return
+    statusMessageIdRef.current = null
+    setMessages((prev) => prev.filter((m) => m.id !== id))
+  }, [])
+
+  const upsertStatusMessage = useCallback((raw: string) => {
+    const text = raw.replace(/\s+/g, ' ').trim()
+    if (!text) return
+    const replace = /^(thinking:|plan:|grok retrying)/i.test(text)
+    const now = Date.now()
+    setMessages((prev) => {
+      if (intermediateStartRef.current < 0) intermediateStartRef.current = prev.length
+      const existingId = statusMessageIdRef.current
+      const existing = existingId ? prev.find((m) => m.id === existingId) : undefined
+      const previousThinking = existing?.content.match(/^Thinking:\s*(.*)$/i)?.[1] ?? ''
+      const content = replace
+        ? text
+        : `Thinking: ${capStatusText(appendStatusChunk(previousThinking, text))}`
+      if (existingId && prev.some((m) => m.id === existingId)) {
+        return prev.map((m) => m.id === existingId ? { ...m, content, timestamp: now } : m)
+      }
+      const id = crypto.randomUUID()
+      statusMessageIdRef.current = id
+      return [
+        ...prev,
+        {
+          id,
+          role: 'notification' as const,
+          content,
+          timestamp: now,
+        },
+      ]
+    })
+  }, [])
 
 
   // Listen for session events via subscribe
@@ -156,16 +206,19 @@ export function useLiveSession(
         const deltaType = String(p.type || 'text')
 
         if (deltaType === 'text') {
+          clearStatusMessage()
           const chunk = String(p.content || '')
           streamingTextRef.current += chunk
           setStreamingText(streamingTextRef.current)
         } else if (deltaType === 'text_snapshot') {
+          clearStatusMessage()
           const snapshot = String(p.content || '')
           if (snapshot.length >= streamingTextRef.current.length) {
             streamingTextRef.current = snapshot
             setStreamingText(snapshot)
           }
         } else if (deltaType === 'tool_use') {
+          clearStatusMessage()
           if (streamingTextRef.current) {
             const flushed = streamingTextRef.current
             streamingTextRef.current = ''
@@ -211,6 +264,8 @@ export function useLiveSession(
         } else if (deltaType === 'context') {
           const n = Number(p.content)
           if (Number.isFinite(n) && n > 0) setLiveContextTokens(n)
+        } else if (deltaType === 'status') {
+          upsertStatusMessage(String(p.content || ''))
         }
       }
 
@@ -254,15 +309,18 @@ export function useLiveSession(
       if (event === 'session:interrupted') {
         streamingTextRef.current = ''
         setStreamingText('')
+        clearStatusMessage()
       }
 
       if (event === 'session:stopped') {
         setLoading(false)
         setStreamingText('')
         setLiveContextTokens(null)
+        clearStatusMessage()
       }
 
       if (event === 'session:completed') {
+        clearStatusMessage()
         streamingTextRef.current = ''
         setStreamingText('')
         setLoading(false)
@@ -452,6 +510,7 @@ export function useLiveSession(
       setCurrentSession(null)
       setLoadError(null)
       setBackgroundActivity(null)
+      statusMessageIdRef.current = null
       streamingTextRef.current = ''
       setStreamingText('')
       intermediateStartRef.current = -1

@@ -55,7 +55,7 @@ export interface TalkEngineEvent { engine: string | null; model: string | null; 
  */
 export interface SessionDeltaEvent {
   sessionId: string
-  type: "text" | "text_snapshot" | "tool_use" | "tool_result" | "context"
+  type: "text" | "text_snapshot" | "tool_use" | "tool_result" | "status" | "context"
   content?: string | number
   toolName?: string
   toolId?: string

@@ -76,7 +76,7 @@ describe("Grok interactive protocol helpers", () => {
       cwd: "/workspace",
       model: "grok-build",
       cliFlags: ["--chrome", "--custom"],
-    } as any, undefined, "initial prompt");
+    } as any);
 
     expect(args).toContain("--no-auto-update");
     expect(args).toContain("--no-alt-screen");
@@ -88,7 +88,7 @@ describe("Grok interactive protocol helpers", () => {
     expect(args).not.toContain("--output-format");
     expect(args).not.toContain("--chrome");
     expect(args).toContain("--custom");
-    expect(args.at(-1)).toBe("initial prompt");
+    expect(args).not.toContain("initial prompt");
   });
 
   it("builds resume args for an existing Grok session id", () => {
@@ -107,7 +107,7 @@ describe("Grok interactive protocol helpers", () => {
       prompt: "",
       cwd: "/workspace",
       model: "grok-build",
-    } as any, "sess-1", undefined, "system instructions");
+    } as any, "sess-1", "system instructions");
 
     expect(args[args.indexOf("--system-prompt-override") + 1]).toBe("system instructions");
   });
@@ -198,7 +198,7 @@ describe("GrokInteractiveEngine", () => {
     lifecycle.dispose();
   });
 
-  it("submits the first prompt after transcript discovery and resolves from that transcript", async () => {
+  it("submits the first prompt through the PTY and resolves from the discovered transcript", async () => {
     const run = engine.run({
       prompt: "hello grok",
       systemPrompt: "system instructions\nwith a newline",
@@ -214,7 +214,15 @@ describe("GrokInteractiveEngine", () => {
     expect(call.args).not.toContain("hello grok");
     expect(call.proc.writes.join("")).not.toContain("hello grok");
 
+    call.proc._emitData("Grok Build Beta ❯ GrokBuild·always-approve");
     await sleep(300);
+    expect(call.proc.writes.join("")).toContain("hello grok");
+    expect(call.proc.writes.join("")).not.toContain("system instructions");
+    expect(call.proc.writes.join("")).not.toContain("\x1b[200~");
+    call.proc._emitData("Run Grok Build in a project directory?");
+    await sleep(300);
+    expect(call.proc.writes).toContain("\r");
+
     const file = path.join(sessionsDir, "jinn-run-1", "updates.jsonl");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, [
@@ -222,10 +230,7 @@ describe("GrokInteractiveEngine", () => {
       "",
     ].join("\n"));
 
-    await sleep(13_500);
-    expect(call.proc.writes.join("")).toContain("hello grok");
-    expect(call.proc.writes.join("")).not.toContain("system instructions");
-    expect(call.proc.writes.join("")).not.toContain("\x1b[200~");
+    await sleep(300);
     fs.appendFileSync(file, [
       JSON.stringify({
         method: "session/update",
@@ -234,6 +239,7 @@ describe("GrokInteractiveEngine", () => {
           update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi there" } },
         },
       }),
+      JSON.stringify({ type: "end", sessionId: "jinn-run-1", done: true }),
       "",
     ].join("\n"));
     const result = await run;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import path from "node:path";
 import type { StreamDelta, EngineResult } from "../../shared/types.js";
 
@@ -66,9 +67,20 @@ vi.mock("node:child_process", () => ({
   }),
 }));
 
+const osMockState = vi.hoisted(() => ({ home: "" }));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  const fsm = await import("node:fs");
+  const pathm = await import("node:path");
+  osMockState.home = fsm.mkdtempSync(pathm.join(actual.tmpdir(), "grok-home-"));
+  const homedir = () => osMockState.home;
+  return { ...actual, homedir, default: { ...((actual as any).default ?? actual), homedir } };
+});
+
 import { buildGrokHeadlessArgs, GrokEngine, parseGrokJsonLine } from "../grok.js";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function runWith(
   stdoutLines: string[],
@@ -151,8 +163,9 @@ describe("parseGrokJsonLine", () => {
     expect(parsed?.deltas).toEqual([{ type: "text", content: "hel" }]);
   });
 
-  it("parses Grok streaming text data and skips thought data", () => {
-    expect(parseGrokJsonLine(JSON.stringify({ type: "thought", data: "internal" }))?.deltas).toEqual([]);
+  it("parses Grok streaming text data and surfaces thought data as status", () => {
+    expect(parseGrokJsonLine(JSON.stringify({ type: "thought", data: "checking files" }))?.deltas)
+      .toEqual([{ type: "status", content: "checking files" }]);
     expect(parseGrokJsonLine(JSON.stringify({ type: "text", data: "G" }))?.deltas)
       .toEqual([{ type: "text", content: "G" }]);
   });
@@ -177,6 +190,94 @@ describe("parseGrokJsonLine", () => {
     }));
     expect(parsed?.sessionId).toBe("grok-pty-session");
     expect(parsed?.deltas).toEqual([{ type: "text", content: "hello" }]);
+  });
+
+  it("parses Grok interactive thought chunks as status", () => {
+    const parsed = parseGrokJsonLine(JSON.stringify({
+      method: "session/update",
+      params: {
+        sessionId: "grok-pty-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "checking the repository" },
+        },
+      },
+    }));
+    expect(parsed?.sessionId).toBe("grok-pty-session");
+    expect(parsed?.deltas).toEqual([{ type: "status", content: "checking the repository" }]);
+  });
+
+  it("parses Grok interactive tool calls and completions", () => {
+    const start = parseGrokJsonLine(JSON.stringify({
+      method: "session/update",
+      params: {
+        sessionId: "grok-pty-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "read_file",
+          rawInput: { target_file: "/tmp/a.txt" },
+        },
+      },
+    }));
+    expect(start?.deltas).toEqual([{
+      type: "tool_use",
+      content: "Using read_file",
+      toolName: "read_file",
+      toolId: "tool-1",
+      input: "{\"target_file\":\"/tmp/a.txt\"}",
+    }]);
+
+    const done = parseGrokJsonLine(JSON.stringify({
+      method: "session/update",
+      params: {
+        sessionId: "grok-pty-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "completed",
+          content: [{ type: "content", content: { type: "text", text: "ok" } }],
+          rawOutput: { type: "ReadFile" },
+        },
+      },
+    }));
+    expect(done?.deltas).toEqual([{
+      type: "tool_result",
+      content: "ok",
+      toolName: "read_file",
+      toolId: "tool-1",
+    }]);
+  });
+
+  it("parses Grok plan and retry updates as status", () => {
+    const plan = parseGrokJsonLine(JSON.stringify({
+      method: "session/update",
+      params: {
+        sessionId: "grok-pty-session",
+        update: {
+          sessionUpdate: "plan",
+          entries: [
+            { content: "Read files", status: "completed" },
+            { content: "Patch parser", status: "in_progress" },
+          ],
+        },
+      },
+    }));
+    expect(plan?.deltas).toEqual([{ type: "status", content: "Plan: Patch parser" }]);
+
+    const retry = parseGrokJsonLine(JSON.stringify({
+      method: "session/update",
+      params: {
+        sessionId: "grok-pty-session",
+        update: {
+          sessionUpdate: "retry_state",
+          attempt: 2,
+          max_retries: 15,
+          reason: "temporary upstream failure",
+        },
+      },
+    }));
+    expect(retry?.deltas).toEqual([{ type: "status", content: "Grok retrying (2/15): temporary upstream failure" }]);
   });
 
   it("parses Grok end events as terminal with session id", () => {
@@ -230,5 +331,78 @@ describe("GrokEngine run", () => {
 
     expect(call.args[call.args.indexOf("--resume") + 1]).toBe("existing-grok-session");
     expect(result.sessionId).toBe("existing-grok-session");
+  });
+
+  it("mirrors headless tool deltas from Grok's transcript", async () => {
+    const deltas: StreamDelta[] = [];
+    const engine = new GrokEngine();
+    const promise = engine.run({
+      prompt: "read a file",
+      cwd: "/tmp",
+      sessionId: "jinn-session-tool",
+      model: "grok-build",
+      onStream: (d: StreamDelta) => deltas.push(d),
+    } as any);
+
+    await flush();
+    const call = spawnCalls[spawnCalls.length - 1];
+    expect(call).toBeDefined();
+
+    const file = path.join(osMockState.home, ".grok", "sessions", "tool-session", "updates.jsonl");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "{}\n");
+    await sleep(350);
+    fs.appendFileSync(file, [
+      JSON.stringify({
+        method: "session/update",
+        params: {
+          sessionId: "tool-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "read_file",
+            rawInput: { target_file: "AGENTS.md" },
+          },
+        },
+      }),
+      JSON.stringify({
+        method: "session/update",
+        params: {
+          sessionId: "tool-session",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-1",
+            status: "completed",
+            title: "read_file",
+            content: [{ type: "content", content: { type: "text", text: "ok" } }],
+          },
+        },
+      }),
+      "",
+    ].join("\n"));
+    await sleep(350);
+
+    call.proc.emitStdout([
+      JSON.stringify({ type: "text", data: "done" }),
+      JSON.stringify({ type: "result", result: "done", done: true }),
+      "",
+    ].join("\n"));
+    call.proc.close(0);
+
+    const result = await promise;
+    expect(result.result).toBe("done");
+    expect(deltas).toContainEqual({
+      type: "tool_use",
+      content: "Using read_file",
+      toolName: "read_file",
+      toolId: "tool-1",
+      input: "{\"target_file\":\"AGENTS.md\"}",
+    });
+    expect(deltas).toContainEqual({
+      type: "tool_result",
+      content: "ok",
+      toolName: "read_file",
+      toolId: "tool-1",
+    });
   });
 });

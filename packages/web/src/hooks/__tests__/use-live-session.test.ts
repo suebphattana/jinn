@@ -69,6 +69,39 @@ describe("useLiveSession (read-only)", () => {
     expect(result.current.messages.at(-1)?.content).toBe("Hello there.")
   })
 
+  it("shows transient status deltas and clears them when real output arrives", async () => {
+    getSession.mockResolvedValue({ status: "running", messages: [] })
+    const { subscribe, emit } = makeBus()
+    const { result } = renderHook(() =>
+      useLiveSession("s1", { subscribe, readOnly: true }),
+    )
+    await act(async () => { await Promise.resolve() })
+
+    act(() => {
+      emit("session:delta", { sessionId: "s1", type: "status", content: "checking" })
+      emit("session:delta", { sessionId: "s1", type: "status", content: "files" })
+    })
+    expect(result.current.messages.map((m) => m.content)).toEqual(["Thinking: checking files"])
+
+    act(() => {
+      emit("session:delta", { sessionId: "s1", type: "status", content: "Plan: patch parser" })
+    })
+    expect(result.current.messages.map((m) => m.content)).toEqual(["Plan: patch parser"])
+    expect(result.current.messages[0]?.role).toBe("notification")
+
+    act(() => {
+      emit("session:delta", { sessionId: "s1", type: "text", content: "Done" })
+    })
+    expect(result.current.messages).toEqual([])
+    expect(result.current.streamingText).toBe("Done")
+
+    await act(async () => {
+      emit("session:completed", { sessionId: "s1", result: "Done." })
+      await Promise.resolve()
+    })
+    expect(result.current.messages.map((m) => m.content)).toEqual(["Done."])
+  })
+
   it("appends a live media attachment", async () => {
     getSession.mockResolvedValue({ status: "running", messages: [] })
     const { subscribe, emit } = makeBus()

@@ -21,15 +21,16 @@ const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 const DONE_DEBOUNCE_MS = 3000;
 const TAIL_POLL_MS = 250;
 const DISCOVER_POLL_MS = 200;
-const DISCOVER_TIMEOUT_MS = 30 * 1000;
-const FIRST_PROMPT_AFTER_TRANSCRIPT_MS = 12_000;
-const FIRST_PROMPT_FALLBACK_MS = 15_000;
+const DISCOVER_TIMEOUT_MS = 90 * 1000;
+const PROMPT_READY_SUBMIT_DELAY_MS = 100;
+const PROMPT_SUBMIT_FALLBACK_MS = 2500;
 const CURSOR_POSITION_RESPONSE = "\x1b[1;1R";
 
 interface ActiveTurn {
   interrupt: (reason: string) => void;
   tailer?: TranscriptTailer;
   discover?: { stop: () => void };
+  tuiOutput?: { dispose: () => void };
   doneTimer?: NodeJS.Timeout;
   hardTimeout?: NodeJS.Timeout;
   boundProc?: pty.IPty;
@@ -40,6 +41,15 @@ function pasteAndSubmit(proc: pty.IPty, text: string): void {
   // Grok's TUI line editor does not currently accept Codex/Claude-style
   // bracketed-paste submission from node-pty; write a normal terminal line.
   proc.write(`${payload}\r`);
+}
+
+function isGrokTuiReady(output: string): boolean {
+  return (output.includes("GrokBuild") || output.includes("Grok Build") || output.includes("always-approve")) &&
+    output.includes("❯");
+}
+
+function isGrokProjectPicker(output: string): boolean {
+  return output.includes("Run Grok Build in a project directory");
 }
 
 function walkFiles(dir: string, out: string[] = []): string[] {
@@ -109,7 +119,6 @@ export function findGrokTranscriptById(sessionId: string, root = GROK_SESSIONS_D
 export function buildGrokInteractiveArgs(
   opts: EngineRunOpts | PtyIdleSpawnOpts,
   sessionId?: string,
-  initialPrompt?: string,
   systemPromptOverride?: string,
 ): string[] {
   const args = ["--no-auto-update", "--no-alt-screen", "--always-approve"];
@@ -118,7 +127,6 @@ export function buildGrokInteractiveArgs(
   if (sessionId) args.push("--resume", sessionId);
   if (systemPromptOverride) args.push("--system-prompt-override", systemPromptOverride);
   args.push(...grokCliFlags((opts as EngineRunOpts).cliFlags));
-  if (initialPrompt) args.push(initialPrompt);
   return args;
 }
 
@@ -165,6 +173,7 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
       if (turn.hardTimeout) clearTimeout(turn.hardTimeout);
       turn.tailer?.stop();
       turn.discover?.stop();
+      turn.tuiOutput?.dispose();
       this.active.delete(jinnSessionId);
       this.lifecycle.turnEnded(jinnSessionId);
     };
@@ -182,6 +191,19 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
         promptSubmitted = true;
       }, delayMs);
       promptSubmitTimer.unref?.();
+    };
+    const watchTuiOutput = (proc: pty.IPty) => {
+      let buffer = "";
+      let acceptedProjectPicker = false;
+      turn.tuiOutput = proc.onData((data) => {
+        buffer = (buffer + data).slice(-5000);
+        if (!promptSubmitted && isGrokTuiReady(buffer)) schedulePromptSubmit(PROMPT_READY_SUBMIT_DELAY_MS);
+        if (!acceptedProjectPicker && isGrokProjectPicker(buffer)) {
+          acceptedProjectPicker = true;
+          const t = setTimeout(() => proc.write("\r"), 100);
+          t.unref?.();
+        }
+      });
     };
     const finish = (r: EngineResult) => {
       if (settled) return;
@@ -246,7 +268,6 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
         (line) => onParsed(grokTranscriptLineToDeltas(line)),
         { pollMs: TAIL_POLL_MS, label: "Grok" },
       );
-      if (!warm) schedulePromptSubmit(FIRST_PROMPT_AFTER_TRANSCRIPT_MS);
     };
 
     this.active.set(jinnSessionId, turn);
@@ -279,6 +300,7 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
           attachTail(fresh[0], true);
         } else if (Date.now() - startedAt > DISCOVER_TIMEOUT_MS) {
           clearInterval(discover);
+          this.lifecycle.releaseSession(jinnSessionId);
           finish({ sessionId: grokSessionId ?? opts.resumeSessionId ?? "", result: "", error: "Grok interactive: no session transcript appeared" });
         }
       }, DISCOVER_POLL_MS);
@@ -292,11 +314,12 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
       if (turn.boundProc) schedulePromptSubmit(0);
       else turn.interrupt("Interrupted: grok PTY unavailable");
     } else {
-      const handle = this.spawn(jinnSessionId, opts, grokSessionId, undefined, systemPromptOverride);
+      const handle = this.spawn(jinnSessionId, opts, grokSessionId, systemPromptOverride);
       turn.boundProc = (handle as any)._proc as pty.IPty | undefined;
+      if (turn.boundProc) watchTuiOutput(turn.boundProc);
       this.lifecycle.adopt(jinnSessionId, handle);
       this.lifecycle.turnStarted(jinnSessionId);
-      schedulePromptSubmit(FIRST_PROMPT_FALLBACK_MS);
+      schedulePromptSubmit(PROMPT_SUBMIT_FALLBACK_MS);
     }
 
     return promise;
@@ -329,11 +352,10 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
     jinnSessionId: string,
     opts: EngineRunOpts | PtyIdleSpawnOpts,
     grokSessionId?: string,
-    initialPrompt?: string,
     systemPromptOverride?: string,
   ): PtyHandle {
     const bin = resolveBin("grok", opts.bin);
-    const args = buildGrokInteractiveArgs(opts, grokSessionId, initialPrompt, systemPromptOverride);
+    const args = buildGrokInteractiveArgs(opts, grokSessionId, systemPromptOverride);
     const geom = this.lastGeom.get(jinnSessionId);
     logger.info(`GrokInteractiveEngine spawning ${bin} (session: ${grokSessionId ?? "new"}, geom: ${geom ? `${geom.cols}x${geom.rows}` : "default"})`);
     const proc = pty.spawn(bin, args, {

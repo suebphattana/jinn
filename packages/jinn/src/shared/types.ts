@@ -394,6 +394,7 @@ export interface PortalConfig {
   operatorName?: string;
   language?: string;
   onboarded?: boolean;
+  setupComplete?: boolean;
 }
 
 /**

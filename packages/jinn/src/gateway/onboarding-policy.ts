@@ -24,11 +24,11 @@ export function applyEngineChoice<T extends { engines: Record<string, any> }>(
   c: EngineChoice
 ): T {
   if (!c.engine) return cfg;
-  const engines = { ...cfg.engines, default: c.engine };
+  const engines: Record<string, any> = { ...cfg.engines, default: c.engine };
   engines[c.engine] = {
     ...(engines[c.engine] ?? {}),
     ...(c.model ? { model: c.model } : {}),
     ...(c.effortLevel ? { effortLevel: c.effortLevel } : {}),
   };
-  return { ...cfg, engines };
+  return { ...cfg, engines } as T;
 }

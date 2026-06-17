@@ -1,5 +1,5 @@
 
-import { lazy, Suspense, useState, useCallback, useEffect, useRef } from 'react'
+import { lazy, Suspense, useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { api } from '@/lib/api'
 import { useOrg } from '@/hooks/use-employees'
 import { ChatMessages } from '@/components/chat/chat-messages'
@@ -110,13 +110,34 @@ export function ChatPane({
   pendingUserMessage,
   initialEmployee,
 }: ChatPaneProps) {
+  // If this pane was opened from the onboarding wizard, the wizard stored the
+  // seed user message in sessionStorage so we can display it immediately
+  // (loading=true + seed bubble) without waiting for useLiveSession's first
+  // network fetch. Content-identity reconcile in conversations.ts merges it
+  // with the server-persisted twin once the fetch returns (no duplicate).
+  const seedFromOnboarding = useMemo<Message | undefined>(() => {
+    if (!sessionId || pendingUserMessage) return undefined
+    try {
+      const raw = sessionStorage.getItem('jinn-onboarding-seed')
+      if (!raw) return undefined
+      const data = JSON.parse(raw) as { sessionId: string; message: Message }
+      if (data.sessionId === sessionId) return data.message
+    } catch { /* ignore */ }
+    return undefined
+  }, [sessionId, pendingUserMessage]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Consume the storage entry once detected so a page refresh doesn't re-show
+  // the seed as an optimistic bubble on top of the already-loaded messages.
+  useEffect(() => {
+    if (seedFromOnboarding) sessionStorage.removeItem('jinn-onboarding-seed')
+  }, [seedFromOnboarding])
+
   // Live read pipeline (messages, streaming, loading, session, reconnect/watchdog)
   // is owned by useLiveSession; this pane keeps the composer + send on top and
   // drives optimistic writes through the hook's write API.
   const live = useLiveSession(sessionId, {
     subscribe,
     connectionSeq,
-    pendingUserMessage,
+    pendingUserMessage: pendingUserMessage ?? seedFromOnboarding,
     onMeta: onSessionMetaChange,
     onRefresh,
   })

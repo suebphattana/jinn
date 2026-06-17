@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useLocation } from "react-router-dom"
 import {
   MessageSquare,
   Users,
@@ -92,8 +92,11 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
   } = useSettings()
   const { theme, setTheme } = useTheme()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [visible, setVisible] = useState(false)
+  /** True while the branded loading bridge is covering the chat-route mount. */
+  const [launching, setLaunching] = useState(false)
   const [step, setStep] = useState(0)
   const [direction, setDirection] = useState<"forward" | "back">("forward")
 
@@ -167,6 +170,18 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
     })
   }, []) // run once on mount
 
+  // Dismiss the loading bridge as soon as we detect the /chat route has mounted.
+  // React 18 batches this state update with the deep-link handleSelect in page.tsx,
+  // so the overlay and ChatPane swap in the same commit — no blank frame.
+  useEffect(() => {
+    if (!launching) return
+    if (location.pathname === "/chat") {
+      setLaunching(false)
+      setVisible(false)
+      onClose?.()
+    }
+  }, [launching, location.pathname, onClose])
+
   const handleNext = useCallback(async () => {
     // Commit name/operator/language on step 0
     if (step === 0) {
@@ -197,11 +212,11 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
         if (!forceOpen) {
           localStorage.setItem("jinn-onboarded", "true")
         }
-        // Create the COO session BEFORE closing the wizard so wizard-close and
-        // chat navigation happen in the same synchronous tick — no blank-page gap.
+        // Create the COO session, then show the branded loading bridge while
+        // the chat route mounts (so there is never a blank screen).
+        const seed = "Hi! I just finished setup — let's get started. 👋"
         let launchSessionId: string | undefined
         try {
-          const seed = "Hi! I just finished setup — let's get started. 👋"
           const params = buildNewSessionParams({
             message: seed,
             selectedEmployee: null,
@@ -214,10 +229,28 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
         } catch {
           // fall through — navigate to home
         }
-        // Close wizard and navigate in the same synchronous tick.
-        setVisible(false)
-        onClose?.()
-        navigate(launchSessionId ? `/chat?sessionId=${launchSessionId}` : "/")
+
+        if (launchSessionId) {
+          // Store the seed so ChatPane can display it (and arm loading=true) the
+          // moment it mounts — before useLiveSession's first fetch returns.
+          try {
+            sessionStorage.setItem("jinn-onboarding-seed", JSON.stringify({
+              sessionId: launchSessionId,
+              message: { id: crypto.randomUUID(), role: "user", content: seed, timestamp: Date.now() },
+            }))
+          } catch { /* ignore — sessionStorage unavailable */ }
+          // Switch to the loading bridge; the dismiss effect closes the overlay
+          // once the /chat route is confirmed mounted (useLocation watch below).
+          // Use ?session= (not ?sessionId=) so resolveDeepLink picks it up and
+          // handleSelect fires immediately — no extra sessions-list round-trip.
+          setLaunching(true)
+          navigate(`/chat?session=${launchSessionId}`)
+        } else {
+          // createSession failed — close wizard and fall back to home.
+          setVisible(false)
+          onClose?.()
+          navigate("/")
+        }
       } catch {
         setSubmitError("Couldn't save your setup — check that the gateway is running, then try again.")
       } finally {
@@ -246,7 +279,29 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
     }
   }, [step])
 
-  if (!visible) return null
+  if (!visible && !launching) return null
+
+  // Loading bridge: shown after "Get Started" while the /chat route mounts.
+  // The same backdrop as the wizard keeps the screen branded and non-blank.
+  if (launching) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-[var(--space-4)]"
+        style={{
+          background: "color-mix(in srgb, var(--bg) 35%, rgba(0,0,0,0.60))",
+          backdropFilter: "blur(40px) saturate(160%)",
+          WebkitBackdropFilter: "blur(40px) saturate(160%)",
+        }}
+      >
+        <div className="w-[72px] h-[72px] rounded-full bg-[var(--accent-fill)] flex items-center justify-center animate-pulse">
+          <span className="text-[44px] leading-none">{"🧞"}</span>
+        </div>
+        <p className="text-[length:var(--text-title3)] font-[var(--weight-semibold)] text-[var(--text-primary)]">
+          Summoning {localName || "Jinn"}…
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div

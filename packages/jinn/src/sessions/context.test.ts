@@ -18,11 +18,11 @@ test("identity adds a language directive only for non-English", () => {
 import { buildOnboardingContext } from "./context.js";
 
 test("onboarding context is null once onboarded", () => {
-  expect(buildOnboardingContext({ portalName: "Hui", operatorName: "John", onboarded: true })).toBeNull();
+  expect(buildOnboardingContext({ portalName: "Hui", operatorName: "John", setupComplete: true })).toBeNull();
 });
 
 test("onboarding context greets by name and forbids re-asking it", () => {
-  const text = buildOnboardingContext({ portalName: "Hui", operatorName: "John", onboarded: false })!;
+  const text = buildOnboardingContext({ portalName: "Hui", operatorName: "John", setupComplete: false })!;
   expect(text).toContain("John");
   expect(text).toMatch(/already know|do not ask.*name|don't ask.*name/i);
   expect(text).toMatch(/onboarding/); // points at the skill

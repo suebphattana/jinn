@@ -32,7 +32,7 @@ Tell them you'll show how delegation works, then **spawn a child session** to th
 Ask if there's anything recurring they'd like handled automatically (a weekly summary, a daily check, etc.). If yes, create a real cron job via the `cron-manager` skill, routed through you (the COO). If no/skip, move on.
 
 ### 6. Wrap
-Recap what's set up (employee, skill, any cron), point them to where things live (Organization, Cron, Chat), and **set `portal.onboarded: true` in `config.yaml`** so onboarding never repeats. Invite their first real task.
+Recap what's set up (employee, skill, any cron), point them to where things live (Organization, Cron, Chat), and **set `portal.setupComplete: true` in `config.yaml`** so this setup conversation never repeats. (The wizard already set `portal.onboarded: true` when you finished the install wizard; `setupComplete` is the separate flag that stops this conversational onboarding from re-triggering.) Invite their first real task.
 
 ## Notes
 - Use instance-safe paths (`~/.{{portalSlug}}` or `$JINN_HOME`), not a hardcoded `~/.jinn`.

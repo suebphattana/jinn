@@ -137,15 +137,15 @@ describe("buildContext — config awareness", () => {
   });
 });
 
-describe("buildContext — onboarding block is omitted when portal.onboarded is true", () => {
-  // Gate is now portal.onboarded === true (config flag), not user-profile.md size.
+describe("buildContext — onboarding block is omitted when portal.setupComplete is true", () => {
+  // Gate is now portal.setupComplete === true (config flag), not user-profile.md size.
   const minConfig = {
     gateway: { host: "127.0.0.1", port: 7799 },
     engines: { default: "claude" },
-    portal: { onboarded: true },
+    portal: { setupComplete: true },
   } as unknown as JinnConfig;
 
-  it("does not emit the onboarding block when portal.onboarded is true", () => {
+  it("does not emit the onboarding block when portal.setupComplete is true", () => {
     const out = buildContext({ ...baseOpts, config: minConfig });
     expect(out).not.toContain("## Onboarding mode");
   });
@@ -156,20 +156,20 @@ describe("buildContext — onboarding block is omitted when portal.onboarded is 
   });
 });
 
-describe("buildContext — onboarding block appears when portal.onboarded is not set", () => {
-  // Gate is portal.onboarded === true. When config is absent or onboarded is falsy,
+describe("buildContext — onboarding block appears when portal.setupComplete is not set", () => {
+  // Gate is portal.setupComplete === true. When config is absent or setupComplete is falsy,
   // the operator-aware onboarding directive is injected.
-  it("emits onboarding block when portal.onboarded is not set", () => {
+  it("emits onboarding block when portal.setupComplete is not set", () => {
     const out = buildContext({ ...baseOpts });
     expect(out).toContain("## Onboarding mode");
     expect(out).toMatch(/fresh .* install|NOT yet completed onboarding/i);
   });
 
-  it("omits onboarding block when portal.onboarded is true", () => {
+  it("omits onboarding block when portal.setupComplete is true", () => {
     const config = {
       gateway: { host: "127.0.0.1", port: 7799 },
       engines: { default: "claude" },
-      portal: { onboarded: true },
+      portal: { setupComplete: true },
     } as unknown as JinnConfig;
     const out = buildContext({ ...baseOpts, config });
     expect(out).not.toContain("## Onboarding mode");

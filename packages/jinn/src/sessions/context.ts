@@ -158,8 +158,8 @@ export function buildContext(opts: {
   // Steady-state self-evolution guidance lives in CLAUDE.md/AGENTS.md (auto-loaded).
   // Only the dynamic onboarding flow for a fresh install is emitted here.
   if (!opts.employee) {
-    const onboarded = opts.config?.portal?.onboarded === true;
-    const onboarding = buildOnboardingContext({ portalName, operatorName, onboarded });
+    const setupComplete = opts.config?.portal?.setupComplete === true;
+    const onboarding = buildOnboardingContext({ portalName, operatorName, setupComplete });
     if (onboarding) {
       sections.push({
         tier: Tier.STANDARD,
@@ -651,15 +651,15 @@ function buildEnvironmentContext(): string | null {
 }
 
 /**
- * Operator-aware onboarding directive, gated on portal.onboarded.
- * Returns null once onboarding is complete — no repeat noise on steady-state sessions.
+ * Operator-aware onboarding directive, gated on portal.setupComplete.
+ * Returns null once the setup conversation is complete — no repeat noise on steady-state sessions.
  */
 export function buildOnboardingContext(opts: {
   portalName: string;
   operatorName?: string;
-  onboarded: boolean;
+  setupComplete: boolean;
 }): string | null {
-  if (opts.onboarded) return null;
+  if (opts.setupComplete) return null;
   const { portalName, operatorName } = opts;
   const name = operatorName ? operatorName : "your operator";
   return [
@@ -670,7 +670,7 @@ export function buildOnboardingContext(opts: {
       : `Ask the user's name once, then use it.`,
     `Run the **onboarding** skill (\`skills/onboarding/SKILL.md\`): a warm, multi-turn, game-like setup where you and ${name} get to know each other and build their org together. Speak in the second person.`,
     `Each beat must offer an explicit skip ("just say 'skip' or 'later'"). Never trap ${name}.`,
-    `When onboarding wraps, set \`portal.onboarded: true\` in \`config.yaml\` so this never repeats.`,
+    `When onboarding wraps, set \`portal.setupComplete: true\` in \`config.yaml\` so this never repeats.`,
   ].join("\n");
 }
 

@@ -84,6 +84,7 @@ import {
 } from "../talk/tts-stream.js";
 import { isTalkMuted } from "../talk/mute-state.js";
 import { maybeEmitTalkGraph } from "../talk/graph.js";
+import { onboardingNeeded } from "./onboarding-policy.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -1703,7 +1704,7 @@ export async function handleApiRequest(
       const config = context.getConfig();
       const onboarded = config.portal?.onboarded === true;
       return json(res, {
-        needed: !onboarded && sessions.length === 0 && !hasEmployees,
+        needed: onboardingNeeded(onboarded),
         onboarded,
         sessionsCount: sessions.length,
         hasEmployees,

@@ -84,7 +84,7 @@ import {
 } from "../talk/tts-stream.js";
 import { isTalkMuted } from "../talk/mute-state.js";
 import { maybeEmitTalkGraph } from "../talk/graph.js";
-import { onboardingNeeded } from "./onboarding-policy.js";
+import { onboardingNeeded, applyEngineChoice } from "./onboarding-policy.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -1719,12 +1719,12 @@ export async function handleApiRequest(
       if (!_parsed.ok) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
-      const { portalName, operatorName, language } = body;
+      const { portalName, operatorName, language, engine, model, effortLevel } = body;
 
-      // Read current config and merge portal settings
+      // Read current config and merge engine choice + portal settings
       const config = context.getConfig();
       const updated = {
-        ...config,
+        ...applyEngineChoice(config, { engine, model, effortLevel }),
         portal: {
           ...config.portal,
           onboarded: true,

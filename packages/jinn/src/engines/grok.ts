@@ -292,14 +292,10 @@ export function parseGrokJsonLine(line: string): GrokParsedLine | null {
       };
     }
     if (updateType === "agent_thought_chunk") {
-      const content = asRecord(update?.content);
-      const text = compactText(textFromUnknown(content?.text ?? update?.content));
-      return {
-        deltas: text ? [...deltas, { type: "status", content: text }] : deltas,
-        sessionId: nestedSessionId,
-        terminal: false,
-        contextTokens,
-      };
+      // Model reasoning ("thought") must never reach the UI — not as assistant
+      // content, not in activity/notification cards. Drop it entirely; keep only
+      // any context-token delta collected above.
+      return { deltas, sessionId: nestedSessionId, terminal: false, contextTokens };
     }
     if (updateType === "tool_call") {
       const toolName = update ? toolNameFromGrokUpdate(update) : undefined;
@@ -383,8 +379,8 @@ export function parseGrokJsonLine(line: string): GrokParsedLine | null {
   }
 
   if (eventType === "thought") {
-    const text = compactText(textFromUnknown(obj.data) || textFromUnknown(obj.content));
-    if (text) deltas.push({ type: "status", content: text });
+    // Reasoning chunk — never displayed (no content, no activity card). Keep only
+    // any context delta already collected above.
     return { deltas, sessionId, terminal, contextTokens };
   }
 
@@ -423,6 +419,29 @@ export function parseGrokJsonLine(line: string): GrokParsedLine | null {
   }
 
   return { deltas, sessionId, doneText, terminal, contextTokens };
+}
+
+/**
+ * Deltas the HEADLESS engine forwards to the UI for a parsed line, by raw stream.
+ *
+ * The headless engine consumes two streams that are NOT mutually ordered: grok's
+ * stdout (answer text, real-time) and the transcript tail (tool lifecycle only,
+ * lagging stdout by the poll interval). If answer text were forwarded live, a
+ * `tool_use` delta arriving late from the transcript would freeze the (already
+ * final) answer into a permanent intermediate bubble, which the turn's final
+ * result then renders a SECOND time — the duplicate greeting users saw. So answer
+ * text is never forwarded live from either stream: it lands exactly once via the
+ * engine's final result (accumulated into `resultText` from stdout). Tool lifecycle
+ * + context still stream live. Reasoning is already dropped by `parseGrokJsonLine`.
+ */
+export function grokVisibleDeltas(deltas: StreamDelta[], source: "stdout" | "transcript"): StreamDelta[] {
+  return deltas.filter((delta) => {
+    if (delta.type === "text" || delta.type === "text_snapshot") return false;
+    if (source === "transcript") {
+      return delta.type === "tool_use" || delta.type === "tool_result" || delta.type === "context";
+    }
+    return true;
+  });
 }
 
 export class GrokEngine implements InterruptibleEngine {
@@ -538,11 +557,14 @@ export class GrokEngine implements InterruptibleEngine {
         }
         if (parsed.contextTokens) lastContextTokens = parsed.contextTokens;
         if (parsed.error) turnError = parsed.error;
+        // Accumulate answer text into resultText (the single authoritative answer,
+        // delivered once at completion) but do NOT stream it live — see
+        // grokVisibleDeltas for why a live text delta duplicates against tools.
         for (const delta of parsed.deltas) {
           if (delta.type === "text") resultText += delta.content;
           if (delta.type === "text_snapshot") resultText = delta.content;
-          opts.onStream?.(delta);
         }
+        for (const delta of grokVisibleDeltas(parsed.deltas, "stdout")) opts.onStream?.(delta);
         if (parsed.doneText) resultText = parsed.doneText;
         if (parsed.terminal) settleOnTerminal();
       };
@@ -556,15 +578,10 @@ export class GrokEngine implements InterruptibleEngine {
         }
         if (parsed.sessionId && !expected) return;
         if (parsed.contextTokens) lastContextTokens = parsed.contextTokens;
-        for (const delta of parsed.deltas) {
-          // Grok headless stdout currently carries thought/text chunks, but tool
-          // lifecycle updates only appear in updates.jsonl. Mirror the structural
-          // deltas from the transcript and leave answer text to stdout to avoid
-          // duplicate assistant content.
-          if (delta.type === "tool_use" || delta.type === "tool_result" || delta.type === "context") {
-            opts.onStream?.(delta);
-          }
-        }
+        // Tool lifecycle updates only appear in the transcript; mirror them (plus
+        // context) live. Answer text is left to stdout/resultText — grokVisibleDeltas
+        // drops it here so it is never emitted twice.
+        for (const delta of grokVisibleDeltas(parsed.deltas, "transcript")) opts.onStream?.(delta);
       };
 
       const attachTranscriptTail = (filePath: string, offset: number) => {

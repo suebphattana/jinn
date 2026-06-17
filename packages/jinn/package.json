@@ -1,6 +1,6 @@
 {
   "name": "jinn-cli",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "description": "Lightweight AI gateway daemon orchestrating Claude Code, Codex, Grok, and Antigravity CLI",
   "license": "MIT",
   "type": "module",
@@ -56,5 +56,34 @@
     "@vitest/coverage-v8": "^4.1.0",
     "typescript": "^5.8.0",
     "vitest": "^4.1.0"
+  },
+  "keywords": [
+    "ai",
+    "ai-agent",
+    "ai-agents",
+    "ai-gateway",
+    "agent-orchestration",
+    "claude",
+    "claude-code",
+    "codex",
+    "grok",
+    "antigravity",
+    "llm",
+    "anthropic",
+    "coding-agent",
+    "cli",
+    "daemon",
+    "mcp",
+    "cron",
+    "slack"
+  ],
+  "homepage": "https://github.com/hristo2612/jinn#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hristo2612/jinn.git",
+    "directory": "packages/jinn"
+  },
+  "bugs": {
+    "url": "https://github.com/hristo2612/jinn/issues"
   }
 }

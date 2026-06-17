@@ -52,6 +52,7 @@ function prompt(question: string, defaultValue?: string): Promise<string> {
       rl.close();
       resolve(answer.trim() || defaultValue || "");
     });
+    rl.on("close", () => resolve(defaultValue || ""));
   });
 }
 

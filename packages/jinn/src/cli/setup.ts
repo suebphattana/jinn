@@ -49,8 +49,8 @@ function prompt(question: string, defaultValue?: string): Promise<string> {
   const suffix = defaultValue ? ` ${DIM}(${defaultValue})${RESET}` : "";
   return new Promise((resolve) => {
     rl.question(`  ${question}${suffix}: `, (answer) => {
-      rl.close();
       resolve(answer.trim() || defaultValue || "");
+      rl.close();
     });
     rl.on("close", () => resolve(defaultValue || ""));
   });

@@ -10,6 +10,15 @@ import { tailTranscriptLines, type TranscriptTailer } from "./transcript-tailer.
 export const GROK_DEFAULT_MODEL = "grok-build";
 export const GROK_SESSIONS_DIR = path.join(os.homedir(), ".grok", "sessions");
 
+// Generic, non-verbatim progress shown while Grok is reasoning. Grok's reasoning
+// events (`agent_thought_chunk` / `thought`) carry raw chain-of-thought — never
+// safe to display verbatim — so instead of leaving the whole reasoning stretch as
+// a blank "Thinking" indicator, we surface this fixed status line. It mirrors how
+// Codex shows mid-turn activity without exposing reasoning. Must start with
+// "Thinking:" so the web status renderer replaces it in place (single transient
+// line) rather than accumulating chunks — see upsertStatusMessage in use-live-session.
+const GROK_THINKING_STATUS = "Thinking: working through the request…";
+
 const STDERR_MAX = 10 * 1024;
 const TRANSCRIPT_TAIL_POLL_MS = 250;
 const TRANSCRIPT_DISCOVER_POLL_MS = 200;
@@ -292,10 +301,17 @@ export function parseGrokJsonLine(line: string): GrokParsedLine | null {
       };
     }
     if (updateType === "agent_thought_chunk") {
-      // Model reasoning ("thought") must never reach the UI — not as assistant
-      // content, not in activity/notification cards. Drop it entirely; keep only
-      // any context-token delta collected above.
-      return { deltas, sessionId: nestedSessionId, terminal: false, contextTokens };
+      // Raw model reasoning ("thought") must NEVER reach the UI verbatim — the
+      // payload can contain chain-of-thought, <thinking> blocks, even draft
+      // answers. The text is intentionally dropped; we emit only a generic,
+      // non-verbatim progress line so the reasoning stretch shows live progress
+      // instead of a blank "Thinking" (mirrors Codex's mid-turn activity).
+      return {
+        deltas: [...deltas, { type: "status", content: GROK_THINKING_STATUS }],
+        sessionId: nestedSessionId,
+        terminal: false,
+        contextTokens,
+      };
     }
     if (updateType === "tool_call") {
       const toolName = update ? toolNameFromGrokUpdate(update) : undefined;
@@ -379,9 +395,15 @@ export function parseGrokJsonLine(line: string): GrokParsedLine | null {
   }
 
   if (eventType === "thought") {
-    // Reasoning chunk — never displayed (no content, no activity card). Keep only
-    // any context delta already collected above.
-    return { deltas, sessionId, terminal, contextTokens };
+    // Raw reasoning chunk — its text is never displayed verbatim (same contract as
+    // agent_thought_chunk). Surface a generic, non-verbatim progress line instead
+    // of a blank "Thinking".
+    return {
+      deltas: [...deltas, { type: "status", content: GROK_THINKING_STATUS }],
+      sessionId,
+      terminal,
+      contextTokens,
+    };
   }
 
   if (eventType === "text") {

@@ -174,11 +174,14 @@ describe("parseGrokJsonLine", () => {
     expect(parsed?.deltas).toEqual([{ type: "text", content: "hel" }]);
   });
 
-  it("parses Grok streaming text data and never surfaces thought/reasoning", () => {
-    // Reasoning ("thought") must not become a displayable delta (no content, no
-    // status/activity card) — it is dropped at the parser so every consumer benefits.
-    expect(parseGrokJsonLine(JSON.stringify({ type: "thought", data: "checking files" }))?.deltas)
-      .toEqual([]);
+  it("surfaces a generic, non-verbatim progress line for thought/reasoning (never the raw text)", () => {
+    // Raw reasoning ("thought") must not reach the UI verbatim, but the stretch
+    // should still show mid-turn progress (not a blank "Thinking"). The parser
+    // emits a fixed, generic status line and drops the reasoning payload.
+    const parsed = parseGrokJsonLine(JSON.stringify({ type: "thought", data: "checking secret files in /etc" }));
+    expect(parsed?.deltas).toEqual([{ type: "status", content: "Thinking: working through the request…" }]);
+    // The raw reasoning text is never echoed into any delta.
+    expect(JSON.stringify(parsed?.deltas)).not.toContain("checking secret files");
     expect(parseGrokJsonLine(JSON.stringify({ type: "text", data: "G" }))?.deltas)
       .toEqual([{ type: "text", content: "G" }]);
   });
@@ -205,20 +208,22 @@ describe("parseGrokJsonLine", () => {
     expect(parsed?.deltas).toEqual([{ type: "text", content: "hello" }]);
   });
 
-  it("drops Grok interactive thought chunks (reasoning never displayed)", () => {
+  it("surfaces interactive thought chunks as generic progress (raw reasoning never displayed)", () => {
     const parsed = parseGrokJsonLine(JSON.stringify({
       method: "session/update",
       params: {
         sessionId: "grok-pty-session",
         update: {
           sessionUpdate: "agent_thought_chunk",
-          content: { type: "text", text: "checking the repository" },
+          content: { type: "text", text: "<thinking>checking the repository</thinking>" },
         },
       },
     }));
     expect(parsed?.sessionId).toBe("grok-pty-session");
-    // No status/text delta — reasoning is suppressed at the parser boundary.
-    expect(parsed?.deltas).toEqual([]);
+    // Generic, non-verbatim progress line — the raw reasoning text is dropped.
+    expect(parsed?.deltas).toEqual([{ type: "status", content: "Thinking: working through the request…" }]);
+    expect(JSON.stringify(parsed?.deltas)).not.toContain("checking the repository");
+    expect(JSON.stringify(parsed?.deltas)).not.toContain("<thinking>");
   });
 
   it("parses Grok interactive tool calls and completions", () => {

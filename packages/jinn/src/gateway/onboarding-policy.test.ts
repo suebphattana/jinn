@@ -10,7 +10,7 @@ test("onboarding is not needed once onboarded flag is set", () => {
 });
 
 test("applyEngineChoice sets default + per-engine model/effort", () => {
-  const base = { engines: { default: "claude", claude: { model: "opus" } } };
+  const base: { engines: Record<string, any> } = { engines: { default: "claude", claude: { model: "opus" } } };
   const out = applyEngineChoice(base, { engine: "claude", model: "sonnet", effortLevel: "low" });
   expect(out.engines.default).toBe("claude");
   expect(out.engines.claude.model).toBe("sonnet");
@@ -18,13 +18,13 @@ test("applyEngineChoice sets default + per-engine model/effort", () => {
 });
 
 test("applyEngineChoice returns config unchanged when no engine provided", () => {
-  const base = { engines: { default: "claude", claude: { model: "opus" } } };
+  const base: { engines: Record<string, any> } = { engines: { default: "claude", claude: { model: "opus" } } };
   const out = applyEngineChoice(base, {});
   expect(out).toBe(base);
 });
 
 test("applyEngineChoice preserves existing per-engine fields not in the choice", () => {
-  const base = { engines: { default: "claude", claude: { model: "opus", someOtherField: "kept" } } };
+  const base: { engines: Record<string, any> } = { engines: { default: "claude", claude: { model: "opus", someOtherField: "kept" } } };
   const out = applyEngineChoice(base, { engine: "claude", model: "sonnet" });
   expect(out.engines.claude.someOtherField).toBe("kept");
   expect(out.engines.claude.model).toBe("sonnet");

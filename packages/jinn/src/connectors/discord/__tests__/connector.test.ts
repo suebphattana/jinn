@@ -105,10 +105,11 @@ describe("DiscordConnector", () => {
       const row = mockSend.mock.calls[0][0].components[0].toJSON();
       const approveId = row.components[0].custom_id;
 
+      const rejectId = row.components[1].custom_id;
       const interactionCreate = lastClient().handlers.interactionCreate;
       expect(interactionCreate).toBeDefined();
 
-      const deferUpdate = vi.fn().mockResolvedValue(undefined);
+      const update = vi.fn().mockResolvedValue(undefined);
       await interactionCreate({
         isButton: () => true,
         customId: approveId,
@@ -116,11 +117,27 @@ describe("DiscordConnector", () => {
         channelId: "chan1",
         channel: textChannel,
         user: { id: "u1", username: "tapper" },
-        message: { id: "m1" },
-        deferUpdate,
+        message: {
+          id: "m1",
+          components: [
+            {
+              components: [
+                { type: 2, style: 2, label: "Approve", custom_id: approveId },
+                { type: 2, style: 2, label: "Reject", custom_id: rejectId },
+              ],
+            },
+          ],
+        },
+        update,
       });
 
-      expect(deferUpdate).toHaveBeenCalled();
+      // Pressed state: message updated with all buttons disabled, chosen one green.
+      expect(update).toHaveBeenCalledOnce();
+      const updated = update.mock.calls[0][0].components[0].toJSON();
+      expect(updated.components.every((b: any) => b.disabled)).toBe(true);
+      const approveBtn = updated.components.find((b: any) => b.custom_id === approveId);
+      expect(approveBtn.style).toBe(3); // ButtonStyle.Success
+
       expect(handler).toHaveBeenCalledOnce();
       const msg: IncomingMessage = handler.mock.calls[0][0];
       expect(msg.text).toBe("Approve");

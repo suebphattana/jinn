@@ -324,6 +324,28 @@ export class DiscordConnector implements Connector {
     }
   }
 
+  /** Rebuild a button message's action rows with every button disabled, and the
+   *  tapped button recoloured green — the "pressed" state Discord lacks natively. */
+  private disableComponents(
+    interaction: ButtonInteraction,
+  ): ActionRowBuilder<ButtonBuilder>[] {
+    const rows = (interaction.message?.components ?? []) as Array<{ components: any[] }>;
+    return rows.map((row) => {
+      const newRow = new ActionRowBuilder<ButtonBuilder>();
+      for (const comp of row.components) {
+        const cid = comp.customId ?? comp.custom_id;
+        // Link buttons (style 5) have no custom_id and can't be recoloured.
+        const isLink = (comp.style ?? comp.data?.style) === ButtonStyle.Link;
+        const btn = ButtonBuilder.from(comp).setDisabled(true);
+        if (!isLink && cid && cid === interaction.customId) {
+          btn.setStyle(ButtonStyle.Success);
+        }
+        newRow.addComponents(btn);
+      }
+      return newRow;
+    });
+  }
+
   /** Handle a button tap: recover the label and feed it back into the session
    *  as a normal incoming message, so the running turn continues naturally. */
   private async handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
@@ -340,11 +362,17 @@ export class DiscordConnector implements Connector {
     if (this.allowedUserIds.size > 0 && !this.allowedUserIds.has(interaction.user.id)) return;
     if (!this.handler) return;
 
-    // Acknowledge so Discord doesn't show "interaction failed".
+    // Acknowledge AND show a pressed state: disable every button on the
+    // message and recolour the tapped one green, so the choice is visible and
+    // can't be tapped twice. Falls back to a bare ack if the edit fails.
     try {
-      await interaction.deferUpdate();
+      await interaction.update({ components: this.disableComponents(interaction) });
     } catch {
-      /* non-fatal */
+      try {
+        await interaction.deferUpdate();
+      } catch {
+        /* non-fatal */
+      }
     }
 
     const ch = interaction.channel;

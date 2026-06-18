@@ -363,6 +363,17 @@ export class TelegramConnector implements Connector {
     const chatId = message.chat.id;
     const username = from?.username || from?.first_name || "unknown";
 
+    // Show a "pressed" state: collapse the keyboard to the chosen label with a
+    // check mark so the selection is visible and can't be tapped again.
+    try {
+      await (this.bot as any).editMessageReplyMarkup(
+        { inline_keyboard: [[{ text: `✓ ${label}`, callback_data: "jb:noop" }]] },
+        { chat_id: chatId, message_id: message.message_id },
+      );
+    } catch {
+      /* non-fatal */
+    }
+
     const msg: IncomingMessage = {
       connector: this.name,
       source: "telegram",

@@ -2,10 +2,15 @@ import {
   Client,
   GatewayIntentBits,
   Partials,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   type Message,
   type TextChannel,
   type DMChannel,
   type ThreadChannel,
+  type ButtonInteraction,
+  type MessageCreateOptions,
 } from "discord.js";
 import type {
   Connector,
@@ -15,10 +20,26 @@ import type {
   Target,
   SendOptions,
 } from "../../shared/types.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { logger } from "../../shared/logger.js";
 import { TMP_DIR } from "../../shared/paths.js";
 import { formatResponse, downloadAttachment } from "./format.js";
 import { deriveSessionKey, buildReplyContext, isOldMessage } from "./threads.js";
+import { parseButtons, ButtonRegistry, type ButtonRow } from "../shared/buttons.js";
+import {
+  transcribe as sttTranscribe,
+  resolveLanguages,
+  getModelPath,
+} from "../../stt/stt.js";
+
+export interface DiscordSttConfig {
+  enabled?: boolean;
+  model?: string;
+  language?: string;
+  languages?: string[];
+}
 
 export interface DiscordConnectorConfig {
   /** Unique instance identifier (e.g. "discord-vox") */
@@ -35,6 +56,8 @@ export interface DiscordConnectorConfig {
   channelRouting?: Record<string, string>;
   /** If set, this instance proxies all Discord operations through the primary instance at this URL */
   proxyVia?: string;
+  /** Speech-to-text settings forwarded from top-level `config.stt` */
+  stt?: DiscordSttConfig;
 }
 
 export class DiscordConnector implements Connector {
@@ -48,6 +71,8 @@ export class DiscordConnector implements Connector {
   private status: "starting" | "running" | "stopped" | "error" = "starting";
   private lastError: string | null = null;
   private typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
+  private buttons = new ButtonRegistry();
+  private sttChain: Promise<unknown> = Promise.resolve();
 
   constructor(config: DiscordConnectorConfig) {
     this.name = config.id || "discord";
@@ -102,6 +127,15 @@ export class DiscordConnector implements Connector {
       }
     });
 
+    this.client.on("interactionCreate", async (interaction) => {
+      try {
+        if (!interaction.isButton()) return;
+        await this.handleButtonInteraction(interaction);
+      } catch (err) {
+        logger.error(`Discord interaction handler error: ${err instanceof Error ? err.message : err}`);
+      }
+    });
+
     this.client.on("error", (err) => {
       this.lastError = err.message;
       this.status = "error";
@@ -127,6 +161,7 @@ export class DiscordConnector implements Connector {
       messageEdits: true,
       reactions: true,
       attachments: true,
+      buttons: true,
     };
   }
 
@@ -167,28 +202,63 @@ export class DiscordConnector implements Connector {
     }
   }
 
-  /** Send text in Discord-sized chunks, attaching any files to the final message. */
+  /** Send text in Discord-sized chunks, attaching any files and interactive
+   *  buttons to the final message. Buttons come from an explicit opts.buttons
+   *  or from a `[buttons:…]` directive embedded in the text. */
   private async sendChunks(
     channel: TextChannel | DMChannel | ThreadChannel,
     text: string,
     opts?: SendOptions,
   ): Promise<string | undefined> {
-    const chunks = formatResponse(text);
+    const parsed = parseButtons(text);
+    const rows = opts?.buttons ?? parsed.rows ?? undefined;
+    const components = rows ? this.buildComponents(rows) : undefined;
+    const chunks = formatResponse(parsed.cleanedText);
     const files = opts?.files ?? [];
-    // Files only, no text content
-    if (chunks.length === 0 && files.length > 0) {
-      const sent = await channel.send({ files });
+
+    // Nothing but attachments/buttons (no text content)
+    if (chunks.length === 0) {
+      if (files.length === 0 && !components) return undefined;
+      const payload: MessageCreateOptions = {};
+      if (files.length > 0) payload.files = files;
+      if (components) payload.components = components;
+      const sent = await channel.send(payload);
       return sent.id;
     }
+
     let lastId: string | undefined;
     for (let i = 0; i < chunks.length; i++) {
       const isLast = i === chunks.length - 1;
-      const payload =
-        isLast && files.length > 0 ? { content: chunks[i], files } : chunks[i];
+      let payload: string | MessageCreateOptions = chunks[i];
+      if (isLast && (files.length > 0 || components)) {
+        const obj: MessageCreateOptions = { content: chunks[i] };
+        if (files.length > 0) obj.files = files;
+        if (components) obj.components = components;
+        payload = obj;
+      }
       const sent = await channel.send(payload);
       lastId = sent.id;
     }
     return lastId;
+  }
+
+  /** Build Discord action rows of buttons from label rows, registering each
+   *  label so the tap callback can recover it. */
+  private buildComponents(
+    rows: ButtonRow[],
+  ): ActionRowBuilder<ButtonBuilder>[] {
+    return rows.map((row) => {
+      const builder = new ActionRowBuilder<ButtonBuilder>();
+      for (const label of row) {
+        builder.addComponents(
+          new ButtonBuilder()
+            .setCustomId(this.buttons.register(label))
+            .setLabel(label.slice(0, 80))
+            .setStyle(ButtonStyle.Secondary),
+        );
+      }
+      return builder;
+    });
   }
 
   async editMessage(target: Target, text: string): Promise<void> {
@@ -254,6 +324,125 @@ export class DiscordConnector implements Connector {
     }
   }
 
+  /** Handle a button tap: recover the label and feed it back into the session
+   *  as a normal incoming message, so the running turn continues naturally. */
+  private async handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
+    const label = this.buttons.resolve(interaction.customId);
+    if (label === null) return; // not one of ours (or expired)
+
+    // Same gating as inbound messages.
+    if (this.config.guildId && interaction.guildId !== this.config.guildId) return;
+    if (
+      this.config.channelId &&
+      interaction.channelId !== this.config.channelId &&
+      !interaction.channel?.isDMBased()
+    ) return;
+    if (this.allowedUserIds.size > 0 && !this.allowedUserIds.has(interaction.user.id)) return;
+    if (!this.handler) return;
+
+    // Acknowledge so Discord doesn't show "interaction failed".
+    try {
+      await interaction.deferUpdate();
+    } catch {
+      /* non-fatal */
+    }
+
+    const ch = interaction.channel;
+    const isDM = ch?.isDMBased() ?? false;
+    const isThread = ch?.isThread() ?? false;
+    const sessionKey = isDM
+      ? `${this.instanceId}:dm:${interaction.user.id}`
+      : isThread
+      ? `${this.instanceId}:thread:${interaction.channelId}`
+      : `${this.instanceId}:${interaction.channelId}`;
+
+    const incomingMessage: IncomingMessage = {
+      connector: this.instanceId,
+      source: "discord",
+      sessionKey,
+      channel: interaction.channelId ?? "",
+      thread: isThread ? interaction.channelId ?? undefined : undefined,
+      user: interaction.user.username,
+      userId: interaction.user.id,
+      text: label,
+      attachments: [],
+      replyContext: {
+        channel: interaction.channelId ?? "",
+        thread: isThread ? interaction.channelId ?? null : null,
+        messageTs: interaction.message?.id ?? null,
+        guildId: interaction.guildId ?? null,
+      },
+      messageId: interaction.message?.id,
+      raw: interaction,
+      transportMeta: {
+        channelName:
+          ch && ch.isTextBased() && "name" in ch ? (ch as TextChannel).name : "dm",
+        guildId: interaction.guildId ?? null,
+        isDM,
+        buttonTap: true,
+      },
+    };
+
+    this.handler(incomingMessage);
+  }
+
+  /** Detect a Discord voice message: the IS_VOICE_MESSAGE attachment flag
+   *  (bit 13) or an audio/* content type. */
+  private isVoiceAttachment(att: {
+    flags?: number | { bitfield?: number } | null;
+    contentType?: string | null;
+  }): boolean {
+    const flags = att.flags;
+    const bits = typeof flags === "number" ? flags : flags?.bitfield ?? 0;
+    if (bits & (1 << 13)) return true;
+    return Boolean(att.contentType?.startsWith("audio/"));
+  }
+
+  /** Download a voice attachment and transcribe it via the STT module.
+   *  Returns null (and logs) when STT is unavailable or transcription fails.
+   *  Transcriptions are serialized to avoid parallel whisper runs OOMing. */
+  private async transcribeVoice(att: {
+    url: string;
+    name?: string | null;
+  }): Promise<string | null> {
+    const model = this.config.stt?.model || "small";
+    let unavailable: string | null = null;
+    if (!this.config.stt?.enabled) {
+      unavailable = "voice transcription is not enabled on this gateway";
+    } else if (!getModelPath(model)) {
+      unavailable = `STT model '${model}' is not downloaded`;
+    }
+    if (unavailable) {
+      logger.warn(`Discord: dropping voice message — ${unavailable}`);
+      return null;
+    }
+
+    const langs = resolveLanguages(this.config.stt);
+    const language = langs.length === 1 ? langs[0] : "auto";
+
+    const myTurn = this.sttChain.then(async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "discord-stt-"));
+      try {
+        const localPath = await downloadAttachment(att.url, tmpDir, att.name || "voice.ogg");
+        return await sttTranscribe(localPath, model, language);
+      } finally {
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+          /* non-fatal */
+        }
+      }
+    });
+    this.sttChain = myTurn.catch(() => undefined);
+
+    try {
+      return await myTurn;
+    } catch (err) {
+      logger.error(`Discord STT failed: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
   private async handleMessage(message: Message): Promise<void> {
     // Ignore bots (including self)
     if (message.author.bot) return;
@@ -287,9 +476,14 @@ export class DiscordConnector implements Connector {
     const sessionKey = deriveSessionKey(message, this.instanceId);
     const replyContext = buildReplyContext(message);
 
-    // Download attachments
+    // Separate voice messages (transcribed via STT) from regular attachments
+    // (downloaded and forwarded to the engine).
+    const allAtts = Array.from(message.attachments.values());
+    const voiceAtts = allAtts.filter((a) => this.isVoiceAttachment(a));
+    const fileAtts = allAtts.filter((a) => !this.isVoiceAttachment(a));
+
     const attachments = await Promise.all(
-      Array.from(message.attachments.values()).map(async (att) => {
+      fileAtts.map(async (att) => {
         try {
           const localPath = await downloadAttachment(att.url, TMP_DIR, att.name);
           return { name: att.name, localPath, mimeType: att.contentType ?? "application/octet-stream" };
@@ -299,6 +493,27 @@ export class DiscordConnector implements Connector {
       }),
     ).then((results) => results.filter(Boolean) as Array<{ name: string; localPath: string; mimeType: string }>);
 
+    let messageText = message.content;
+    if (voiceAtts.length > 0) {
+      const transcript = await this.transcribeVoice(voiceAtts[0]);
+      if (transcript) {
+        messageText = messageText ? `${messageText}\n\n${transcript}` : transcript;
+      } else if (!messageText && attachments.length === 0) {
+        // Nothing usable came through — tell the user rather than forwarding empty text.
+        try {
+          const channel = await this.client.channels.fetch(message.channel.id);
+          if (channel?.isTextBased()) {
+            await (channel as TextChannel | DMChannel | ThreadChannel).send(
+              "⚠️ Couldn't transcribe your voice message. Please try again or type instead.",
+            );
+          }
+        } catch {
+          /* non-fatal */
+        }
+        return;
+      }
+    }
+
     const incomingMessage: IncomingMessage = {
       connector: this.instanceId,
       source: "discord",
@@ -307,7 +522,7 @@ export class DiscordConnector implements Connector {
       thread: message.channel.isThread() ? message.channel.id : undefined,
       user: message.author.username,
       userId: message.author.id,
-      text: message.content,
+      text: messageText,
       attachments: attachments.map((a) => ({
         name: a.name,
         url: "",

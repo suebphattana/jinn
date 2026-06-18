@@ -455,7 +455,11 @@ export async function startGateway(
     initConnector({
       id: "discord",
       label: "Discord",
-      create: () => new DiscordConnector(config.connectors.discord as DiscordConnectorConfig),
+      create: () =>
+        new DiscordConnector({
+          ...(config.connectors.discord as DiscordConnectorConfig),
+          stt: config.stt,
+        }),
       employee: () => config.connectors.discord?.employee,
       startMsg: "Discord connector starting",
     });
@@ -504,7 +508,7 @@ export async function startGateway(
         let connector: Connector;
         switch (type) {
           case "discord": {
-            const discordConfig = { ...typeConfig, id } as DiscordConnectorConfig;
+            const discordConfig = { ...typeConfig, id, stt: config.stt } as DiscordConnectorConfig;
             const discord = new DiscordConnector(discordConfig);
             discord.onMessage((msg) => {
               const routeOpts: RouteOptions = {};
@@ -629,7 +633,7 @@ export async function startGateway(
           let connector: Connector;
           switch (type) {
             case "discord": {
-              const discordConfig = { ...typeConfig, id } as DiscordConnectorConfig;
+              const discordConfig = { ...typeConfig, id, stt: config.stt } as DiscordConnectorConfig;
               const discord = new DiscordConnector(discordConfig);
               discord.onMessage((msg) => {
                 const routeOpts: RouteOptions = {};

@@ -10,11 +10,13 @@ import type {
   ConnectorHealth,
   IncomingMessage,
   ReplyContext,
+  SendOptions,
   Target,
   TelegramConnectorConfig,
 } from "../../shared/types.js";
 import { deriveSessionKey, buildReplyContext, isOldTelegramMessage } from "./threads.js";
 import { formatResponse, stripTelegramMarkdown } from "./format.js";
+import { parseButtons, ButtonRegistry, type ButtonRow } from "../shared/buttons.js";
 import { logger } from "../../shared/logger.js";
 import { TMP_DIR } from "../../shared/paths.js";
 import {
@@ -39,7 +41,10 @@ export class TelegramConnector implements Connector {
     messageEdits: true,
     reactions: false,
     attachments: true,
+    buttons: true,
   };
+
+  private buttons = new ButtonRegistry();
 
   private readonly sttConfig?: TelegramConnectorConfig["stt"];
   private sttChain: Promise<unknown> = Promise.resolve();
@@ -318,6 +323,65 @@ export class TelegramConnector implements Connector {
 
       this.handler(msg);
     });
+
+    this.bot.on("callback_query", async (query) => {
+      try {
+        await this.handleCallbackQuery(query);
+      } catch (err) {
+        logger.error(
+          `[telegram] callback_query handler error: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    });
+  }
+
+  /** A user tapped an inline-keyboard button: recover the label and feed it
+   *  back into the session as a normal incoming message. */
+  private async handleCallbackQuery(query: any): Promise<void> {
+    const data: string | undefined = query.data;
+    const label = data ? this.buttons.resolve(data) : null;
+
+    // Always answer the callback to clear Telegram's loading spinner.
+    try {
+      await (this.bot as any).answerCallbackQuery(query.id);
+    } catch {
+      /* non-fatal */
+    }
+
+    if (label === null) return; // not one of ours (or expired)
+    if (!this.handler) return;
+
+    const from = query.from;
+    const userId = from?.id;
+    if (this.allowedUsers) {
+      if (userId === undefined || !this.allowedUsers.has(userId)) return;
+    }
+
+    const message = query.message;
+    if (!message?.chat?.id) return;
+
+    const chatId = message.chat.id;
+    const username = from?.username || from?.first_name || "unknown";
+
+    const msg: IncomingMessage = {
+      connector: this.name,
+      source: "telegram",
+      sessionKey: deriveSessionKey(message),
+      replyContext: buildReplyContext(message),
+      messageId: String(message.message_id),
+      channel: String(chatId),
+      user: username,
+      userId: String(userId ?? "unknown"),
+      text: label,
+      attachments: [],
+      raw: query,
+      transportMeta: {
+        chatType: message.chat.type,
+        buttonTap: true,
+      },
+    };
+
+    this.handler(msg);
   }
 
   async stop(): Promise<void> {
@@ -375,35 +439,100 @@ export class TelegramConnector implements Connector {
     }
   }
 
-  async sendMessage(target: Target, text: string): Promise<string | undefined> {
-    if (!text || !text.trim()) return undefined;
-    const chunks = formatResponse(text);
-    let lastMessageId: string | undefined;
-    for (const chunk of chunks) {
-      if (!chunk.trim()) continue;
-      const id = await this.safeSend(target.channel, chunk);
-      if (id) lastMessageId = id;
-    }
-    return lastMessageId;
+  async sendMessage(target: Target, text: string, opts?: SendOptions): Promise<string | undefined> {
+    return this.sendChunks(target.channel, text, opts);
   }
 
-  async replyMessage(target: Target, text: string): Promise<string | undefined> {
-    if (!text || !text.trim()) return undefined;
+  async replyMessage(target: Target, text: string, opts?: SendOptions): Promise<string | undefined> {
     const replyToId =
       target.replyContext?.messageId != null
         ? Number(target.replyContext.messageId)
         : undefined;
-    const opts: TelegramBot.SendMessageOptions = {};
+    const baseOpts: TelegramBot.SendMessageOptions = {};
     if (replyToId) {
-      opts.reply_to_message_id = replyToId;
+      baseOpts.reply_to_message_id = replyToId;
     }
-    const chunks = formatResponse(text);
+    return this.sendChunks(target.channel, text, opts, baseOpts);
+  }
+
+  /** Build a Telegram inline keyboard from button label rows, registering each
+   *  label so the callback_query handler can recover it. */
+  private buildInlineKeyboard(rows: ButtonRow[]): {
+    inline_keyboard: { text: string; callback_data: string }[][];
+  } {
+    return {
+      inline_keyboard: rows.map((row) =>
+        row.map((label) => ({
+          text: label,
+          callback_data: this.buttons.register(label),
+        })),
+      ),
+    };
+  }
+
+  private async sendDocumentSafe(
+    chatId: string,
+    filePath: string,
+    opts: Record<string, unknown> = {},
+  ): Promise<string | undefined> {
+    try {
+      const result = await (this.bot as any).sendDocument(chatId, filePath, opts);
+      return result?.message_id != null ? String(result.message_id) : undefined;
+    } catch (err) {
+      logger.error(`[telegram] sendDocument failed: ${err}`);
+      return undefined;
+    }
+  }
+
+  /** Send text in Telegram-sized chunks, plus any file attachments and an inline
+   *  keyboard. Buttons come from opts.buttons or a `[buttons:…]` directive in
+   *  the text; the keyboard attaches to the final outgoing message. */
+  private async sendChunks(
+    chatId: string,
+    text: string,
+    opts?: SendOptions,
+    baseOpts: TelegramBot.SendMessageOptions = {},
+  ): Promise<string | undefined> {
+    const parsed = parseButtons(text ?? "");
+    const rows = opts?.buttons ?? parsed.rows ?? undefined;
+    const replyMarkup = rows ? this.buildInlineKeyboard(rows) : undefined;
+    const files = opts?.files ?? [];
+    const chunks = formatResponse(parsed.cleanedText).filter((c) => c.trim());
+
+    if (chunks.length === 0 && files.length === 0 && !replyMarkup) return undefined;
+
     let lastMessageId: string | undefined;
-    for (const chunk of chunks) {
-      if (!chunk.trim()) continue;
-      const id = await this.safeSend(target.channel, chunk, opts);
+
+    // Text chunks — attach the keyboard to the last one (unless files will carry it).
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const o: TelegramBot.SendMessageOptions = { ...baseOpts };
+      if (isLast && replyMarkup && files.length === 0) {
+        (o as Record<string, unknown>).reply_markup = replyMarkup;
+      }
+      const id = await this.safeSend(chatId, chunks[i], o);
       if (id) lastMessageId = id;
     }
+
+    // File attachments (documents) — keyboard rides the last file if no text did.
+    for (let i = 0; i < files.length; i++) {
+      const isLast = i === files.length - 1;
+      const o: Record<string, unknown> = { ...baseOpts };
+      if (isLast && replyMarkup && chunks.length === 0) o.reply_markup = replyMarkup;
+      const id = await this.sendDocumentSafe(chatId, files[i], o);
+      if (id) lastMessageId = id;
+    }
+
+    // Buttons only (no text, no files): Telegram needs message text, so send a
+    // minimal prompt to carry the keyboard.
+    if (chunks.length === 0 && files.length === 0 && replyMarkup) {
+      const id = await this.safeSend(chatId, "👇", {
+        ...baseOpts,
+        ...({ reply_markup: replyMarkup } as Record<string, unknown>),
+      });
+      if (id) lastMessageId = id;
+    }
+
     return lastMessageId;
   }
 

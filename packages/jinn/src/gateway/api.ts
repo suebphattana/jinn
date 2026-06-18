@@ -1650,13 +1650,28 @@ export async function handleApiRequest(
         : typeof body.path === "string"
         ? [body.path]
         : [];
-      if (!body.channel || (!body.text && files.length === 0)) {
-        return badRequest(res, "channel and (text or files) are required");
+      // Optional interactive buttons: string[][] (rows of labels).
+      const buttons: string[][] | undefined = Array.isArray(body.buttons)
+        ? body.buttons
+            .map((row: unknown) =>
+              Array.isArray(row)
+                ? row.filter((l: unknown): l is string => typeof l === "string")
+                : [],
+            )
+            .filter((row: string[]) => row.length > 0)
+        : undefined;
+      const hasButtons = !!buttons && buttons.length > 0;
+      if (!body.channel || (!body.text && files.length === 0 && !hasButtons)) {
+        return badRequest(res, "channel and (text, files, or buttons) are required");
       }
+      const sendOpts =
+        files.length > 0 || hasButtons
+          ? { ...(files.length > 0 ? { files } : {}), ...(hasButtons ? { buttons } : {}) }
+          : undefined;
       await connector.sendMessage(
         { channel: body.channel, thread: body.thread },
         body.text ?? "",
-        files.length > 0 ? { files } : undefined,
+        sendOpts,
       );
       return json(res, { status: "sent" });
     }

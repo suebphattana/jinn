@@ -8,6 +8,9 @@ const mockGetMe = vi.fn().mockResolvedValue({ id: 999, username: "test_bot" });
 const mockStartPolling = vi.fn();
 const mockStopPolling = vi.fn().mockResolvedValue(undefined);
 const mockOn = vi.fn();
+const mockSendDocument = vi.fn().mockResolvedValue({ message_id: 7 });
+const mockAnswerCallbackQuery = vi.fn().mockResolvedValue(true);
+const mockSendChatAction = vi.fn().mockResolvedValue(true);
 
 vi.mock("node-telegram-bot-api", () => {
   const MockBot = vi.fn(function (this: any) {
@@ -17,6 +20,9 @@ vi.mock("node-telegram-bot-api", () => {
     this.startPolling = mockStartPolling;
     this.stopPolling = mockStopPolling;
     this.on = mockOn;
+    this.sendDocument = mockSendDocument;
+    this.answerCallbackQuery = mockAnswerCallbackQuery;
+    this.sendChatAction = mockSendChatAction;
   });
   return { default: MockBot };
 });
@@ -56,6 +62,7 @@ describe("TelegramConnector", () => {
         messageEdits: true,
         reactions: false,
         attachments: true,
+        buttons: true,
       });
     });
   });
@@ -286,6 +293,112 @@ describe("TelegramConnector", () => {
         message_id: 42,
         parse_mode: "Markdown",
       });
+    });
+  });
+
+  describe("interactive buttons", () => {
+    it("renders an inline keyboard from a [buttons:…] directive", async () => {
+      const target: Target = { channel: "12345" };
+      await connector.sendMessage(target, "Pick one [buttons: Yes | No]");
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+      const [chatId, text, opts] = mockSendMessage.mock.calls[0];
+      expect(chatId).toBe("12345");
+      expect(text).toBe("Pick one");
+      const kb = (opts as any).reply_markup.inline_keyboard;
+      expect(kb).toHaveLength(1);
+      expect(kb[0].map((b: any) => b.text)).toEqual(["Yes", "No"]);
+      expect(kb[0].every((b: any) => typeof b.callback_data === "string")).toBe(true);
+    });
+
+    it("renders an inline keyboard from opts.buttons", async () => {
+      const target: Target = { channel: "12345" };
+      await connector.sendMessage(target, "Choose", {
+        buttons: [["A", "B"], ["C"]],
+      });
+      const kb = (mockSendMessage.mock.calls[0][2] as any).reply_markup.inline_keyboard;
+      expect(kb).toHaveLength(2);
+      expect(kb[1][0].text).toBe("C");
+    });
+
+    it("sends a minimal carrier message when buttons but no text", async () => {
+      const target: Target = { channel: "12345" };
+      await connector.sendMessage(target, "[buttons: Go]");
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+      const [, text, opts] = mockSendMessage.mock.calls[0];
+      expect(text).toBe("👇");
+      expect((opts as any).reply_markup.inline_keyboard[0][0].text).toBe("Go");
+    });
+
+    it("feeds the tapped label back as an incoming message", async () => {
+      const handler = vi.fn();
+      connector.onMessage(handler);
+      await connector.start();
+
+      // Render buttons to register a callback_data → label mapping.
+      await connector.sendMessage({ channel: "555" }, "[buttons: Approve | Reject]");
+      const kb = (mockSendMessage.mock.calls.at(-1)![2] as any).reply_markup.inline_keyboard;
+      const approveData = kb[0][0].callback_data;
+
+      const cbCallback = mockOn.mock.calls.find((c) => c[0] === "callback_query")?.[1];
+      expect(cbCallback).toBeDefined();
+
+      await cbCallback({
+        id: "cbq1",
+        data: approveData,
+        from: { id: 67890, username: "tapper", first_name: "Tap" },
+        message: { message_id: 100, chat: { id: 555, type: "private" } },
+      });
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("cbq1");
+      expect(handler).toHaveBeenCalledOnce();
+      const msg: IncomingMessage = handler.mock.calls[0][0];
+      expect(msg.text).toBe("Approve");
+      expect(msg.channel).toBe("555");
+      expect((msg.transportMeta as any).buttonTap).toBe(true);
+    });
+
+    it("ignores foreign / expired callback data but still answers it", async () => {
+      const handler = vi.fn();
+      connector.onMessage(handler);
+      await connector.start();
+      const cbCallback = mockOn.mock.calls.find((c) => c[0] === "callback_query")?.[1];
+      await cbCallback({
+        id: "cbq2",
+        data: "not-ours:99",
+        from: { id: 67890, username: "x" },
+        message: { message_id: 1, chat: { id: 1, type: "private" } },
+      });
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("cbq2");
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("outbound file attachments", () => {
+    it("sends files via sendDocument", async () => {
+      const target: Target = { channel: "12345" };
+      await connector.sendMessage(target, "Here you go", {
+        files: ["/tmp/report.pdf"],
+      });
+      expect(mockSendMessage).toHaveBeenCalledTimes(1); // the caption text
+      expect(mockSendDocument).toHaveBeenCalledWith("12345", "/tmp/report.pdf", {});
+    });
+
+    it("sends multiple files", async () => {
+      const target: Target = { channel: "12345" };
+      await connector.sendMessage(target, "", {
+        files: ["/tmp/a.png", "/tmp/b.png"],
+      });
+      expect(mockSendDocument).toHaveBeenCalledTimes(2);
+    });
+
+    it("attaches the keyboard to the last file when there is no text", async () => {
+      const target: Target = { channel: "12345" };
+      await connector.sendMessage(target, "", {
+        files: ["/tmp/a.png"],
+        buttons: [["OK"]],
+      });
+      const opts = mockSendDocument.mock.calls[0][2] as any;
+      expect(opts.reply_markup.inline_keyboard[0][0].text).toBe("OK");
     });
   });
 

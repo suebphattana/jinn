@@ -100,6 +100,8 @@ export interface ConnectorCapabilities {
   messageEdits: boolean;
   reactions: boolean;
   attachments: boolean;
+  /** Interactive buttons / inline keyboards with tap-to-reply callbacks. */
+  buttons?: boolean;
 }
 
 export interface ConnectorHealth {
@@ -161,6 +163,10 @@ export interface Target {
 export interface SendOptions {
   /** Absolute local paths of files to attach to the outgoing message. */
   files?: string[];
+  /** Interactive button rows to render below the message. Each inner array is
+   *  a row of button labels. Tapping a button feeds the label back into the
+   *  session as a normal incoming message. */
+  buttons?: string[][];
 }
 
 export interface Session {

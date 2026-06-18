@@ -2,12 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { STT_MODELS_DIR, TMP_DIR } from "../shared/paths.js";
+import { STT_MODELS_DIR, TMP_DIR, JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
 
 const execFileAsync = promisify(execFile);
 
-const WHISPER_CLI = "whisper-cli";
+/** Resolve the whisper.cpp CLI: an explicit JINN_WHISPER_CLI override, then a
+ *  locally-built binary at JINN_HOME/bin/whisper-cli, else expect it on PATH. */
+function resolveWhisperCli(): string {
+  if (process.env.JINN_WHISPER_CLI) return process.env.JINN_WHISPER_CLI;
+  const local = path.join(JINN_HOME, "bin", "whisper-cli");
+  return fs.existsSync(local) ? local : "whisper-cli";
+}
+
+const WHISPER_CLI = resolveWhisperCli();
 const FFMPEG = "ffmpeg";
 
 /** Valid Whisper language codes (ISO 639-1). */

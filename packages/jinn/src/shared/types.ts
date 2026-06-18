@@ -117,8 +117,8 @@ export interface Connector {
   getCapabilities(): ConnectorCapabilities;
   getHealth(): ConnectorHealth;
   reconstructTarget(replyContext: ReplyContext): Target;
-  sendMessage(target: Target, text: string): Promise<string | void>;
-  replyMessage(target: Target, text: string): Promise<string | void>;
+  sendMessage(target: Target, text: string, opts?: SendOptions): Promise<string | void>;
+  replyMessage(target: Target, text: string, opts?: SendOptions): Promise<string | void>;
   addReaction(target: Target, emoji: string): Promise<void>;
   removeReaction(target: Target, emoji: string): Promise<void>;
   editMessage(target: Target, text: string): Promise<void>;
@@ -156,6 +156,11 @@ export interface Target {
   thread?: string;
   messageTs?: string;
   replyContext?: ReplyContext;
+}
+
+export interface SendOptions {
+  /** Absolute local paths of files to attach to the outgoing message. */
+  files?: string[];
 }
 
 export interface Session {

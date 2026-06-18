@@ -13,6 +13,7 @@ import type {
   ConnectorHealth,
   IncomingMessage,
   Target,
+  SendOptions,
 } from "../../shared/types.js";
 import { logger } from "../../shared/logger.js";
 import { TMP_DIR } from "../../shared/paths.js";
@@ -146,36 +147,48 @@ export class DiscordConnector implements Connector {
     };
   }
 
-  async sendMessage(target: Target, text: string): Promise<string | undefined> {
+  async sendMessage(target: Target, text: string, opts?: SendOptions): Promise<string | undefined> {
     try {
       const channel = await this.client.channels.fetch(target.channel);
       if (!channel || !channel.isTextBased()) return;
-      const chunks = formatResponse(text);
-      let lastId: string | undefined;
-      for (const chunk of chunks) {
-        const sent = await (channel as TextChannel | DMChannel | ThreadChannel).send(chunk);
-        lastId = sent.id;
-      }
-      return lastId;
+      return await this.sendChunks(channel as TextChannel | DMChannel | ThreadChannel, text, opts);
     } catch (err) {
       logger.error(`Discord sendMessage error: ${err instanceof Error ? err.message : err}`);
     }
   }
 
-  async replyMessage(target: Target, text: string): Promise<string | undefined> {
+  async replyMessage(target: Target, text: string, opts?: SendOptions): Promise<string | undefined> {
     try {
       const channel = await this.client.channels.fetch(target.thread ?? target.channel);
       if (!channel || !channel.isTextBased()) return;
-      const chunks = formatResponse(text);
-      let lastId: string | undefined;
-      for (const chunk of chunks) {
-        const sent = await (channel as TextChannel | DMChannel | ThreadChannel).send(chunk);
-        lastId = sent.id;
-      }
-      return lastId;
+      return await this.sendChunks(channel as TextChannel | DMChannel | ThreadChannel, text, opts);
     } catch (err) {
       logger.error(`Discord replyMessage error: ${err instanceof Error ? err.message : err}`);
     }
+  }
+
+  /** Send text in Discord-sized chunks, attaching any files to the final message. */
+  private async sendChunks(
+    channel: TextChannel | DMChannel | ThreadChannel,
+    text: string,
+    opts?: SendOptions,
+  ): Promise<string | undefined> {
+    const chunks = formatResponse(text);
+    const files = opts?.files ?? [];
+    // Files only, no text content
+    if (chunks.length === 0 && files.length > 0) {
+      const sent = await channel.send({ files });
+      return sent.id;
+    }
+    let lastId: string | undefined;
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const payload =
+        isLast && files.length > 0 ? { content: chunks[i], files } : chunks[i];
+      const sent = await channel.send(payload);
+      lastId = sent.id;
+    }
+    return lastId;
   }
 
   async editMessage(target: Target, text: string): Promise<void> {

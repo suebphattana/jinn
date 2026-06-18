@@ -1644,10 +1644,19 @@ export async function handleApiRequest(
       if (!_parsed.ok) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
-      if (!body.channel || !body.text) return badRequest(res, "channel and text are required");
+      // Accept attachments as `files: string[]` or a single `path` (local paths).
+      const files: string[] = Array.isArray(body.files)
+        ? body.files.filter((f: unknown): f is string => typeof f === "string")
+        : typeof body.path === "string"
+        ? [body.path]
+        : [];
+      if (!body.channel || (!body.text && files.length === 0)) {
+        return badRequest(res, "channel and (text or files) are required");
+      }
       await connector.sendMessage(
         { channel: body.channel, thread: body.thread },
-        body.text,
+        body.text ?? "",
+        files.length > 0 ? { files } : undefined,
       );
       return json(res, { status: "sent" });
     }

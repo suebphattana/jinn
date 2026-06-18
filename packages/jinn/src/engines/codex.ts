@@ -9,8 +9,8 @@ import { resolveBin } from "../shared/resolve-bin.js";
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
 
 // Hard backstop so a genuinely stuck turn (no terminal event ever) can't hang
-// forever — matches PiEngine's TURN_TIMEOUT_MS.
-const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+// forever. This is not a normal turn limit; long-running work can span days.
+const TURN_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 
 interface LiveProcess {
   proc: ChildProcess;

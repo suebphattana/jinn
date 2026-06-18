@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { PtyLifecycleManager } from "../pty-lifecycle.js";
 
 function fakeHandle() {
@@ -6,6 +6,10 @@ function fakeHandle() {
   h.kill = () => { h.killed = true; };
   return h;
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("PtyLifecycleManager", () => {
   it("registers a PTY and reports it as warm", () => {
@@ -24,6 +28,19 @@ describe("PtyLifecycleManager", () => {
     expect(h.killed).toBe(true);
     expect(m.getWarm("sess-2")).toBeUndefined();
     expect(cleaned).toBe("sess-2");
+  });
+
+  it("escalates a release to SIGKILL if SIGTERM does not exit", () => {
+    vi.useFakeTimers();
+    const signals: string[] = [];
+    const h = { pid: 123, killed: false, kill: (signal?: string) => { signals.push(signal || "SIGTERM"); } };
+    const m = new PtyLifecycleManager({ maxLivePtys: 8 });
+    m.adopt("stubborn", h);
+
+    m.releaseSession("stubborn");
+    expect(signals).toEqual(["SIGTERM"]);
+    vi.advanceTimersByTime(2000);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
   it("a PTY with no viewer dies within the grace window after turnEnded", () => {
@@ -62,6 +79,29 @@ describe("PtyLifecycleManager", () => {
     m.adopt("a", fakeHandle());
     m.adopt("b", fakeHandle());
     expect(m.isAtCapacity()).toBe(true);
+  });
+
+  it("does not count running turns against the idle warm PTY cap", () => {
+    const m = new PtyLifecycleManager({ maxLivePtys: 1 });
+    const runningA = fakeHandle(), runningB = fakeHandle();
+    m.adopt("running-a", runningA, { turnRunning: true });
+    m.adopt("running-b", runningB, { turnRunning: true });
+
+    expect(runningA.killed).toBe(false);
+    expect(runningB.killed).toBe(false);
+    expect(m.isAtCapacity()).toBe(false);
+  });
+
+  it("evicts only idle warm PTYs when the idle cap is full", () => {
+    const m = new PtyLifecycleManager({ maxLivePtys: 1 });
+    const idle = fakeHandle(), running = fakeHandle(), nextIdle = fakeHandle();
+    m.adopt("idle", idle);
+    m.adopt("running", running, { turnRunning: true });
+    m.adopt("next-idle", nextIdle);
+
+    expect(idle.killed).toBe(true);
+    expect(running.killed).toBe(false);
+    expect(nextIdle.killed).toBe(false);
   });
 
   it("killAll kills every live PTY", () => {

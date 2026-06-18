@@ -6,8 +6,8 @@
  *     the session, OR less than CLI_KEEPALIVE_AFTER_LEAVE_MS has elapsed since
  *     BOTH viewing ended AND the last turn ended (whichever happened later).
  *   - A 30s sweep enforces the grace cap once both conditions lapse.
- *   - When at capacity (maxLivePtys), adopt() evicts the LRU eligible entry
- *     (no viewer, no running turn, oldest viewingEndedAt/lastTurnEndedAt).
+ *   - maxLivePtys is an IDLE warm-PTY cap. Running turns and actively viewed
+ *     terminals are never counted against it or killed to satisfy it.
  */
 
 export const CLI_KEEPALIVE_AFTER_LEAVE_MS = 4 * 60 * 60 * 1000;
@@ -24,6 +24,13 @@ export interface PtyLifecycleOpts {
   onAdopt?: (sessionId: string) => void;
   /** Called after a PTY is killed/removed — used to clean the --settings file, hook registry, gateway.json pids. */
   onCleanup?: (sessionId: string) => void;
+}
+
+export interface PtyAdoptState {
+  /** Set for cold spawns that are immediately serving a turn. */
+  turnRunning?: boolean;
+  /** Optional initial viewer count for a terminal-born PTY. */
+  viewerCount?: number;
 }
 
 interface Entry {
@@ -52,14 +59,18 @@ export class PtyLifecycleManager {
     this.sweepTimer.unref();
   }
 
-  adopt(sessionId: string, handle: PtyHandle): void {
-    if (this.entries.size >= this.opts.maxLivePtys) this.evictLru();
+  adopt(sessionId: string, handle: PtyHandle, state: PtyAdoptState = {}): void {
+    const turnRunning = state.turnRunning === true;
+    const viewerCount = Math.max(0, state.viewerCount ?? 0);
+    if (!turnRunning && viewerCount === 0 && this.idleWarmCount() >= this.opts.maxLivePtys) {
+      this.evictLru();
+    }
     this.entries.set(sessionId, {
       handle,
-      turnRunning: false,
-      viewerCount: 0,
-      viewingEndedAt: 0,
-      lastTurnEndedAt: 0,
+      turnRunning,
+      viewerCount,
+      viewingEndedAt: viewerCount > 0 ? 0 : Date.now(),
+      lastTurnEndedAt: turnRunning ? 0 : Date.now(),
     });
     this.opts.onAdopt?.(sessionId);
   }
@@ -69,7 +80,7 @@ export class PtyLifecycleManager {
   }
 
   isAtCapacity(): boolean {
-    return this.entries.size >= this.opts.maxLivePtys;
+    return this.idleWarmCount() >= this.opts.maxLivePtys;
   }
 
   livePids(): number[] {
@@ -118,7 +129,13 @@ export class PtyLifecycleManager {
     const e = this.entries.get(sessionId);
     if (!e) return;
     this.entries.delete(sessionId);
-    if (!e.handle.killed) e.handle.kill("SIGTERM");
+    if (!e.handle.killed) {
+      e.handle.kill("SIGTERM");
+      const forceKill = setTimeout(() => {
+        if (!e.handle.killed) e.handle.kill("SIGKILL");
+      }, 2000);
+      forceKill.unref?.();
+    }
     this.opts.onCleanup?.(sessionId);
     for (const l of this.releaseListeners) l(sessionId);
   }
@@ -151,7 +168,15 @@ export class PtyLifecycleManager {
     for (const id of [...this.entries.keys()]) this.reevaluate(id);
   }
 
-  /** LRU eviction when at capacity: pick the eligible entry (no viewer, no running turn)
+  private idleWarmCount(): number {
+    let count = 0;
+    for (const e of this.entries.values()) {
+      if (!e.turnRunning && e.viewerCount === 0) count++;
+    }
+    return count;
+  }
+
+  /** Idle warm-PTY eviction: pick the eligible entry (no viewer, no running turn)
    *  with the oldest max(viewingEndedAt, lastTurnEndedAt). If none are eligible, no-op. */
   private evictLru(): void {
     let victim: string | null = null;

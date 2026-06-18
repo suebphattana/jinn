@@ -37,7 +37,7 @@ import { neutralizeForPaste } from "../shared/skill-commands.js";
  */
 
 export const ANTIGRAVITY_DEFAULT_MODEL = "Gemini 3.5 Flash (Medium)";
-const TURN_TIMEOUT_MS = 5 * 60 * 1000; // matches agy's --print-timeout default
+const TURN_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const TURN_FINAL_QUIET_MS = 1200;      // terminal text/no-tool row: finish promptly
 const TURN_QUIET_DONE_MS = 6000;       // fallback: wait longer around tool/ambiguous rows
 const TAIL_POLL_MS = 200;
@@ -181,10 +181,12 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
 
     turn.hardTimeout = setTimeout(
       () => {
-        const result = latestAnswer
-          ? { sessionId: convId ?? "", result: latestAnswer, numTurns: 1 }
-          : { sessionId: convId ?? opts.resumeSessionId ?? "", result: "", error: "Antigravity turn timed out" };
-        finish(result);
+        finish({
+          sessionId: convId ?? opts.resumeSessionId ?? "",
+          result: latestAnswer ?? "",
+          error: "Antigravity turn timed out",
+          contextTokens: lastContextEstimate || undefined,
+        });
         this.lifecycle.releaseSession(jinnSessionId);
       },
       TURN_TIMEOUT_MS,
@@ -241,7 +243,7 @@ export class AntigravityEngine implements InterruptibleEngine, PtyViewEngine {
     } else {
       const handle = this.spawn(jinnSessionId, opts, cwd, convId);
       turn.boundProc = (handle as any)._proc as pty.IPty | undefined;
-      this.lifecycle.adopt(jinnSessionId, handle);
+      this.lifecycle.adopt(jinnSessionId, handle, { turnRunning: true });
       this.lifecycle.turnStarted(jinnSessionId);
     }
 

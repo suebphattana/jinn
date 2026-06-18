@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import { StringDecoder } from "node:string_decoder";
 import { logger } from "../shared/logger.js";
 
 export interface TranscriptTailer { stop(): void }
@@ -34,6 +35,7 @@ export function tailTranscriptLines(
   let fh: fsp.FileHandle | undefined;
   let reading = false;
   let pending = false;
+  const decoder = new StringDecoder("utf8");
 
   const readNew = async (): Promise<void> => {
     if (stopped) return;
@@ -46,13 +48,19 @@ export function tailTranscriptLines(
         try { stat = await fsp.stat(filePath); } catch { return; }
         if (stat.size <= offset) return;
         if (!fh) {
-          try { fh = await fsp.open(filePath, "r"); } catch { return; }
+          let opened: fsp.FileHandle;
+          try { opened = await fsp.open(filePath, "r"); } catch { return; }
+          if (stopped) {
+            try { await opened.close(); } catch { /* ignore */ }
+            return;
+          }
+          fh = opened;
         }
         if (stopped) return;
         const chunk = Buffer.alloc(stat.size - offset);
         const { bytesRead } = await fh.read(chunk, 0, chunk.length, offset);
         offset += bytesRead;
-        buf += chunk.subarray(0, bytesRead).toString("utf-8");
+        buf += decoder.write(chunk.subarray(0, bytesRead));
         const lines = buf.split("\n");
         buf = lines.pop() ?? "";
         for (const line of lines) onLine(line);

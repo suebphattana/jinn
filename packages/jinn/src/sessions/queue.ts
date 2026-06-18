@@ -1,4 +1,4 @@
-import { markQueueItemRunning, markQueueItemCompleted } from "./registry.js";
+import { getQueueItem, markQueueItemRunning, markQueueItemCompleted } from "./registry.js";
 
 export class SessionQueue {
   private queues = new Map<string, Promise<void>>();
@@ -75,6 +75,7 @@ export class SessionQueue {
     const prev = this.queues.get(sessionKey) || Promise.resolve();
     const runTask = async () => {
       this.running.add(sessionKey);
+      let queueItemStarted = false;
       try {
         // Wait while paused — blocks until resumeQueue() wakes us (no polling)
         while (this.paused.has(sessionKey)) {
@@ -84,7 +85,12 @@ export class SessionQueue {
             this.pauseWaiters.set(sessionKey, waiters);
           });
         }
-        if (queueItemId) markQueueItemRunning(queueItemId);
+        if (queueItemId) {
+          const item = getQueueItem(queueItemId);
+          if (!item || item.status !== "pending") return;
+          markQueueItemRunning(queueItemId);
+          queueItemStarted = true;
+        }
         if (!this.cancelled.has(sessionKey)) {
           await fn();
         }
@@ -92,7 +98,7 @@ export class SessionQueue {
         // Mark the DB row done in finally so an errored/cancelled task can't
         // leave the item stuck as 'running' (getQueueItems returns 'running'
         // rows, so a stuck row would keep the UI badge from draining).
-        if (queueItemId) markQueueItemCompleted(queueItemId);
+        if (queueItemStarted && queueItemId) markQueueItemCompleted(queueItemId);
         this.running.delete(sessionKey);
         this.decrementPending(sessionKey);
       }

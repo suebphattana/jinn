@@ -17,8 +17,8 @@ import {
   type GrokParsedLine,
 } from "./grok.js";
 
-const TURN_TIMEOUT_MS = 10 * 60 * 1000;
-const DONE_DEBOUNCE_MS = 3000;
+const TURN_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
+const DONE_DEBOUNCE_MS = 60_000;
 const TAIL_POLL_MS = 250;
 const DISCOVER_POLL_MS = 200;
 const DISCOVER_TIMEOUT_MS = 90 * 1000;
@@ -273,11 +273,13 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
 
     this.active.set(jinnSessionId, turn);
     turn.hardTimeout = setTimeout(() => {
-      finish(
-        latestAnswer
-          ? { sessionId: grokSessionId ?? opts.resumeSessionId ?? "", result: latestAnswer, numTurns: 1, contextTokens: lastContextTokens }
-          : { sessionId: grokSessionId ?? opts.resumeSessionId ?? "", result: "", error: "Grok interactive turn timed out" },
-      );
+      finish({
+        sessionId: grokSessionId ?? opts.resumeSessionId ?? "",
+        result: latestAnswer,
+        error: "Grok interactive turn timed out",
+        contextTokens: lastContextTokens,
+      });
+      this.lifecycle.releaseSession(jinnSessionId);
     }, TURN_TIMEOUT_MS);
     turn.hardTimeout.unref?.();
 
@@ -296,9 +298,16 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
         }
         const fresh = sortGrokTranscriptFiles([...listTranscriptFiles().keys()]
           .filter((file) => !before.has(file)));
-        if (fresh.length > 0) {
+        if (fresh.length === 1) {
           clearInterval(discover);
           attachTail(fresh[0], true);
+        } else if (fresh.length > 1) {
+          logger.warn(`GrokInteractiveEngine: ambiguous fresh transcripts for ${jinnSessionId}; waiting for a unique candidate`);
+          if (Date.now() - startedAt > DISCOVER_TIMEOUT_MS) {
+            clearInterval(discover);
+            this.lifecycle.releaseSession(jinnSessionId);
+            finish({ sessionId: grokSessionId ?? opts.resumeSessionId ?? "", result: "", error: "Grok interactive: multiple fresh transcripts appeared; refusing ambiguous attach" });
+          }
         } else if (Date.now() - startedAt > DISCOVER_TIMEOUT_MS) {
           clearInterval(discover);
           this.lifecycle.releaseSession(jinnSessionId);
@@ -318,7 +327,7 @@ export class GrokInteractiveEngine implements InterruptibleEngine, PtyViewEngine
       const handle = this.spawn(jinnSessionId, opts, grokSessionId, systemPromptOverride);
       turn.boundProc = (handle as any)._proc as pty.IPty | undefined;
       if (turn.boundProc) watchTuiOutput(turn.boundProc);
-      this.lifecycle.adopt(jinnSessionId, handle);
+      this.lifecycle.adopt(jinnSessionId, handle, { turnRunning: true });
       this.lifecycle.turnStarted(jinnSessionId);
       schedulePromptSubmit(PROMPT_SUBMIT_FALLBACK_MS);
     }

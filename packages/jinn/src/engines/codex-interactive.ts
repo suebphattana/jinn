@@ -14,10 +14,10 @@ import type { PtyControlEvent, PtyIdleSpawnOpts, PtyViewEngine } from "./pty-vie
 import { codexCliFlags, extractCodexContextTokens } from "./codex.js";
 
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
-const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+const TURN_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 // FALLBACK ONLY: task_complete (below) is the primary completion signal; this
 // quiet-window debounce settles turns whose transcript misses the marker.
-const DONE_DEBOUNCE_MS = 3000;
+const DONE_DEBOUNCE_MS = 60_000;
 const TAIL_POLL_MS = 250;
 const DISCOVER_POLL_MS = 200;
 const DISCOVER_TIMEOUT_MS = 30 * 1000;
@@ -298,10 +298,12 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
 
     this.active.set(jinnSessionId, turn);
     turn.hardTimeout = setTimeout(() => {
-      const result = latestAnswer
-        ? { sessionId: codexSessionId ?? "", result: latestAnswer, numTurns: 1, contextTokens: lastContextTokens }
-        : { sessionId: codexSessionId ?? opts.resumeSessionId ?? "", result: "", error: "Codex interactive turn timed out" };
-      finish(result);
+      finish({
+        sessionId: codexSessionId ?? opts.resumeSessionId ?? "",
+        result: latestAnswer,
+        error: "Codex interactive turn timed out",
+        contextTokens: lastContextTokens,
+      });
       this.lifecycle.releaseSession(jinnSessionId);
     }, TURN_TIMEOUT_MS);
     turn.hardTimeout.unref?.();
@@ -353,7 +355,7 @@ export class CodexInteractiveEngine implements InterruptibleEngine, PtyViewEngin
     } else {
       const handle = this.spawn(jinnSessionId, opts, prompt, codexSessionId);
       turn.boundProc = (handle as any)._proc as pty.IPty | undefined;
-      this.lifecycle.adopt(jinnSessionId, handle);
+      this.lifecycle.adopt(jinnSessionId, handle, { turnRunning: true });
       this.lifecycle.turnStarted(jinnSessionId);
     }
 

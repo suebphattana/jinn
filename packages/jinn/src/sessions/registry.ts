@@ -1109,6 +1109,13 @@ export function markQueueItemCompleted(itemId: string): void {
     .run(new Date().toISOString(), itemId);
 }
 
+export function getQueueItem(itemId: string): QueueItem | undefined {
+  const db = initDb();
+  return db.prepare(
+    "SELECT id, session_id as sessionId, session_key as sessionKey, prompt, status, position, created_at as createdAt, started_at as startedAt, completed_at as completedAt FROM queue_items WHERE id = ?"
+  ).get(itemId) as QueueItem | undefined;
+}
+
 export function cancelQueueItem(itemId: string): boolean {
   const db = initDb();
   const result = db.prepare(

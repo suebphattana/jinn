@@ -1,5 +1,6 @@
 import http from "node:http";
 import https from "node:https";
+import { StringDecoder } from "node:string_decoder";
 import { logger } from "../shared/logger.js";
 
 /** Shared keep-alive agent so concurrent turns (and sub-agent fan-out) reuse a
@@ -254,6 +255,7 @@ export class SsePtyProxy {
         res.writeHead(uRes.statusCode || 502, uRes.headers);
         const isSSE = String(uRes.headers["content-type"] || "").includes("text/event-stream");
         let sseBuf = "";
+        const sseDecoder = isSSE && tee ? new StringDecoder("utf8") : undefined;
         uRes.on("data", (chunk: Buffer) => {
           // Forward UNCHANGED to the client first (never let parsing affect the stream).
           // Standard backpressure: if the client's write buffer is full, pause the
@@ -264,9 +266,13 @@ export class SsePtyProxy {
               res.once("drain", () => uRes.resume());
             }
           } catch { /* client gone */ }
-          if (isSSE && tee) sseBuf = this.parseSse(sseBuf + chunk.toString("utf-8"));
+          if (sseDecoder) sseBuf = this.parseSse(sseBuf + sseDecoder.write(chunk));
         });
-        uRes.on("end", () => { finish(); try { res.end(); } catch { /* already ended */ } });
+        uRes.on("end", () => {
+          if (sseDecoder) sseBuf = this.parseSse(sseBuf + sseDecoder.end());
+          finish();
+          try { res.end(); } catch { /* already ended */ }
+        });
         uRes.on("error", (err) => {
           logger.warn(`SsePtyProxy[${this.label}] upstream response error: ${err instanceof Error ? err.message : String(err)}`);
           finish();

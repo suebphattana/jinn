@@ -3,9 +3,12 @@ import { SessionQueue } from "../queue.js";
 
 // markQueueItemRunning/Completed touch the registry DB — stub them out
 vi.mock("../registry.js", () => ({
+  getQueueItem: vi.fn(() => ({ status: "pending" })),
   markQueueItemRunning: vi.fn(),
   markQueueItemCompleted: vi.fn(),
 }));
+
+import { getQueueItem, markQueueItemRunning, markQueueItemCompleted } from "../registry.js";
 
 const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -53,5 +56,19 @@ describe("SessionQueue pause/resume", () => {
     queue.resumeQueue(key);
     await task;
     expect(ran).toBe(true);
+  });
+
+  it("skips a specific queued item if it was cancelled before execution", async () => {
+    vi.mocked(getQueueItem).mockReturnValueOnce({ status: "cancelled" } as any);
+    const queue = new SessionQueue();
+    let ran = false;
+
+    await queue.enqueue("web:s1", async () => {
+      ran = true;
+    }, "item-1");
+
+    expect(ran).toBe(false);
+    expect(markQueueItemRunning).not.toHaveBeenCalledWith("item-1");
+    expect(markQueueItemCompleted).not.toHaveBeenCalledWith("item-1");
   });
 });

@@ -2239,6 +2239,26 @@ async function runWebSession(
     logger.info(`Skipping deleted web session ${session.id} before run start`);
     return;
   }
+  config = context.getConfig();
+  const preferredPtyView = context.ptyViewEngines?.[session.engine] === engine;
+  const runtimeEngine =
+    (preferredPtyView ? context.ptyViewEngines?.[currentSession.engine] : undefined)
+    ?? context.sessionManager.getEngine(currentSession.engine);
+  if (!runtimeEngine) {
+    const errMsg = `Engine "${currentSession.engine}" not available`;
+    logger.error(`Web session ${currentSession.id} blocked: ${errMsg}`);
+    insertMessage(currentSession.id, "assistant", `⛔ ${errMsg}`);
+    const erroredSession = updateSession(currentSession.id, {
+      status: "error",
+      lastActivity: new Date().toISOString(),
+      lastError: errMsg,
+    });
+    context.emit("session:completed", { sessionId: currentSession.id, result: null, error: errMsg });
+    maybeEmitTalkGraph(currentSession.id, "completed", { getSession, emit: context.emit });
+    if (erroredSession) notifyParentSession(erroredSession, { error: errMsg });
+    return;
+  }
+  engine = runtimeEngine;
   logger.info(`Web session ${currentSession.id} running engine "${currentSession.engine}" (model: ${currentSession.model || "default"})`);
 
   // Ensure status is "running" (may already be set by the POST handler)

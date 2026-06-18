@@ -22,7 +22,7 @@ interface LiveProcess {
 }
 
 const STDERR_MAX = 10 * 1024; // 10KB rolling window for error reporting
-const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+const TURN_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const AGENT_END_EXIT_GRACE_MS = 5000;
 
 /**

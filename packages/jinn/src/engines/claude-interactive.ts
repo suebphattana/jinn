@@ -5,7 +5,7 @@ import * as pty from "node-pty";
 import type { InterruptibleEngine, EngineRunOpts, EngineResult, EngineRateLimitInfo, StreamDelta } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
 import { JINN_HOME, CLAUDE_SETTINGS_DIR, HOOK_RELAY_SCRIPT, CLAUDE_LIMITS_DIR } from "../shared/paths.js";
-import { writeSessionSettings } from "../shared/claude-settings.js";
+import { cleanupSessionSettings, writeSessionSettings } from "../shared/claude-settings.js";
 import { resolveBin } from "../shared/resolve-bin.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
 import { PtyStreamManager, createPtyHandle, setCapped } from "./pty-stream.js";
@@ -415,8 +415,8 @@ const BACKGROUND_CLEAR_QUIET_MS = 10_000;
 const NATIVE_COMMAND_QUIET_MS = 1800;
 const NATIVE_COMMAND_MIN_MS = 3000;
 const NATIVE_COMMAND_MAX_MS = 90_000;
-const LOST_STOP_RECOVERY_QUIET_MS = 15_000;
-const LOST_STOP_RECOVERY_MIN_MS = 10_000;
+const LOST_STOP_RECOVERY_QUIET_MS = 60_000;
+const LOST_STOP_RECOVERY_MIN_MS = 5 * 60_000;
 const LATE_RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 
 /** Claude Code built-in slash commands that run locally and never produce a new
@@ -585,6 +585,10 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (st.emitted) this.backgroundActivityCb?.(jinnSessionId, null);
   }
 
+  private hasActiveUpstream(jinnSessionId: string): boolean {
+    return (this.bgActivity.get(jinnSessionId)?.info.activeStreams ?? 0) > 0;
+  }
+
   async run(opts: EngineRunOpts): Promise<EngineResult> {
     const jinnSessionId = opts.sessionId;
     if (!jinnSessionId) throw new Error("InteractiveClaudeEngine.run requires opts.sessionId");
@@ -643,119 +647,138 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       assumeStarted: !!warm, // warm PTY = SessionStart already fired (turn 1 or idle spawn)
       native: nativeCommand,
     });
-    const entry: { resolver: TurnResolver; onStream?: (d: StreamDelta) => void; boundProc?: pty.IPty } = { resolver, onStream: opts.onStream };
-    this.active.set(jinnSessionId, entry);
-
-    // Register BEFORE spawning so a fast SessionStart is buffered+drained, not lost.
-    this.hookRegistry.register(jinnSessionId, (h) => {
-      resolver.onHook(h);
-      // tool_use markers + intermediate text now stream from the per-PTY SSE proxy
-      // (content_block_start / content_block_delta) in true order. The hook only
-      // supplies tool_result — the assistant SSE stream has no tool_result event
-      // (tools execute locally between assistant messages).
-      // PreToolUse fires just before the tool runs; the full input is assembled by
-      // then. Emit a second tool_use delta carrying a truncated input so the Talk
-      // whisper can distinguish delegate/search/card calls from generic Bash work.
-      if (h.hook_event_name === "PreToolUse" && opts.onStream) {
-        opts.onStream({
-          type: "tool_use",
-          content: String(h.tool_name ?? ""),
-          toolName: typeof h.tool_name === "string" ? h.tool_name : undefined,
-          input: truncatedToolInput(h.tool_input),
-        });
-      }
-      if (h.hook_event_name === "PostToolUse" && opts.onStream) {
-        opts.onStream({
-          type: "tool_result",
-          content: String(h.tool_name ?? ""),
-          toolName: typeof h.tool_name === "string" ? h.tool_name : undefined,
-        });
-      }
-    });
-
-    if (warm) {
-      // Mark the turn started BEFORE injecting so the sweep timer can't
-      // theoretically release the PTY mid-paste if its grace window expired
-      // between getWarm() above and the proc.write() inside injectPrompt.
-      this.lifecycle.turnStarted(jinnSessionId);
-      this.injectPrompt(warm, opts);
-      entry.boundProc = (warm as any)._proc as pty.IPty | undefined;
-    } else {
-      const handle = await this.spawn(jinnSessionId, opts, settingsPath);
-      this.lifecycle.adopt(jinnSessionId, handle);
-      this.lifecycle.turnStarted(jinnSessionId);
-      entry.boundProc = (handle as any)._proc as pty.IPty | undefined;
-    }
-
-    // Watchdog: if the bound PTY dies without the resolver settling (e.g. the
-    // onExit identity-guard didn't match in a kill→respawn race), the turn would
-    // hang forever — runWebSession's 5s heartbeat would zombie status:"running"
-    // and the completion (session:completed + notifyParentSession parent callback)
-    // would never fire. Both the stuck "in progress" badge and lost child-session
-    // callbacks trace to this. Force-settle once the proc is provably dead so
-    // run() always resolves and the normal completion path runs.
-    const watchdog = setInterval(() => {
-      const p = entry.boundProc as { _exitCode?: number | null } | undefined;
-      if (p && p._exitCode != null) {
-        resolver.interrupt("Interrupted: claude process exited");
-      }
-    }, 5000);
-    watchdog.unref?.();
-
+    const entry: { resolver: TurnResolver; onStream?: (d: StreamDelta) => void; boundProc?: pty.IPty; activeTools: number } = {
+      resolver,
+      onStream: opts.onStream,
+      activeTools: 0,
+    };
+    let turnMarkedStarted = false;
+    let watchdog: NodeJS.Timeout | undefined;
     let nativeCommandTimer: NodeJS.Timeout | undefined;
-    if (nativeCommand) {
-      const startedAt = Date.now();
-      nativeCommandTimer = setInterval(() => {
-        const now = Date.now();
-        const quietFor = now - (this.lastOutputAt.get(jinnSessionId) ?? startedAt);
-        const elapsed = now - startedAt;
-        if ((elapsed >= NATIVE_COMMAND_MIN_MS && quietFor >= NATIVE_COMMAND_QUIET_MS) || elapsed >= NATIVE_COMMAND_MAX_MS) {
-          resolver.completeNativeCommand();
-        }
-      }, 500);
-      nativeCommandTimer.unref?.();
-    }
-
     let lostStopRecoveryTimer: NodeJS.Timeout | undefined;
-    if (!nativeCommand) {
-      const startedAt = Date.now();
-      lostStopRecoveryTimer = setInterval(() => {
-        if (resolver.isSettled) return;
-        // A StopFailure is held in the grace window — the turn's fate is the
-        // grace timer's call (Stop supersedes / expiry fails). Recovering
-        // intermediate transcript text here would fabricate a wrong success.
-        if (resolver.stopFailure) return;
-        const now = Date.now();
-        const elapsed = now - startedAt;
-        const quietFor = now - (this.lastOutputAt.get(jinnSessionId) ?? startedAt);
-        if (elapsed < LOST_STOP_RECOVERY_MIN_MS || quietFor < LOST_STOP_RECOVERY_QUIET_MS) return;
-        const sid = resolver.sessionId ?? opts.resumeSessionId;
-        const transcript = sid ? findTranscriptForSession(sid) : undefined;
-        if (!transcript) return;
-        try {
-          if (fs.statSync(transcript).mtimeMs < startedAt - 1000) return;
-        } catch {
-          return;
-        }
-        const recovered = lastAssistantTextFromTranscript(transcript, startedAt);
-        if (recovered?.trim()) {
-          logger.warn(`InteractiveClaudeEngine: recovered completed turn for ${jinnSessionId} after missing Stop hook`);
-          resolver.completeRecovered(recovered, sid);
-        }
-      }, 2000);
-      lostStopRecoveryTimer.unref?.();
-    }
 
-    let result: EngineResult;
+    let result!: EngineResult;
+    this.active.set(jinnSessionId, entry);
     try {
+      // Register BEFORE spawning so a fast SessionStart is buffered+drained, not lost.
+      this.hookRegistry.register(jinnSessionId, (h) => {
+        resolver.onHook(h);
+        // tool_use markers + intermediate text now stream from the per-PTY SSE proxy
+        // (content_block_start / content_block_delta) in true order. The hook only
+        // supplies tool_result — the assistant SSE stream has no tool_result event
+        // (tools execute locally between assistant messages).
+        // PreToolUse fires just before the tool runs; the full input is assembled by
+        // then. Emit a second tool_use delta carrying a truncated input so the Talk
+        // whisper can distinguish delegate/search/card calls from generic Bash work.
+        if (h.hook_event_name === "PreToolUse") {
+          entry.activeTools += 1;
+          if (opts.onStream) {
+            opts.onStream({
+              type: "tool_use",
+              content: String(h.tool_name ?? ""),
+              toolName: typeof h.tool_name === "string" ? h.tool_name : undefined,
+              input: truncatedToolInput(h.tool_input),
+            });
+          }
+        }
+        if (h.hook_event_name === "PostToolUse") {
+          entry.activeTools = Math.max(0, entry.activeTools - 1);
+          if (opts.onStream) {
+            opts.onStream({
+              type: "tool_result",
+              content: String(h.tool_name ?? ""),
+              toolName: typeof h.tool_name === "string" ? h.tool_name : undefined,
+            });
+          }
+        }
+      });
+
+      if (warm) {
+        // Mark the turn started BEFORE injecting so the sweep timer can't
+        // theoretically release the PTY mid-paste if its grace window expired
+        // between getWarm() above and the proc.write() inside injectPrompt.
+        this.lifecycle.turnStarted(jinnSessionId);
+        turnMarkedStarted = true;
+        this.injectPrompt(warm, opts);
+        entry.boundProc = (warm as any)._proc as pty.IPty | undefined;
+      } else {
+        const handle = await this.spawn(jinnSessionId, opts, settingsPath);
+        this.lifecycle.adopt(jinnSessionId, handle, { turnRunning: true });
+        this.lifecycle.turnStarted(jinnSessionId);
+        turnMarkedStarted = true;
+        entry.boundProc = (handle as any)._proc as pty.IPty | undefined;
+      }
+
+      // Watchdog: if the bound PTY dies without the resolver settling (e.g. the
+      // onExit identity-guard didn't match in a kill→respawn race), the turn would
+      // hang forever — runWebSession's 5s heartbeat would zombie status:"running"
+      // and the completion (session:completed + notifyParentSession parent callback)
+      // would never fire. Both the stuck "in progress" badge and lost child-session
+      // callbacks trace to this. Force-settle once the proc is provably dead so
+      // run() always resolves and the normal completion path runs.
+      watchdog = setInterval(() => {
+        const p = entry.boundProc as { _exitCode?: number | null } | undefined;
+        if (p && p._exitCode != null) {
+          resolver.interrupt("Interrupted: claude process exited");
+        }
+      }, 5000);
+      watchdog.unref?.();
+
+      if (nativeCommand) {
+        const startedAt = Date.now();
+        nativeCommandTimer = setInterval(() => {
+          const now = Date.now();
+          const quietFor = now - (this.lastOutputAt.get(jinnSessionId) ?? startedAt);
+          const elapsed = now - startedAt;
+          if ((elapsed >= NATIVE_COMMAND_MIN_MS && quietFor >= NATIVE_COMMAND_QUIET_MS) || elapsed >= NATIVE_COMMAND_MAX_MS) {
+            resolver.completeNativeCommand();
+          }
+        }, 500);
+        nativeCommandTimer.unref?.();
+      }
+
+      if (!nativeCommand) {
+        const startedAt = Date.now();
+        lostStopRecoveryTimer = setInterval(() => {
+          if (resolver.isSettled) return;
+          // A StopFailure is held in the grace window — the turn's fate is the
+          // grace timer's call (Stop supersedes / expiry fails). Recovering
+          // intermediate transcript text here would fabricate a wrong success.
+          if (resolver.stopFailure) return;
+          // Missing-Stop recovery is only safe when the model stream and local
+          // tool hooks are quiet; otherwise a long-running turn can be mistaken
+          // for a completed one just because transcript text exists.
+          if (entry.activeTools > 0 || this.hasActiveUpstream(jinnSessionId)) return;
+          const now = Date.now();
+          const elapsed = now - startedAt;
+          const quietFor = now - (this.lastOutputAt.get(jinnSessionId) ?? startedAt);
+          if (elapsed < LOST_STOP_RECOVERY_MIN_MS || quietFor < LOST_STOP_RECOVERY_QUIET_MS) return;
+          const sid = resolver.sessionId ?? opts.resumeSessionId;
+          const transcript = sid ? findTranscriptForSession(sid) : undefined;
+          if (!transcript) return;
+          try {
+            if (fs.statSync(transcript).mtimeMs < startedAt - 1000) return;
+          } catch {
+            return;
+          }
+          const recovered = lastAssistantTextFromTranscript(transcript, startedAt);
+          if (recovered?.trim()) {
+            logger.warn(`InteractiveClaudeEngine: recovered completed turn for ${jinnSessionId} after missing Stop hook`);
+            resolver.completeRecovered(recovered, sid);
+          }
+        }, 2000);
+        lostStopRecoveryTimer.unref?.();
+      }
+
       result = await resolver.promise;
     } finally {
-      clearInterval(watchdog);
+      if (watchdog) clearInterval(watchdog);
       if (nativeCommandTimer) clearInterval(nativeCommandTimer);
       if (lostStopRecoveryTimer) clearInterval(lostStopRecoveryTimer);
       this.hookRegistry.unregister(jinnSessionId);
       this.active.delete(jinnSessionId);
-      this.lifecycle.turnEnded(jinnSessionId); // manager decides kill vs keep-warm
+      if (turnMarkedStarted) this.lifecycle.turnEnded(jinnSessionId); // manager decides kill vs keep-warm
+      else cleanupSessionSettings(CLAUDE_SETTINGS_DIR, jinnSessionId);
       // Turn settled — if the CLI still has upstream requests in flight
       // (background subagents/tasks), report them now; emission was suppressed
       // while this run owned the session.

@@ -62,7 +62,7 @@ describe("flushRejoinNotice", () => {
     writeRejoinNotice({ connector: "discord", channel: "1", text: "hi" });
     const stopped = { getHealth: () => ({ status: "stopped" }), sendMessage: vi.fn() } as any;
 
-    await flushRejoinNotice(new Map([["discord", stopped]]), { maxWaitMs: 30, pollMs: 10 });
+    await flushRejoinNotice(new Map([["discord", stopped]]), undefined, { maxWaitMs: 30, pollMs: 10 });
 
     expect(stopped.sendMessage).not.toHaveBeenCalled();
     expect(fs.existsSync(markerPath())).toBe(false);
@@ -82,5 +82,84 @@ describe("flushRejoinNotice", () => {
     const { connector, sends } = runningConnector();
     await flushRejoinNotice(new Map([["discord", connector]]));
     expect(sends).toEqual([{ channel: "9", text: "yo" }]);
+  });
+
+  it("resumes the named session via the manager, then clears the marker", async () => {
+    const session = {
+      id: "sess-1",
+      source: "discord",
+      connector: "discord",
+      sessionKey: "discord:chan-1",
+      replyContext: { channel: "chan-1", thread: null },
+      transportMeta: null,
+      status: "interrupted",
+      userId: null,
+    };
+    vi.doMock("../../sessions/registry.js", () => ({
+      getSession: (id: string) => (id === "sess-1" ? session : undefined),
+    }));
+
+    const { flushRejoinNotice, writeRejoinNotice } = await import("../rejoin.js");
+    writeRejoinNotice({
+      connector: "discord",
+      channel: "chan-1",
+      text: "✅ Back online",
+      sessionId: "sess-1",
+      resumePrompt: "continue your work",
+    });
+
+    const { connector, sends } = runningConnector();
+    const route = vi.fn(async () => ({ sessionId: "sess-1" }));
+    const manager = { route } as any;
+
+    await flushRejoinNotice(new Map([["discord", connector]]), manager);
+
+    // Brief notice still sent for instant feedback.
+    expect(sends).toEqual([{ channel: "chan-1", text: "✅ Back online" }]);
+    // And the session was re-engaged with our resume prompt.
+    expect(route).toHaveBeenCalledTimes(1);
+    const msg = (route.mock.calls[0] as any[])[0];
+    expect(msg.sessionKey).toBe("discord:chan-1");
+    expect(msg.text).toBe("continue your work");
+    expect(fs.existsSync(markerPath())).toBe(false);
+    vi.doUnmock("../../sessions/registry.js");
+  });
+
+  it("resumes an idle session too (status drifted after boot)", async () => {
+    vi.doMock("../../sessions/registry.js", () => ({
+      getSession: () => ({
+        id: "sess-idle", source: "discord", connector: "discord",
+        sessionKey: "discord:k", replyContext: { channel: "k" }, transportMeta: null,
+        status: "idle", userId: null,
+      }),
+    }));
+    const { flushRejoinNotice, writeRejoinNotice } = await import("../rejoin.js");
+    writeRejoinNotice({ connector: "discord", channel: "k", text: "back", sessionId: "sess-idle" });
+
+    const { connector } = runningConnector();
+    const route = vi.fn(async () => ({ sessionId: "sess-idle" }));
+    await flushRejoinNotice(new Map([["discord", connector]]), { route } as any);
+
+    expect(route).toHaveBeenCalledTimes(1);
+    vi.doUnmock("../../sessions/registry.js");
+  });
+
+  it("skips resume when the session is paused on a usage limit (waiting)", async () => {
+    vi.doMock("../../sessions/registry.js", () => ({
+      getSession: () => ({
+        id: "sess-wait", source: "discord", connector: "discord",
+        sessionKey: "k", replyContext: {}, transportMeta: null,
+        status: "waiting", userId: null,
+      }),
+    }));
+    const { flushRejoinNotice, writeRejoinNotice } = await import("../rejoin.js");
+    writeRejoinNotice({ connector: "discord", channel: "c", text: "back", sessionId: "sess-wait" });
+
+    const { connector } = runningConnector();
+    const route = vi.fn();
+    await flushRejoinNotice(new Map([["discord", connector]]), { route } as any);
+
+    expect(route).not.toHaveBeenCalled();
+    vi.doUnmock("../../sessions/registry.js");
   });
 });

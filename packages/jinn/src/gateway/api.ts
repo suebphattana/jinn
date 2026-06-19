@@ -1430,13 +1430,17 @@ export async function handleApiRequest(
     if (method === "POST" && pathname === "/api/restart") {
       const _p = await readJsonBody(req, res);
       if (!_p.ok) return;
-      const body = _p.body as { channel?: string; connector?: string; message?: string };
+      const body = _p.body as { channel?: string; connector?: string; message?: string; sessionId?: string; resumePrompt?: string };
       if (body.channel && body.message) {
         try {
           writeRejoinNotice({
             connector: body.connector || "discord",
             channel: body.channel,
             text: body.message,
+            // When set, the gateway re-engages this session on the next boot so
+            // the assistant continues its work without the operator messaging.
+            ...(body.sessionId ? { sessionId: body.sessionId } : {}),
+            ...(body.resumePrompt ? { resumePrompt: body.resumePrompt } : {}),
           });
         } catch (err) {
           logger.warn(`Failed to write rejoin notice: ${err instanceof Error ? err.message : err}`);

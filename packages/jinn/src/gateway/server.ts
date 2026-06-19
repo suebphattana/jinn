@@ -596,9 +596,11 @@ export async function startGateway(
 
   sessionManager.setConnectorProvider(() => connectorMap);
 
-  // Post a deterministic "I'm back" notice if a restart left a rejoin marker.
-  // Fire-and-forget: waits for the connector to come up, then sends directly.
-  void flushRejoinNotice(connectorMap);
+  // Post a deterministic "I'm back" notice if a restart left a rejoin marker —
+  // and, if the marker names the session that triggered the restart, resume it
+  // so the assistant continues its work on its own (no operator message needed).
+  // Fire-and-forget: waits for the connector to come up, then acts.
+  void flushRejoinNotice(connectorMap, sessionManager);
 
   // Reload connector instances from config (stop old instances, start new ones)
   async function reloadConnectorInstances(): Promise<{ started: string[]; stopped: string[]; errors: string[] }> {

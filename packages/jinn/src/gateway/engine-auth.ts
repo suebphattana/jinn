@@ -20,10 +20,16 @@ export interface DeviceAuthInfo {
   code: string;
 }
 
-/** Strip ANSI escape codes so regex matches the plain text. */
+/** Strip ANSI escape codes so regex matches the plain text. Removes ALL CSI
+ *  sequences (colours AND cursor moves like ESC[2G that Ink TUIs emit), OSC
+ *  sequences, and single-char escapes — not just SGR colours. */
 function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1B\[[0-9;]*m/g, "");
+  /* eslint-disable no-control-regex */
+  return text
+    .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, "") // OSC … BEL/ST
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "") // CSI (colours, cursor moves, …)
+    .replace(/\x1B[@-Z\\-_]/g, ""); // other single-char escapes
+  /* eslint-enable no-control-regex */
 }
 
 /**
@@ -48,13 +54,22 @@ export function parseDeviceAuth(output: string): Partial<DeviceAuthInfo> {
  * `https://claude.com/.../oauth/authorize?...`). Pure for unit testing.
  */
 export function parseAuthUrl(output: string): string | undefined {
-  const clean = stripAnsi(output).replace(/\s+/g, " ");
-  // The URL may be soft-wrapped across terminal lines; rejoin by stripping the
-  // spaces the PTY inserts. Match a claude/openai oauth authorize link.
-  const compact = stripAnsi(output).replace(/[\r\n]+/g, "").replace(/ +/g, "");
-  const m =
-    compact.match(/https?:\/\/\S*oauth\/authorize\S*/i) ??
-    clean.match(/https?:\/\/\S*oauth\/authorize\S*/i);
+  const lines = stripAnsi(output).split(/\r?\n/);
+  // Find the line where the URL begins.
+  const start = lines.findIndex((l) => /https?:\/\//i.test(l));
+  if (start === -1) return undefined;
+  // The URL soft-wraps across following lines; collect until the first blank
+  // line (the "Paste code here" prompt lives AFTER that blank line, so this
+  // stops us from gluing it onto the URL).
+  const block: string[] = [];
+  for (let i = start; i < lines.length; i++) {
+    if (i > start && lines[i].trim() === "") break;
+    block.push(lines[i]);
+  }
+  // Rejoin the wrapped pieces (terminal wrap inserts no real spaces in a URL)
+  // and pull out the URL.
+  const joined = block.join("").replace(/\s+/g, "");
+  const m = joined.match(/https?:\/\/\S+/i);
   return m?.[0]?.replace(/[).,]+$/, "");
 }
 
@@ -332,7 +347,13 @@ export function submitAuthCode(engine: string, code: string): Promise<{ status: 
   if (!state?.term) {
     return Promise.resolve({ status: "failed", error: "no login in progress — start again" });
   }
-  state.term.write(`${code.trim()}\r`);
+  // Type the code, THEN send Enter separately. If we send `code\r` in one
+  // write, Ink treats the \r as part of the paste burst (literal text) and
+  // never submits — the field fills but setup-token keeps waiting → timeout.
+  state.term.write(code.trim());
+  setTimeout(() => {
+    try { state.term?.write("\r"); } catch { /* ignore */ }
+  }, 300);
 
   const authFile = authFilePath(engine);
   const baseline = state.baselineMtime ?? 0;

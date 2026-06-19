@@ -134,4 +134,16 @@ describe("parseAuthUrl (Claude setup-token)", () => {
   it("returns undefined when no authorize url present", () => {
     expect(parseAuthUrl("Welcome to Claude Code\nLoading...")).toBeUndefined();
   });
+
+  it("strips Ink cursor-move codes and does not glue the 'Paste code' prompt", () => {
+    // Ink TUI emits cursor moves (ESC[2G, ESC[8G) + the prompt sits after a blank line.
+    const out =
+      "\x1b[2GBrowser didn't open? Use the url below\x1b[0m\n\n" +
+      "\x1b[8Ghttps://claude.com/cai/oauth/authorize?client_id=abc&state=XYZ\n\n" +
+      "\x1b[2GPaste\x1b[8Gcode here if prompted >";
+    const url = parseAuthUrl(out);
+    expect(url).toBe("https://claude.com/cai/oauth/authorize?client_id=abc&state=XYZ");
+    expect(url).not.toMatch(/paste/i);
+    expect(url).not.toMatch(/\s/);
+  });
 });

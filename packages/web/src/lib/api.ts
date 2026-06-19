@@ -339,6 +339,9 @@ export const api = {
     post<{ started: string[]; stopped: string[]; errors: string[] }>("/api/connectors/reload", {}),
   updateConfig: (data: Record<string, unknown>) =>
     put<Record<string, unknown>>("/api/config", data),
+  getInstructions: () => get<{ content: string }>("/api/instructions"),
+  updateInstructions: (content: string) =>
+    put<{ status: string }>("/api/instructions", { content }),
   getLogs: (n?: number) =>
     get<{ lines: string[] }>(`/api/logs${n ? `?n=${n}` : ""}`),
   getOnboarding: () =>

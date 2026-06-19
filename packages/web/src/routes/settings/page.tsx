@@ -100,6 +100,8 @@ interface Config {
   portal?: {
     portalName?: string
     operatorName?: string
+    persona?: string
+    language?: string
   }
   [key: string]: unknown
 }
@@ -476,6 +478,12 @@ export default function SettingsPage() {
     message: string
   } | null>(null)
 
+  // Persona (portal.persona) + operating-instructions (CLAUDE.md) editors
+  const [personaValue, setPersonaValue] = useState("")
+  const [instructionsValue, setInstructionsValue] = useState("")
+  const [instructionsDirty, setInstructionsDirty] = useState(false)
+  const [savingInstructions, setSavingInstructions] = useState(false)
+
   // WhatsApp QR code state
   const [waQr, setWaQr] = useState<string | null>(null)
   const [waStatus, setWaStatus] = useState<string>("unknown")
@@ -515,10 +523,31 @@ export default function SettingsPage() {
       .getConfig()
       .then((data) => {
         setConfig(data as Config)
+        setPersonaValue((data as Config).portal?.persona ?? "")
         setConfigError(null)
       })
       .catch((err) => setConfigError(err.message))
       .finally(() => setConfigLoading(false))
+  }
+
+  // Load the operating manual (CLAUDE.md) once.
+  useEffect(() => {
+    api
+      .getInstructions()
+      .then((d) => setInstructionsValue(d.content ?? ""))
+      .catch(() => {})
+  }, [])
+
+  function saveInstructions() {
+    setSavingInstructions(true)
+    api
+      .updateInstructions(instructionsValue)
+      .then(() => {
+        setInstructionsDirty(false)
+        setFeedback({ type: "success", message: "Instructions saved" })
+      })
+      .catch((e) => setFeedback({ type: "error", message: `Failed to save instructions: ${e.message}` }))
+      .finally(() => setSavingInstructions(false))
   }
 
   useEffect(() => {
@@ -877,6 +906,70 @@ export default function SettingsPage() {
                   <option value="Bulgarian">Bulgarian</option>
                 </select>
               </div>
+
+              <div>
+                <label
+                  className="block text-[length:var(--text-caption1)] text-[var(--text-tertiary)] mb-[var(--space-1)]"
+                >
+                  Persona / Personality
+                </label>
+                <textarea
+                  rows={6}
+                  className="apple-input w-full bg-[var(--bg-secondary)] border border-[var(--separator)] rounded-[var(--radius-sm)] px-[10px] py-[6px] text-[length:var(--text-footnote)] text-[var(--text-primary)] resize-y"
+                  placeholder="e.g. You are Aria, a friendly COO who writes short, warm replies and refers to herself as 'I'…"
+                  value={personaValue}
+                  onChange={(e) => setPersonaValue(e.target.value)}
+                  onBlur={() => {
+                    api
+                      .updateConfig({ portal: { persona: personaValue || undefined } })
+                      .then(() =>
+                        setConfig((p) => ({ ...p, portal: { ...p.portal, persona: personaValue || undefined } })),
+                      )
+                      .catch((e) =>
+                        setFeedback({ type: "error", message: `Failed to save Persona: ${e.message}` }),
+                      )
+                  }}
+                />
+                <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)] mt-[2px]">
+                  Name, gender, tone, how the bot refers to itself — injected into every session's system prompt.
+                </div>
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Operating Instructions (CLAUDE.md)">
+            <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)] mb-[var(--space-2)]">
+              The shared manual auto-loaded into every session (role, org system, conventions). Saving also updates AGENTS.md.
+            </div>
+            <textarea
+              rows={16}
+              spellCheck={false}
+              className="w-full bg-[var(--bg-secondary)] border border-[var(--separator)] rounded-[var(--radius-sm)] px-[10px] py-[8px] text-[length:var(--text-caption1)] text-[var(--text-primary)] font-mono resize-y"
+              value={instructionsValue}
+              onChange={(e) => {
+                setInstructionsValue(e.target.value)
+                setInstructionsDirty(true)
+              }}
+            />
+            <div className="flex items-center gap-[var(--space-3)] mt-[var(--space-2)]">
+              <button
+                onClick={saveInstructions}
+                disabled={!instructionsDirty || savingInstructions}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: "8px",
+                  background: "var(--accent, #2E5BFF)",
+                  color: "#fff",
+                  border: "none",
+                  cursor: "pointer",
+                  opacity: !instructionsDirty || savingInstructions ? 0.5 : 1,
+                }}
+              >
+                {savingInstructions ? "Saving…" : "Save instructions"}
+              </button>
+              {instructionsDirty && (
+                <span className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">unsaved changes</span>
+              )}
             </div>
           </Section>
 

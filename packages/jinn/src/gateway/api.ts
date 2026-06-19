@@ -1521,6 +1521,33 @@ export async function handleApiRequest(
       return json(res, await collectEngineLimits(context.getConfig(), { engine }));
     }
 
+    // GET /api/instructions — the shared operating manual (CLAUDE.md / AGENTS.md).
+    if (method === "GET" && pathname === "/api/instructions") {
+      let content = "";
+      try { content = fs.readFileSync(path.join(JINN_HOME, "CLAUDE.md"), "utf8"); } catch { /* empty */ }
+      return json(res, { content });
+    }
+
+    // PUT /api/instructions — write CLAUDE.md. AGENTS.md is normally a symlink to
+    // it (so it follows automatically); if it's a regular file, mirror the write.
+    if (method === "PUT" && pathname === "/api/instructions") {
+      const _p = await readJsonBody(req, res);
+      if (!_p.ok) return;
+      const content = (_p.body as { content?: string })?.content;
+      if (typeof content !== "string") return badRequest(res, "content (string) is required");
+      try {
+        fs.writeFileSync(path.join(JINN_HOME, "CLAUDE.md"), content);
+        const agents = path.join(JINN_HOME, "AGENTS.md");
+        let agentsIsSymlink = false;
+        try { agentsIsSymlink = fs.lstatSync(agents).isSymbolicLink(); } catch { /* missing */ }
+        if (!agentsIsSymlink) fs.writeFileSync(agents, content);
+        logger.info("Instructions (CLAUDE.md) updated via API");
+        return json(res, { status: "ok" });
+      } catch (err) {
+        return serverError(res, err instanceof Error ? err.message : "write failed");
+      }
+    }
+
     // GET /api/config
     if (method === "GET" && pathname === "/api/config") {
       const config = context.getConfig();

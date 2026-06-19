@@ -9,6 +9,7 @@
  * UI can surface the code/URL and poll for completion — no API key, no terminal.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import * as pty from "node-pty";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -42,6 +43,29 @@ export function parseDeviceAuth(output: string): Partial<DeviceAuthInfo> {
   };
 }
 
+/**
+ * Extract an OAuth "authorize" URL from CLI output (Claude's setup-token prints
+ * `https://claude.com/.../oauth/authorize?...`). Pure for unit testing.
+ */
+export function parseAuthUrl(output: string): string | undefined {
+  const clean = stripAnsi(output).replace(/\s+/g, " ");
+  // The URL may be soft-wrapped across terminal lines; rejoin by stripping the
+  // spaces the PTY inserts. Match a claude/openai oauth authorize link.
+  const compact = stripAnsi(output).replace(/[\r\n]+/g, "").replace(/ +/g, "");
+  const m =
+    compact.match(/https?:\/\/\S*oauth\/authorize\S*/i) ??
+    clean.match(/https?:\/\/\S*oauth\/authorize\S*/i);
+  return m?.[0]?.replace(/[).,]+$/, "");
+}
+
+/** How an engine authenticates: codex polls (device), claude needs a pasted code. */
+export type AuthMode = "device" | "paste-code" | null;
+export function authMode(engine: string): AuthMode {
+  if (engine === "codex") return "device";
+  if (engine === "claude") return "paste-code";
+  return null;
+}
+
 export type AuthStatus = "connected" | "pending" | "not_connected" | "failed";
 
 interface AuthState {
@@ -50,20 +74,39 @@ interface AuthState {
   code?: string;
   error?: string;
   proc?: ChildProcess;
+  term?: pty.IPty;
+  baselineMtime?: number;
   startedAt?: number;
 }
 
 const states = new Map<string, AuthState>();
 
-/** Whether device-auth is supported for an engine. Only Codex for now. */
+/** Whether device-auth (auto-polling code) is supported. Only Codex. */
 export function supportsDeviceAuth(engine: string): boolean {
   return engine === "codex";
+}
+
+/** Whether any UI auth flow is supported for the engine. */
+export function supportsAuth(engine: string): boolean {
+  return authMode(engine) !== null;
 }
 
 /** Path to an engine's auth credentials file (existence ⇒ logged in). */
 function authFilePath(engine: string): string | null {
   if (engine === "codex") return path.join(os.homedir(), ".codex", "auth.json");
+  if (engine === "claude") {
+    const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+    return path.join(dir, ".credentials.json");
+  }
   return null;
+}
+
+function fileMtime(p: string | null): number {
+  try {
+    return p ? fs.statSync(p).mtimeMs : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** True when the engine has a credentials file on disk. */
@@ -166,9 +209,123 @@ export function startDeviceAuth(engine: string, bin: string): Promise<DeviceAuth
   });
 }
 
-/** Cancel an in-flight device-auth flow (e.g. user closed the dialog). */
+/**
+ * Start a paste-code auth flow (Claude `setup-token`). Spawns the CLI in a PTY,
+ * captures the OAuth URL, and waits for the user to authorize in a browser and
+ * paste the resulting code back via submitAuthCode(). Resolves once the URL is
+ * known. The code is shown on the OAuth provider's page (not in the terminal),
+ * so unlike device-auth we only return a URL here.
+ */
+export function startPasteCodeAuth(engine: string, bin: string): Promise<{ url: string }> {
+  if (authMode(engine) !== "paste-code") {
+    return Promise.reject(new Error(`paste-code auth not supported for engine '${engine}'`));
+  }
+
+  const existing = states.get(engine);
+  if (existing?.status === "pending" && existing.url && existing.term) {
+    return Promise.resolve({ url: existing.url });
+  }
+  try { existing?.term?.kill(); } catch { /* ignore */ }
+
+  return new Promise<{ url: string }>((resolve, reject) => {
+    let term: pty.IPty;
+    try {
+      term = pty.spawn(bin, ["setup-token"], {
+        name: "xterm-256color",
+        cols: 100,
+        rows: 30,
+        env: process.env as Record<string, string>,
+      });
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+
+    const state: AuthState = {
+      status: "pending",
+      term,
+      baselineMtime: fileMtime(authFilePath(engine)),
+      startedAt: Date.now(),
+    };
+    states.set(engine, state);
+
+    let buf = "";
+    let settled = false;
+    term.onData((d) => {
+      buf += d;
+      if (!settled) {
+        const url = parseAuthUrl(buf);
+        if (url) {
+          settled = true;
+          state.url = url;
+          resolve({ url });
+        }
+      }
+    });
+    term.onExit(() => {
+      state.term = undefined;
+      if (!settled) {
+        settled = true;
+        state.status = "failed";
+        state.error = "login process exited before issuing a URL";
+        reject(new Error(state.error));
+      }
+    });
+
+    setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        try { term.kill(); } catch { /* ignore */ }
+        state.status = "failed";
+        state.error = "timed out waiting for the sign-in URL";
+        reject(new Error(state.error));
+      }
+    }, 20_000);
+  });
+}
+
+/**
+ * Submit the code the user copied from the OAuth page into the waiting PTY, then
+ * wait for the credentials file to be written (mtime advances). Resolves with
+ * the resulting status.
+ */
+export function submitAuthCode(engine: string, code: string): Promise<{ status: AuthStatus; error?: string }> {
+  const state = states.get(engine);
+  if (!state?.term) {
+    return Promise.resolve({ status: "failed", error: "no login in progress — start again" });
+  }
+  state.term.write(`${code.trim()}\r`);
+
+  const authFile = authFilePath(engine);
+  const baseline = state.baselineMtime ?? 0;
+  const deadline = Date.now() + 45_000;
+
+  return new Promise((resolve) => {
+    const tick = setInterval(() => {
+      const mtime = fileMtime(authFile);
+      const succeeded = mtime > baseline;
+      const exited = !state.term;
+      if (succeeded) {
+        clearInterval(tick);
+        state.status = "connected";
+        try { state.term?.kill(); } catch { /* ignore */ }
+        state.term = undefined;
+        logger.info(`Engine '${engine}' paste-code auth connected`);
+        resolve({ status: "connected" });
+      } else if (exited || Date.now() > deadline) {
+        clearInterval(tick);
+        state.status = "failed";
+        state.error = exited ? "login process exited without writing credentials" : "timed out after submitting code";
+        resolve({ status: "failed", error: state.error });
+      }
+    }, 1000);
+  });
+}
+
+/** Cancel an in-flight auth flow (e.g. user closed the dialog). */
 export function cancelDeviceAuth(engine: string): void {
   const s = states.get(engine);
   s?.proc?.kill();
+  try { s?.term?.kill(); } catch { /* ignore */ }
   states.delete(engine);
 }

@@ -64,7 +64,7 @@ import { loadJobs, saveJobs } from "../cron/jobs.js";
 import { reloadScheduler } from "../cron/scheduler.js";
 import { runCronJob } from "../cron/runner.js";
 import QRCode from "qrcode";
-import { startDeviceAuth, getAuthStatus, supportsDeviceAuth, cancelDeviceAuth } from "./engine-auth.js";
+import { startDeviceAuth, startPasteCodeAuth, submitAuthCode, getAuthStatus, supportsAuth, authMode, cancelDeviceAuth } from "./engine-auth.js";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, handleSessionAttachment, fileIdsToMedia, rehomeAttachmentsToSession, ensureFilesDir } from "./files.js";
 import { readJsonBody, readBodyRaw } from "./http-helpers.js";
@@ -1420,36 +1420,57 @@ export async function handleApiRequest(
       return json(res, { default: config.engines.default, engines: getModelRegistry(config) });
     }
 
-    // GET /api/engines/:name/auth-status — device-auth state for the settings UI
-    // (connected / pending+code+url / not_connected / failed).
+    // GET /api/engines/:name/auth-status — auth state for the settings UI
+    // (connected / pending+code+url / not_connected / failed), plus the auth mode.
     params = matchRoute("/api/engines/:name/auth-status", pathname);
     if (method === "GET" && params) {
-      return json(res, { engine: params.name, ...getAuthStatus(params.name) });
+      return json(res, {
+        engine: params.name,
+        mode: authMode(params.name),
+        ...getAuthStatus(params.name),
+      });
     }
 
-    // POST /api/engines/:name/login/cancel — abort an in-flight device-auth flow.
+    // POST /api/engines/:name/login/cancel — abort an in-flight auth flow.
     params = matchRoute("/api/engines/:name/login/cancel", pathname);
     if (method === "POST" && params) {
       cancelDeviceAuth(params.name);
       return json(res, { status: "ok" });
     }
 
-    // POST /api/engines/:name/login — start a ChatGPT device-auth flow; returns
-    // { url, code } for the user to complete on any browser. The CLI keeps
-    // polling in the background and writes its auth file on success.
+    // POST /api/engines/:name/login/code — submit the code the user copied from
+    // the OAuth page (paste-code engines, e.g. Claude).
+    params = matchRoute("/api/engines/:name/login/code", pathname);
+    if (method === "POST" && params) {
+      const _p = await readJsonBody(req, res);
+      if (!_p.ok) return;
+      const code = (_p.body as { code?: string })?.code;
+      if (!code || typeof code !== "string") return badRequest(res, "code is required");
+      const result = await submitAuthCode(params.name, code);
+      return json(res, result);
+    }
+
+    // POST /api/engines/:name/login — start an auth flow. Codex returns a device
+    // { url, code } that auto-completes; Claude returns a { url } and expects the
+    // user to paste a code back via /login/code.
     params = matchRoute("/api/engines/:name/login", pathname);
     if (method === "POST" && params) {
       const engine = params.name;
-      if (!supportsDeviceAuth(engine)) {
-        return badRequest(res, `Engine '${engine}' does not support device login`);
+      if (!supportsAuth(engine)) {
+        return badRequest(res, `Engine '${engine}' does not support UI login`);
       }
       const cfg = context.getConfig();
       const bin =
         (cfg.engines as unknown as Record<string, { bin?: string } | undefined>)[engine]?.bin ||
         engine;
       try {
+        const mode = authMode(engine);
+        if (mode === "paste-code") {
+          const info = await startPasteCodeAuth(engine, bin);
+          return json(res, { status: "pending", mode, ...info });
+        }
         const info = await startDeviceAuth(engine, bin);
-        return json(res, { status: "pending", ...info });
+        return json(res, { status: "pending", mode, ...info });
       } catch (err) {
         return json(res, {
           status: "failed",

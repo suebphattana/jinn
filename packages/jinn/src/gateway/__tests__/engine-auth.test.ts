@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDeviceAuth, supportsDeviceAuth } from "../engine-auth.js";
+import { parseDeviceAuth, supportsDeviceAuth, parseAuthUrl, authMode, supportsAuth } from "../engine-auth.js";
 
 describe("parseDeviceAuth", () => {
   it("extracts url + code from real codex --device-auth output", () => {
@@ -44,7 +44,42 @@ describe("supportsDeviceAuth", () => {
   it("supports codex", () => {
     expect(supportsDeviceAuth("codex")).toBe(true);
   });
-  it("does not support claude (uses setup-token instead)", () => {
+  it("does not device-auth claude (it pastes a code instead)", () => {
     expect(supportsDeviceAuth("claude")).toBe(false);
+  });
+});
+
+describe("authMode / supportsAuth", () => {
+  it("codex uses device mode", () => {
+    expect(authMode("codex")).toBe("device");
+    expect(supportsAuth("codex")).toBe(true);
+  });
+  it("claude uses paste-code mode", () => {
+    expect(authMode("claude")).toBe("paste-code");
+    expect(supportsAuth("claude")).toBe(true);
+  });
+  it("unknown engines have no auth", () => {
+    expect(authMode("grok")).toBeNull();
+    expect(supportsAuth("grok")).toBe(false);
+  });
+});
+
+describe("parseAuthUrl (Claude setup-token)", () => {
+  it("extracts the oauth authorize url from real PTY output", () => {
+    // From `claude setup-token` (soft-wrapped across terminal lines, ANSI).
+    const out =
+      "Browser didn't open? Use the url below to sign in (c to copy)\n\n" +
+      "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&resp\n" +
+      "onse_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3\n" +
+      "Ainference&code_challenge=OnFU&state=gViR\n\nPaste code here if prompted >";
+    const url = parseAuthUrl(out);
+    expect(url).toContain("https://claude.com/cai/oauth/authorize?");
+    expect(url).toContain("client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+    // soft-wrap rejoined (no embedded spaces/newlines)
+    expect(url).not.toMatch(/\s/);
+  });
+
+  it("returns undefined when no authorize url present", () => {
+    expect(parseAuthUrl("Welcome to Claude Code\nLoading...")).toBeUndefined();
   });
 });

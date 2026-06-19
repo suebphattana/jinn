@@ -994,6 +994,7 @@ export default function SettingsPage() {
                     ])}
                   />
                 </FieldRow>
+                <EngineAuthRow engine="claude" provider="Claude" />
 
                 <div
                   className="border-t border-[var(--separator)] mt-[var(--space-3)] pt-[var(--space-3)]"
@@ -1045,7 +1046,7 @@ export default function SettingsPage() {
                     ])}
                   />
                 </FieldRow>
-                <EngineAuthRow engine="codex" />
+                <EngineAuthRow engine="codex" provider="ChatGPT" />
 
                 <div
                   className="border-t border-[var(--separator)] mt-[var(--space-3)] pt-[var(--space-3)]"

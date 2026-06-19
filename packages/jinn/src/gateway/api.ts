@@ -64,6 +64,7 @@ import { loadJobs, saveJobs } from "../cron/jobs.js";
 import { reloadScheduler } from "../cron/scheduler.js";
 import { runCronJob } from "../cron/runner.js";
 import QRCode from "qrcode";
+import { startDeviceAuth, getAuthStatus, supportsDeviceAuth, cancelDeviceAuth } from "./engine-auth.js";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, handleSessionAttachment, fileIdsToMedia, rehomeAttachmentsToSession, ensureFilesDir } from "./files.js";
 import { readJsonBody, readBodyRaw } from "./http-helpers.js";
@@ -1417,6 +1418,44 @@ export async function handleApiRequest(
       await refreshGrokModels(config);
       context.emit("engines:updated", {});
       return json(res, { default: config.engines.default, engines: getModelRegistry(config) });
+    }
+
+    // GET /api/engines/:name/auth-status — device-auth state for the settings UI
+    // (connected / pending+code+url / not_connected / failed).
+    params = matchRoute("/api/engines/:name/auth-status", pathname);
+    if (method === "GET" && params) {
+      return json(res, { engine: params.name, ...getAuthStatus(params.name) });
+    }
+
+    // POST /api/engines/:name/login/cancel — abort an in-flight device-auth flow.
+    params = matchRoute("/api/engines/:name/login/cancel", pathname);
+    if (method === "POST" && params) {
+      cancelDeviceAuth(params.name);
+      return json(res, { status: "ok" });
+    }
+
+    // POST /api/engines/:name/login — start a ChatGPT device-auth flow; returns
+    // { url, code } for the user to complete on any browser. The CLI keeps
+    // polling in the background and writes its auth file on success.
+    params = matchRoute("/api/engines/:name/login", pathname);
+    if (method === "POST" && params) {
+      const engine = params.name;
+      if (!supportsDeviceAuth(engine)) {
+        return badRequest(res, `Engine '${engine}' does not support device login`);
+      }
+      const cfg = context.getConfig();
+      const bin =
+        (cfg.engines as unknown as Record<string, { bin?: string } | undefined>)[engine]?.bin ||
+        engine;
+      try {
+        const info = await startDeviceAuth(engine, bin);
+        return json(res, { status: "pending", ...info });
+      } catch (err) {
+        return json(res, {
+          status: "failed",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     // GET /api/engine-limits — live/snapshot quota windows and static capability

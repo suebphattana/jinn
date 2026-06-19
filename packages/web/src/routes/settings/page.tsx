@@ -10,6 +10,7 @@ import type { ThemeId } from "@/lib/themes"
 import { api } from "@/lib/api"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import { useModelRegistry } from "@/hooks/use-model-registry"
+import { EngineAuthRow } from "@/routes/settings/engine-auth"
 
 // ---------------------------------------------------------------------------
 // Accent color presets
@@ -942,6 +943,11 @@ export default function SettingsPage() {
                     ]}
                   />
                 </FieldRow>
+                {config.engines?.default === "codex" && (
+                  <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)] pb-[var(--space-2)]">
+                    ⚡ Codex ใช้บัญชี ChatGPT — เชื่อมต่อได้ที่หัวข้อ <b>Engine Configuration</b> ด้านล่าง (ปุ่ม Connect with ChatGPT)
+                  </div>
+                )}
               </Section>
 
               {/* -- Section 4: Engine Configuration -- */}
@@ -1039,6 +1045,7 @@ export default function SettingsPage() {
                     ])}
                   />
                 </FieldRow>
+                <EngineAuthRow engine="codex" />
 
                 <div
                   className="border-t border-[var(--separator)] mt-[var(--space-3)] pt-[var(--space-3)]"

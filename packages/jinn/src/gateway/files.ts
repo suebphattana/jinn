@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import Busboy from "busboy";
 import { FILES_DIR, UPLOADS_DIR, JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
-import { insertFile, getFile, listFiles, deleteFile, setFilePath, insertMessage, type FileMeta, type MessageMedia } from "../sessions/registry.js";
+import { insertFile, getFile, listFiles, deleteFile, setFilePath, insertMessage, getSession, type FileMeta, type MessageMedia } from "../sessions/registry.js";
 import type { ApiContext } from "./api.js";
 
 // Ensure managed files directory exists
@@ -718,6 +718,37 @@ async function finalizeAttachment(
   context.emit("session:attachment", { sessionId, id: messageId, content: caption, media: [media], timestamp });
   logger.info(`Attachment pushed to session ${sessionId}: ${meta.filename} (${meta.id})`);
   json(res, { ...meta, media, message: { id: messageId, role: "assistant", content: caption, media: [media], timestamp } }, 201);
+
+  // The HTTP response is already sent. Now ALSO deliver the file to the
+  // session's connector (Discord/Telegram/…) so it appears where the
+  // conversation actually lives — not just in the web UI. Fire-and-forget and
+  // fully graceful: a web-only session, a disconnected connector, or a connector
+  // that can't attach files just skips silently.
+  if (meta.path) {
+    void broadcastAttachmentToConnector(sessionId, caption, meta.path, context);
+  }
+}
+
+/** Best-effort: push a saved attachment to the session's connector. Never throws. */
+async function broadcastAttachmentToConnector(
+  sessionId: string,
+  caption: string,
+  filePath: string,
+  context: ApiContext,
+): Promise<void> {
+  try {
+    const session = getSession(sessionId);
+    const connName = session?.connector;
+    if (!session || !connName) return; // web-only session — nothing to forward to
+    const connector = context.connectors.get(connName);
+    if (!connector || connector.getHealth().status !== "running") return; // not connected
+    const target = connector.reconstructTarget(session.replyContext ?? {});
+    if (!target.channel) return;
+    await connector.sendMessage(target, caption || "", { files: [filePath] });
+    logger.info(`Attachment also delivered to ${connName} for session ${sessionId}`);
+  } catch (err) {
+    logger.warn(`Attachment connector delivery skipped: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 /** Handle POST /api/sessions/:id/attachments — multipart upload from the running agent. */

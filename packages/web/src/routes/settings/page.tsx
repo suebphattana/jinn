@@ -778,7 +778,11 @@ export default function SettingsPage() {
                   onChange={(e) => setNameValue(e.target.value)}
                   onBlur={() => {
                     setPortalName(nameValue || null)
-                    api.completeOnboarding({ portalName: nameValue || undefined }).catch(() => {})
+                    api
+                      .updateConfig({ portal: { portalName: nameValue || undefined } })
+                      .catch((e) =>
+                        setFeedback({ type: "error", message: `Failed to save Portal Name: ${e.message}` }),
+                      )
                   }}
                 />
               </div>
@@ -813,7 +817,11 @@ export default function SettingsPage() {
                   onChange={(e) => setOperatorNameValue(e.target.value)}
                   onBlur={() => {
                     setOperatorName(operatorNameValue || null)
-                    api.completeOnboarding({ operatorName: operatorNameValue || undefined }).catch(() => {})
+                    api
+                      .updateConfig({ portal: { operatorName: operatorNameValue || undefined } })
+                      .catch((e) =>
+                        setFeedback({ type: "error", message: `Failed to save Operator Name: ${e.message}` }),
+                      )
                   }}
                 />
               </div>
@@ -845,7 +853,11 @@ export default function SettingsPage() {
                   onChange={(e) => setLanguageValue(e.target.value)}
                   onBlur={() => {
                     setLanguage(languageValue || "English")
-                    api.completeOnboarding({ language: languageValue || undefined }).catch(() => {})
+                    api
+                      .updateConfig({ portal: { language: languageValue || undefined } })
+                      .catch((e) =>
+                        setFeedback({ type: "error", message: `Failed to save Language: ${e.message}` }),
+                      )
                   }}
                   className="w-full bg-[var(--bg-secondary)] border border-[var(--separator)] rounded-[var(--radius-sm)] px-[10px] py-[6px] text-[length:var(--text-footnote)] text-[var(--text-primary)] cursor-pointer"
                 >

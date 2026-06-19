@@ -42,6 +42,7 @@ interface Config {
     claude?: { bin?: string; model?: string; effortLevel?: string }
     codex?: { bin?: string; model?: string; effortLevel?: string }
     grok?: { bin?: string; model?: string; effortLevel?: string }
+    openrouter?: { apiKey?: string; model?: string }
   }
   sessions?: {
     maxDurationMinutes?: number
@@ -940,6 +941,7 @@ export default function SettingsPage() {
                       { value: "claude", label: "Claude" },
                       { value: "codex", label: "Codex" },
                       { value: "grok", label: "Grok" },
+                      { value: "openrouter", label: "OpenRouter" },
                     ]}
                   />
                 </FieldRow>
@@ -1078,6 +1080,43 @@ export default function SettingsPage() {
                     ])}
                   />
                 </FieldRow>
+
+                <div
+                  className="border-t border-[var(--separator)] mt-[var(--space-3)] pt-[var(--space-3)]"
+                />
+
+                <div
+                  className="text-[length:var(--text-caption1)] font-[var(--weight-semibold)] text-[var(--text-tertiary)] mb-[var(--space-2)]"
+                >
+                  OpenRouter
+                </div>
+                <FieldRow label="API Key">
+                  <SettingsInput
+                    type="password"
+                    value={config.engines?.openrouter?.apiKey ?? ""}
+                    onChange={(v) =>
+                      updateConfig(["engines", "openrouter", "apiKey"], v.trim() || undefined)
+                    }
+                    placeholder="sk-or-v1-..."
+                  />
+                </FieldRow>
+                <FieldRow label="Model">
+                  <SettingsSelect
+                    value={config.engines?.openrouter?.model ?? "deepseek/deepseek-v4-flash"}
+                    onChange={(v) =>
+                      updateConfig(["engines", "openrouter", "model"], v)
+                    }
+                    options={modelOptions("openrouter", [
+                      { value: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+                      { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+                      { value: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
+                      { value: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+                    ])}
+                  />
+                </FieldRow>
+                <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)] mt-[4px]">
+                  ใช้โมเดลจาก OpenRouter มาตอบ (subscription/utility) — ใส่ API key จาก openrouter.ai แล้วเลือกเป็น Default Engine
+                </div>
               </Section>
 
               {/* -- Section 5: Sessions -- */}

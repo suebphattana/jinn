@@ -201,7 +201,7 @@ export async function runMigrate(opts: { check?: boolean; auto?: boolean }): Pro
     // `bin` may be absent for engines with optional config (e.g. antigravity);
     // fall back to the engine name so spawn resolves via PATH (or fails clearly).
     // Note: antigravity (`agy`) has no headless mode, so migrate is unsupported there.
-    const migrateBin = engineConfig.bin ?? defaultEngine;
+    const migrateBin = (engineConfig as { bin?: string }).bin ?? defaultEngine;
     console.log(`${DIM}Engine: ${defaultEngine} (${migrateBin})${RESET}\n`);
 
     execFileSync(migrateBin, args, {

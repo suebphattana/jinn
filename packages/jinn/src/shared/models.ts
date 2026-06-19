@@ -31,7 +31,7 @@ import {
  */
 
 /** Engines registered in this build (mirrors server.ts engine map). */
-const ENGINE_NAMES = ["claude", "codex", "antigravity", "grok", "pi"] as const;
+const ENGINE_NAMES = ["claude", "codex", "antigravity", "grok", "pi", "openrouter"] as const;
 export type EngineName = (typeof ENGINE_NAMES)[number];
 
 /** Binary name probed for each engine's availability (override via engines.<name>.bin). */
@@ -41,6 +41,7 @@ const ENGINE_BIN: Record<EngineName, string> = {
   antigravity: "agy",
   grok: "grok",
   pi: "pi",
+  openrouter: "", // API-based — availability is gated on an API key, not a bin.
 };
 
 const EFFORT_MECHANISM: Record<EngineName, EffortMechanism> = {
@@ -49,7 +50,16 @@ const EFFORT_MECHANISM: Record<EngineName, EffortMechanism> = {
   antigravity: "none",
   grok: "grok-flag",
   pi: "pi-flag",
+  openrouter: "none",
 };
+
+/** Fixed catalog of OpenRouter models we expose. */
+export const OPENROUTER_MODELS: ModelInfo[] = [
+  { id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro", supportsEffort: false, effortLevels: [], contextWindow: 163840 },
+  { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash", supportsEffort: false, effortLevels: [], contextWindow: 163840 },
+  { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", supportsEffort: false, effortLevels: [], contextWindow: 200000 },
+  { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash", supportsEffort: false, effortLevels: [], contextWindow: 1000000 },
+];
 
 export const CODEX_DEFAULT_MODEL = "gpt-5.5";
 
@@ -62,6 +72,7 @@ const SYNTH_DEFAULTS: Record<EngineName, { supportsEffort: boolean; effortLevels
   // Placeholder shown only in the brief window before pi discovery completes; the
   // provider/id form keeps it well-typed for the engine's split.
   pi: { supportsEffort: false, effortLevels: [], fallbackModel: "ollama/gemma4:12b" },
+  openrouter: { supportsEffort: false, effortLevels: [], fallbackModel: "deepseek/deepseek-v4-flash" },
 };
 
 /** Optional per-engine `bin` override from config. */
@@ -71,6 +82,10 @@ function engineBinOverride(config: JinnConfig, name: EngineName): string | undef
 
 /** Whether an engine's binary is installed (gates UI visibility). */
 export function engineAvailable(config: JinnConfig, name: EngineName): boolean {
+  // OpenRouter is API-based: available once an API key is configured.
+  if (name === "openrouter") {
+    return !!config.engines.openrouter?.apiKey;
+  }
   const bin = ENGINE_BIN[name];
   // Unknown engine name (e.g. a typo in config.sessions.fallbackEngine) → not available.
   if (!bin) return false;
@@ -89,6 +104,7 @@ const ENGINE_INSTALL_HINT: Record<EngineName, string> = {
   antigravity: "install the Antigravity CLI (agy)",
   grok: "npm install -g @xai-official/grok, then run grok once to authenticate",
   pi: "install the Pi CLI",
+  openrouter: "set engines.openrouter.apiKey in Settings (get a key at openrouter.ai)",
 };
 
 /** Actionable error message for a session blocked by a missing engine binary. */
@@ -204,6 +220,17 @@ export function buildRegistry(config: JinnConfig): ModelRegistry {
     }
     if (name === "grok") {
       registry[name] = buildGrokEntry(config, block?.grok, synthesized[name], available);
+      continue;
+    }
+    if (name === "openrouter") {
+      const orBlock = block?.openrouter;
+      const models = orBlock ? fromEngineModelsConfig("openrouter", orBlock, available).models : OPENROUTER_MODELS;
+      const pinned = config.engines.openrouter?.model;
+      const defaultModel =
+        (pinned && models.some((m) => m.id === pinned) ? pinned : undefined) ??
+        orBlock?.default ??
+        models[0].id;
+      registry[name] = { name: "openrouter", available, defaultModel, effortMechanism: "none", models };
       continue;
     }
     const engineBlock = block?.[name];

@@ -557,7 +557,7 @@ export interface JinnConfig {
     userHeader?: string | string[];
   };
   engines: {
-    default: "claude" | "codex" | "antigravity" | "grok" | "pi";
+    default: "claude" | "codex" | "antigravity" | "grok" | "pi" | "openrouter";
     claude: {
       bin: string;
       model: string;
@@ -573,6 +573,9 @@ export interface JinnConfig {
     antigravity?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
     grok?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
     pi?: { bin?: string; model?: string; effortLevel?: string; childEffortOverride?: string };
+    /** OpenRouter — API-based (no CLI). Authenticates with an API key; replies
+     *  using a selected OpenRouter model. */
+    openrouter?: { apiKey?: string; model?: string };
   };
   /** Optional model + capability registry. When absent, synthesized from engines.<name>.model. */
   models?: ModelsConfig;

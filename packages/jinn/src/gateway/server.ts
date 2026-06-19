@@ -20,6 +20,7 @@ import { AntigravityEngine } from "../engines/antigravity.js";
 import { PiEngine } from "../engines/pi.js";
 import { GrokEngine } from "../engines/grok.js";
 import { GrokInteractiveEngine } from "../engines/grok-interactive.js";
+import { OpenRouterEngine } from "../engines/openrouter.js";
 import type { PtyViewEngine } from "../engines/pty-view-engine.js";
 import { HookRegistry } from "./hook-registry.js";
 import { writeGatewayInfo, readGatewayInfo, updateGatewayPtyPids } from "./gateway-info.js";
@@ -343,6 +344,9 @@ export async function startGateway(
   engines.set("antigravity", antigravityEngine);
   engines.set("grok", grokEngine);
   engines.set("pi", piEngine);
+  // OpenRouter: API-based engine; reads the live config so an API key added via
+  // the UI takes effect without a restart.
+  engines.set("openrouter", new OpenRouterEngine(() => currentConfig));
 
   // PTY-capable engines, keyed by engine name — the /ws/pty handler routes by
   // session.engine so the xterm view attaches to the right engine.

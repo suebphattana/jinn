@@ -10,6 +10,8 @@ import {
   type DMChannel,
   type ThreadChannel,
   type ButtonInteraction,
+  type ChatInputCommandInteraction,
+  type ApplicationCommandDataResolvable,
   type MessageCreateOptions,
 } from "discord.js";
 import type {
@@ -33,6 +35,35 @@ import {
   resolveLanguages,
   getModelPath,
 } from "../../stt/stt.js";
+
+/** Native slash commands registered with Discord so they show in the "/" picker.
+ *  Each maps to the same text command the session manager already handles. */
+const SLASH_COMMANDS: ApplicationCommandDataResolvable[] = [
+  { name: "new", description: "เริ่ม session ใหม่ (ล้างบทสนทนา)" },
+  { name: "reset", description: "รีเซ็ต session เริ่มใหม่ + ล้างเป้าหมาย" },
+  { name: "compact", description: "บีบอัดบทสนทนา ลดขนาด context" },
+  { name: "status", description: "ดูสถานะ session ปัจจุบัน" },
+  { name: "doctor", description: "ตรวจสุขภาพ engine และ connector" },
+  {
+    name: "goal",
+    description: "ตั้ง / ดู / ล้าง เป้าหมายของ session",
+    options: [
+      {
+        name: "text",
+        description: "เป้าหมาย (เว้นว่าง = ดูเป้าหมายปัจจุบัน, พิมพ์ 'clear' = ล้าง)",
+        type: 3, // STRING
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "model",
+    description: "เปลี่ยนโมเดลของ session นี้",
+    options: [
+      { name: "name", description: "ชื่อโมเดล เช่น opus / sonnet", type: 3, required: true },
+    ],
+  },
+];
 
 export interface DiscordSttConfig {
   enabled?: boolean;
@@ -117,6 +148,8 @@ export class DiscordConnector implements Connector {
     this.client.on("ready", () => {
       logger.info(`Discord connector ready as ${this.client.user?.tag}`);
       this.status = "running";
+      // Register native slash commands so they appear in Discord's "/" picker.
+      void this.registerSlashCommands();
     });
 
     this.client.on("messageCreate", async (message) => {
@@ -129,8 +162,11 @@ export class DiscordConnector implements Connector {
 
     this.client.on("interactionCreate", async (interaction) => {
       try {
-        if (!interaction.isButton()) return;
-        await this.handleButtonInteraction(interaction);
+        if (interaction.isButton()) {
+          await this.handleButtonInteraction(interaction);
+        } else if (interaction.isChatInputCommand()) {
+          await this.handleSlashCommand(interaction);
+        }
       } catch (err) {
         logger.error(`Discord interaction handler error: ${err instanceof Error ? err.message : err}`);
       }
@@ -322,6 +358,91 @@ export class DiscordConnector implements Connector {
     } catch {
       // non-fatal
     }
+  }
+
+  /** Register native slash commands per-guild (instant) so they appear in the
+   *  Discord "/" picker. Re-run on every ready; set() overwrites idempotently. */
+  private async registerSlashCommands(): Promise<void> {
+    try {
+      const app = this.client.application;
+      if (!app) return;
+      const guilds = [...this.client.guilds.cache.keys()];
+      if (guilds.length === 0) {
+        await app.commands.set(SLASH_COMMANDS);
+        logger.info("Discord: registered global slash commands");
+        return;
+      }
+      for (const guildId of guilds) {
+        await app.commands.set(SLASH_COMMANDS, guildId);
+      }
+      logger.info(`Discord: registered slash commands in ${guilds.length} guild(s)`);
+    } catch (err) {
+      logger.warn(`Discord: slash command registration failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** Handle a native slash command: ack ephemerally, then feed the equivalent
+   *  text command into the session pipeline (reusing all existing handlers). */
+  private async handleSlashCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    // Gating mirrors inbound messages.
+    if (this.config.guildId && interaction.guildId !== this.config.guildId) return;
+    if (
+      this.config.channelId &&
+      interaction.channelId !== this.config.channelId &&
+      !interaction.channel?.isDMBased()
+    ) return;
+    if (this.allowedUserIds.size > 0 && !this.allowedUserIds.has(interaction.user.id)) return;
+    if (!this.handler) return;
+
+    const name = interaction.commandName;
+    const arg =
+      interaction.options.getString("text") ??
+      interaction.options.getString("name") ??
+      interaction.options.getString("args") ??
+      "";
+    const text = arg ? `/${name} ${arg}` : `/${name}`;
+
+    // Ack within Discord's 3s window; the real result posts as a channel message.
+    try {
+      await interaction.reply({ content: `⚙️ \`${text}\``, ephemeral: true });
+    } catch {
+      /* non-fatal */
+    }
+
+    const ch = interaction.channel;
+    const isDM = ch?.isDMBased() ?? false;
+    const isThread = ch?.isThread() ?? false;
+    const sessionKey = isDM
+      ? `${this.instanceId}:dm:${interaction.user.id}`
+      : isThread
+      ? `${this.instanceId}:thread:${interaction.channelId}`
+      : `${this.instanceId}:${interaction.channelId}`;
+
+    this.handler({
+      connector: this.instanceId,
+      source: "discord",
+      sessionKey,
+      channel: interaction.channelId ?? "",
+      thread: isThread ? interaction.channelId ?? undefined : undefined,
+      user: interaction.user.username,
+      userId: interaction.user.id,
+      text,
+      attachments: [],
+      replyContext: {
+        channel: interaction.channelId ?? "",
+        thread: isThread ? interaction.channelId ?? null : null,
+        messageTs: null,
+        guildId: interaction.guildId ?? null,
+      },
+      raw: interaction,
+      transportMeta: {
+        channelName:
+          ch && ch.isTextBased() && "name" in ch ? (ch as TextChannel).name : "dm",
+        guildId: interaction.guildId ?? null,
+        isDM,
+        slashCommand: true,
+      },
+    });
   }
 
   /** Rebuild a button message's action rows with every button disabled, and the

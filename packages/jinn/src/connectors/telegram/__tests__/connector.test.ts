@@ -12,6 +12,7 @@ const mockSendDocument = vi.fn().mockResolvedValue({ message_id: 7 });
 const mockAnswerCallbackQuery = vi.fn().mockResolvedValue(true);
 const mockSendChatAction = vi.fn().mockResolvedValue(true);
 const mockEditMessageReplyMarkup = vi.fn().mockResolvedValue(true);
+const mockSetMyCommands = vi.fn().mockResolvedValue(true);
 
 vi.mock("node-telegram-bot-api", () => {
   const MockBot = vi.fn(function (this: any) {
@@ -25,6 +26,7 @@ vi.mock("node-telegram-bot-api", () => {
     this.answerCallbackQuery = mockAnswerCallbackQuery;
     this.sendChatAction = mockSendChatAction;
     this.editMessageReplyMarkup = mockEditMessageReplyMarkup;
+    this.setMyCommands = mockSetMyCommands;
   });
   return { default: MockBot };
 });
@@ -84,6 +86,13 @@ describe("TelegramConnector", () => {
       expect(mockGetMe).toHaveBeenCalledOnce();
       expect(mockStartPolling).toHaveBeenCalledOnce();
       expect(mockOn).toHaveBeenCalledWith("message", expect.any(Function));
+    });
+
+    it("registers the slash command menu via setMyCommands", async () => {
+      await connector.start();
+      expect(mockSetMyCommands).toHaveBeenCalledOnce();
+      const cmds = mockSetMyCommands.mock.calls[0][0].map((c: any) => c.command);
+      expect(cmds).toEqual(expect.arrayContaining(["reset", "goal", "compact"]));
     });
 
     it("does not start polling if getMe fails (invalid token)", async () => {

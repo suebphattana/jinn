@@ -4,6 +4,7 @@ import type { IncomingMessage } from "../../../shared/types.js";
 const clients: any[] = [];
 const mockSend = vi.fn().mockResolvedValue({ id: "msg1" });
 const mockChannelsFetch = vi.fn();
+const mockCommandsSet = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("discord.js", async (importActual) => {
   const actual = await importActual<any>();
@@ -11,6 +12,8 @@ vi.mock("discord.js", async (importActual) => {
     handlers: Record<string, any> = {};
     user = { id: "botid", tag: "bot#0001" };
     channels = { fetch: mockChannelsFetch };
+    application = { commands: { set: mockCommandsSet } };
+    guilds = { cache: new Map([["g1", {}]]) };
     constructor() {
       clients.push(this);
     }
@@ -161,6 +164,67 @@ describe("DiscordConnector", () => {
         deferUpdate: vi.fn(),
       });
       expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("native slash commands", () => {
+    it("registers slash commands per-guild on ready", async () => {
+      await connector.start();
+      const ready = lastClient().handlers.ready;
+      expect(ready).toBeDefined();
+      ready();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockCommandsSet).toHaveBeenCalled();
+      const names = mockCommandsSet.mock.calls[0][0].map((c: any) => c.name);
+      expect(names).toEqual(expect.arrayContaining(["reset", "goal", "compact"]));
+      // second arg is the guild id (instant guild registration)
+      expect(mockCommandsSet.mock.calls[0][1]).toBe("g1");
+    });
+
+    it("routes a slash command to the handler as a text command", async () => {
+      const handler = vi.fn();
+      connector.onMessage(handler);
+      await connector.start();
+      const interactionCreate = lastClient().handlers.interactionCreate;
+
+      const reply = vi.fn().mockResolvedValue(undefined);
+      await interactionCreate({
+        isButton: () => false,
+        isChatInputCommand: () => true,
+        commandName: "goal",
+        options: { getString: (k: string) => (k === "text" ? "ship it" : null) },
+        guildId: "g1",
+        channelId: "chan1",
+        channel: textChannel,
+        user: { id: "u1", username: "pipe" },
+        reply,
+      });
+
+      expect(reply).toHaveBeenCalled();
+      expect(handler).toHaveBeenCalledOnce();
+      const msg: IncomingMessage = handler.mock.calls[0][0];
+      expect(msg.text).toBe("/goal ship it");
+      expect((msg.transportMeta as any).slashCommand).toBe(true);
+    });
+
+    it("builds a bare command when no option is given", async () => {
+      const handler = vi.fn();
+      connector.onMessage(handler);
+      await connector.start();
+      const interactionCreate = lastClient().handlers.interactionCreate;
+      await interactionCreate({
+        isButton: () => false,
+        isChatInputCommand: () => true,
+        commandName: "reset",
+        options: { getString: () => null },
+        guildId: "g1",
+        channelId: "chan1",
+        channel: textChannel,
+        user: { id: "u1", username: "pipe" },
+        reply: vi.fn().mockResolvedValue(undefined),
+      });
+      expect((handler.mock.calls[0][0] as IncomingMessage).text).toBe("/reset");
     });
   });
 

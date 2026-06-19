@@ -67,6 +67,19 @@ export class TelegramConnector implements Connector {
       this.bot.startPolling();
       this.started = true;
       this.lastError = null;
+      // Populate Telegram's "/" command menu. Telegram delivers these as normal
+      // "/cmd" text messages, which the session manager already handles.
+      try {
+        await (this.bot as any).setMyCommands([
+          { command: "new", description: "เริ่ม session ใหม่" },
+          { command: "reset", description: "รีเซ็ต session + ล้างเป้าหมาย" },
+          { command: "compact", description: "บีบอัดบทสนทนา ลด context" },
+          { command: "goal", description: "ตั้ง/ดู/ล้างเป้าหมาย" },
+          { command: "status", description: "ดูสถานะ session" },
+        ]);
+      } catch (err) {
+        logger.warn(`[telegram] setMyCommands failed: ${err instanceof Error ? err.message : err}`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.lastError = msg;

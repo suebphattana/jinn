@@ -65,6 +65,7 @@ import { reloadScheduler } from "../cron/scheduler.js";
 import { runCronJob } from "../cron/runner.js";
 import QRCode from "qrcode";
 import { startDeviceAuth, startPasteCodeAuth, submitAuthCode, getAuthStatus, supportsAuth, authMode, cancelDeviceAuth } from "./engine-auth.js";
+import { writeRejoinNotice } from "./rejoin.js";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, handleSessionAttachment, fileIdsToMedia, rehomeAttachmentsToSession, ensureFilesDir } from "./files.js";
 import { readJsonBody, readBodyRaw } from "./http-helpers.js";
@@ -1418,6 +1419,31 @@ export async function handleApiRequest(
       await refreshGrokModels(config);
       context.emit("engines:updated", {});
       return json(res, { default: config.engines.default, engines: getModelRegistry(config) });
+    }
+
+    // POST /api/restart — record an optional "I'm back" notice for the given
+    // channel, then exit so the process supervisor (systemd Restart=always)
+    // restarts the gateway. Portable, no sudo: the agent that restarts itself
+    // gets pinged when the gateway is back. Body: { channel, connector?, message? }.
+    if (method === "POST" && pathname === "/api/restart") {
+      const _p = await readJsonBody(req, res);
+      if (!_p.ok) return;
+      const body = _p.body as { channel?: string; connector?: string; message?: string };
+      if (body.channel && body.message) {
+        try {
+          writeRejoinNotice({
+            connector: body.connector || "discord",
+            channel: body.channel,
+            text: body.message,
+          });
+        } catch (err) {
+          logger.warn(`Failed to write rejoin notice: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      json(res, { status: "restarting" });
+      logger.info("Restart requested via API — exiting for supervisor restart");
+      setTimeout(() => process.exit(0), 250);
+      return;
     }
 
     // GET /api/engines/:name/auth-status — auth state for the settings UI

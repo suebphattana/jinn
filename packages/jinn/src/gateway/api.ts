@@ -1498,7 +1498,19 @@ export async function handleApiRequest(
       context.reloadConfig?.(); // refresh in-memory config now (don't wait on the watcher)
       invalidateModelRegistry(); // models/engines may have changed — rebuild on next read
       logger.info("Config updated via API");
-      return json(res, { status: "ok" });
+      // If the connectors section changed, (re)start connectors immediately so a
+      // connector added/edited via the settings UI begins responding without a
+      // manual restart. Best-effort — failures are surfaced in the response.
+      let connectors: { started: string[]; stopped: string[]; errors: string[] } | undefined;
+      if (body.connectors !== undefined && context.reloadConnectorInstances) {
+        try {
+          connectors = await context.reloadConnectorInstances();
+          logger.info(`Connectors reloaded after config save: ${JSON.stringify(connectors)}`);
+        } catch (err) {
+          logger.error(`Connector reload after config save failed: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      return json(res, { status: "ok", ...(connectors ? { connectors } : {}) });
     }
 
     // GET /api/logs

@@ -128,6 +128,20 @@ export function buildContext(opts: {
       content: buildIdentity(portalName, operatorName, language),
       summary: `# You are ${portalName}\nYour working directory is \`~/.jinn\` (${JINN_HOME}).`,
     });
+
+    // ── ESSENTIAL: Persona (COO only) ─────────────────────────
+    // Name/gender/personality/voice injected into EVERY session so a fresh
+    // connector (Telegram, web, …) presents itself consistently — not just the
+    // session that happened to set it. Never trimmed.
+    const persona = opts.config?.portal?.persona;
+    if (persona && persona.trim()) {
+      sections.push({
+        tier: Tier.ESSENTIAL,
+        marker: "# Persona",
+        content: `# Persona\n${persona.trim()}`,
+        summary: `# Persona\n${persona.trim()}`,
+      });
+    }
   }
 
   // ── ESSENTIAL: Voice orchestrator persona (source:"talk" only) ──

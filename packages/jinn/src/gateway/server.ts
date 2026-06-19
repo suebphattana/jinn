@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { JinnConfig, Connector, Employee, Engine } from "../shared/types.js";
-import { loadConfig, normalizeClaudeEngineConfig } from "../shared/config.js";
+import { loadConfig, normalizeClaudeEngineConfig, effectiveConnectorInstances } from "../shared/config.js";
 import { invalidateModelRegistry, refreshGrokModels, refreshPiModels } from "../shared/models.js";
 import { configureLogger, logger } from "../shared/logger.js";
 import { initDb, recoverStaleSessions, recoverStaleQueueItems, clearAllPartialMessages, getInterruptedSessions, listSessions, updateSession, getSession } from "../sessions/registry.js";
@@ -597,13 +597,9 @@ export async function startGateway(
     const stopped: string[] = [];
     const errors: string[] = [];
 
-    // Find instance-based connectors (keys that came from instances array)
-    const instanceIds = new Set<string>();
-    if (freshConfig.connectors?.instances) {
-      for (const inst of freshConfig.connectors.instances) {
-        if (inst.id) instanceIds.add(inst.id);
-      }
-    }
+    // Unified instance list: explicit instances + top-level connector blocks
+    // (what the settings UI writes), so a UI-added connector starts on reload.
+    const effectiveInstances = effectiveConnectorInstances(freshConfig);
 
     // Stop old instance connectors that are no longer in config or need refresh
     for (const [id, connector] of connectorMap.entries()) {
@@ -623,8 +619,8 @@ export async function startGateway(
     }
 
     // Start new instances from fresh config
-    if (freshConfig.connectors?.instances) {
-      for (const instance of freshConfig.connectors.instances) {
+    {
+      for (const instance of effectiveInstances) {
         const { id, type, employee, ...typeConfig } = instance;
         if (!id || !type) continue;
         if (connectorMap.has(id)) continue;

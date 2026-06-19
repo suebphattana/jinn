@@ -412,6 +412,9 @@ export interface PortalConfig {
   language?: string;
   onboarded?: boolean;
   setupComplete?: boolean;
+  /** Optional persona injected into every COO session's system prompt — name,
+   *  gender, personality, voice. Governs how the assistant presents itself. */
+  persona?: string;
 }
 
 /**

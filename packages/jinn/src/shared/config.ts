@@ -5,6 +5,52 @@ import type { JinnConfig } from "./types.js";
 
 type ClaudeEngineConfig = JinnConfig["engines"]["claude"];
 
+export interface ConnectorInstanceSpec {
+  id: string;
+  type: string;
+  employee?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Unify the two ways connectors can be configured into a single instance list:
+ *   1. `connectors.instances` — the explicit array.
+ *   2. `connectors.<type>` top-level blocks (discord/telegram/slack/whatsapp) —
+ *      what the settings UI writes. Synthesized as an instance with id = type.
+ *
+ * Explicit instances win on id collision. This lets the gateway start/reload a
+ * connector regardless of which shape it was saved in, so adding one through the
+ * web UI takes effect on reload without a full restart.
+ */
+export function effectiveConnectorInstances(config: JinnConfig): ConnectorInstanceSpec[] {
+  const out: ConnectorInstanceSpec[] = [];
+  const seen = new Set<string>();
+
+  const connectors = (config.connectors ?? {}) as Record<string, any>;
+
+  for (const inst of connectors.instances ?? []) {
+    if (inst?.id && inst?.type) {
+      out.push(inst as ConnectorInstanceSpec);
+      seen.add(inst.id);
+    }
+  }
+
+  for (const type of ["discord", "telegram", "slack", "whatsapp"] as const) {
+    const block = connectors[type];
+    if (!block || typeof block !== "object" || seen.has(type)) continue;
+    // Require credentials so an empty UI block (e.g. {botToken:''}) is ignored.
+    const hasCreds =
+      (typeof block.botToken === "string" && block.botToken.length > 0) ||
+      (typeof block.appToken === "string" && block.appToken.length > 0) ||
+      type === "whatsapp"; // whatsapp authenticates via QR, no token
+    if (!hasCreds) continue;
+    out.push({ ...block, id: type, type });
+    seen.add(type);
+  }
+
+  return out;
+}
+
 export function normalizeClaudeEngineConfig(raw: ClaudeEngineConfig): Required<Pick<ClaudeEngineConfig, "maxLivePtys">> & ClaudeEngineConfig {
   return {
     ...raw,

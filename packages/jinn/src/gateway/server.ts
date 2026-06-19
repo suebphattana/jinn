@@ -21,6 +21,7 @@ import { PiEngine } from "../engines/pi.js";
 import { GrokEngine } from "../engines/grok.js";
 import { GrokInteractiveEngine } from "../engines/grok-interactive.js";
 import { OpenRouterEngine } from "../engines/openrouter.js";
+import { flushRejoinNotice } from "./rejoin.js";
 import type { PtyViewEngine } from "../engines/pty-view-engine.js";
 import { HookRegistry } from "./hook-registry.js";
 import { writeGatewayInfo, readGatewayInfo, updateGatewayPtyPids } from "./gateway-info.js";
@@ -593,6 +594,10 @@ export async function startGateway(
   }
 
   sessionManager.setConnectorProvider(() => connectorMap);
+
+  // Post a deterministic "I'm back" notice if a restart left a rejoin marker.
+  // Fire-and-forget: waits for the connector to come up, then sends directly.
+  void flushRejoinNotice(connectorMap);
 
   // Reload connector instances from config (stop old instances, start new ones)
   async function reloadConnectorInstances(): Promise<{ started: string[]; stopped: string[]; errors: string[] }> {

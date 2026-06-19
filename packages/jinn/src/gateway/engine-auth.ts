@@ -77,6 +77,43 @@ interface AuthState {
   term?: pty.IPty;
   baselineMtime?: number;
   startedAt?: number;
+  /** Accumulated PTY output for the paste-code flow (token is scraped from it). */
+  buf?: string;
+}
+
+/** Extract a Claude long-lived OAuth token from setup-token output. The TUI may
+ *  soft-wrap it, so fall back to a whitespace-stripped match. */
+export function extractOAuthToken(raw: string): string | undefined {
+  const clean = stripAnsi(raw);
+  const direct = clean.match(/sk-ant-oat[0-9]*-[A-Za-z0-9_-]+/);
+  if (direct && direct[0].length >= 40) return direct[0];
+  const compact = clean.replace(/\s+/g, "");
+  const wrapped = compact.match(/sk-ant-oat[0-9]*-[A-Za-z0-9_-]+/);
+  return wrapped && wrapped[0].length >= 40 ? wrapped[0] : undefined;
+}
+
+/** Write a Claude credentials file the engine can read, from a captured token.
+ *  `claude setup-token` prints the token but doesn't persist it — so we do. */
+export function writeClaudeCredentials(engine: string, token: string): boolean {
+  const file = authFilePath(engine);
+  if (!file) return false;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const payload = {
+      claudeAiOauth: {
+        accessToken: token,
+        refreshToken: "",
+        expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
+        scopes: ["user:inference", "user:profile"],
+        subscriptionType: "max",
+      },
+    };
+    fs.writeFileSync(file, JSON.stringify(payload), { mode: 0o600 });
+    return true;
+  } catch (err) {
+    logger.warn(`Failed to write claude credentials: ${err instanceof Error ? err.message : err}`);
+    return false;
+  }
 }
 
 const states = new Map<string, AuthState>();
@@ -232,7 +269,7 @@ export function startPasteCodeAuth(engine: string, bin: string): Promise<{ url: 
     try {
       term = pty.spawn(bin, ["setup-token"], {
         name: "xterm-256color",
-        cols: 100,
+        cols: 400, // wide so the long-lived token isn't soft-wrapped across lines
         rows: 30,
         env: process.env as Record<string, string>,
       });
@@ -246,15 +283,16 @@ export function startPasteCodeAuth(engine: string, bin: string): Promise<{ url: 
       term,
       baselineMtime: fileMtime(authFilePath(engine)),
       startedAt: Date.now(),
+      buf: "",
     };
     states.set(engine, state);
 
-    let buf = "";
     let settled = false;
     term.onData((d) => {
-      buf += d;
+      // Accumulate on state so submitAuthCode can scrape the token later.
+      state.buf = (state.buf ?? "") + d;
       if (!settled) {
-        const url = parseAuthUrl(buf);
+        const url = parseAuthUrl(state.buf);
         if (url) {
           settled = true;
           state.url = url;
@@ -302,20 +340,35 @@ export function submitAuthCode(engine: string, code: string): Promise<{ status: 
 
   return new Promise((resolve) => {
     const tick = setInterval(() => {
-      const mtime = fileMtime(authFile);
-      const succeeded = mtime > baseline;
-      const exited = !state.term;
-      if (succeeded) {
+      // Primary path: `claude setup-token` prints a long-lived token but never
+      // writes a credentials file — scrape it from the PTY output and write the
+      // file ourselves (the format the claude engine reads).
+      const token = engine === "claude" ? extractOAuthToken(state.buf ?? "") : undefined;
+      if (token) {
+        clearInterval(tick);
+        const wrote = writeClaudeCredentials(engine, token);
+        state.status = wrote ? "connected" : "failed";
+        if (!wrote) state.error = "captured a token but couldn't write credentials";
+        try { state.term?.kill(); } catch { /* ignore */ }
+        state.term = undefined;
+        logger.info(`Engine '${engine}' paste-code auth ${state.status} (token captured)`);
+        resolve(wrote ? { status: "connected" } : { status: "failed", error: state.error });
+        return;
+      }
+      // Fallback: some CLI versions write the credentials file directly.
+      if (fileMtime(authFile) > baseline) {
         clearInterval(tick);
         state.status = "connected";
         try { state.term?.kill(); } catch { /* ignore */ }
         state.term = undefined;
-        logger.info(`Engine '${engine}' paste-code auth connected`);
+        logger.info(`Engine '${engine}' paste-code auth connected (credentials file)`);
         resolve({ status: "connected" });
-      } else if (exited || Date.now() > deadline) {
+        return;
+      }
+      if (!state.term || Date.now() > deadline) {
         clearInterval(tick);
         state.status = "failed";
-        state.error = exited ? "login process exited without writing credentials" : "timed out after submitting code";
+        state.error = !state.term ? "login process exited without completing" : "timed out after submitting code";
         resolve({ status: "failed", error: state.error });
       }
     }, 1000);

@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { parseDeviceAuth, supportsDeviceAuth, parseAuthUrl, authMode, supportsAuth } from "../engine-auth.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { parseDeviceAuth, supportsDeviceAuth, parseAuthUrl, authMode, supportsAuth, extractOAuthToken, writeClaudeCredentials, isEngineConnected } from "../engine-auth.js";
 
 describe("parseDeviceAuth", () => {
   it("extracts url + code from real codex --device-auth output", () => {
@@ -61,6 +64,55 @@ describe("authMode / supportsAuth", () => {
   it("unknown engines have no auth", () => {
     expect(authMode("grok")).toBeNull();
     expect(supportsAuth("grok")).toBe(false);
+  });
+});
+
+describe("extractOAuthToken (Claude setup-token)", () => {
+  it("extracts a token printed on one line", () => {
+    const out = "Success! Your token:\n  sk-ant-oat01-AbCdEf0123456789_-XYZabcdef0123456789ghijklmnop\n";
+    expect(extractOAuthToken(out)).toBe(
+      "sk-ant-oat01-AbCdEf0123456789_-XYZabcdef0123456789ghijklmnop",
+    );
+  });
+
+  it("recovers a soft-wrapped token (whitespace fallback)", () => {
+    const wrapped =
+      "sk-ant-oat01-AbCdEf0123456789_-XYZabcdef01234\n56789ghijklmnopQRSTUVWXYZ0123456789";
+    const token = extractOAuthToken(wrapped);
+    expect(token?.startsWith("sk-ant-oat01-")).toBe(true);
+    expect(token).not.toMatch(/\s/);
+    expect(token!.length).toBeGreaterThan(40);
+  });
+
+  it("ignores short false positives / unrelated text", () => {
+    expect(extractOAuthToken("no token here, just sk-ant-oat01-short")).toBeUndefined();
+    expect(extractOAuthToken("loading…")).toBeUndefined();
+  });
+});
+
+describe("writeClaudeCredentials", () => {
+  let dir: string;
+  let prev: string | undefined;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "jinn-cred-"));
+    prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes a claudeAiOauth credentials file the engine can read", () => {
+    const ok = writeClaudeCredentials("claude", "sk-ant-oat01-TESTTOKEN");
+    expect(ok).toBe(true);
+    expect(isEngineConnected("claude")).toBe(true);
+    const json = JSON.parse(fs.readFileSync(path.join(dir, ".credentials.json"), "utf8"));
+    expect(json.claudeAiOauth.accessToken).toBe("sk-ant-oat01-TESTTOKEN");
+    expect(json.claudeAiOauth.scopes).toContain("user:inference");
+    expect(json.claudeAiOauth.subscriptionType).toBe("max");
+    expect(json.claudeAiOauth.expiresAt).toBeGreaterThan(Date.now());
   });
 });
 

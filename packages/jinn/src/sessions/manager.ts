@@ -21,6 +21,7 @@ import {
 } from "./registry.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "./callbacks.js";
 import { buildContext } from "./context.js";
+import { getGoal, setGoal, clearGoal } from "./goal-store.js";
 import { SessionQueue } from "./queue.js";
 import { JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
@@ -328,6 +329,14 @@ export class SessionManager {
       // so Claude can resume with full context when it comes back online.
       const syncSinceIso = (session.transportMeta as any)?.claudeSyncSince;
       let promptToRun = msg.text;
+
+      // Ongoing goal (set via /goal): prepend a concise reminder so the COO
+      // keeps working toward it across turns. Only the engine prompt is
+      // augmented — the stored user message stays verbatim.
+      const ongoingGoal = getGoal(session.sessionKey);
+      if (ongoingGoal) {
+        promptToRun = `[Ongoing goal — keep working toward this until it's done: ${ongoingGoal}]\n\n${promptToRun}`;
+      }
       const syncSinceMs = typeof syncSinceIso === "string" ? new Date(syncSinceIso).getTime() : NaN;
       const syncRequested = session.engine === "claude" && typeof syncSinceIso === "string" && Number.isFinite(syncSinceMs);
       if (syncRequested) {
@@ -725,6 +734,48 @@ export class SessionManager {
       await connector.replyMessage(target, "Session reset. Starting fresh.");
       logger.info(`Session reset for ${msg.sessionKey}`);
       return true;
+    }
+
+    // /reset — alias for /new: tear down the session and start fresh. Also
+    // clears any ongoing goal so a fresh start isn't silently steered.
+    if (text === "/reset" || text.startsWith("/reset ")) {
+      this.resetSession(msg.sessionKey);
+      clearGoal(msg.sessionKey);
+      await connector.replyMessage(target, "🔄 รีเซ็ต session แล้ว เริ่มใหม่ได้เลยค่ะ");
+      logger.info(`Session reset (/reset) for ${msg.sessionKey}`);
+      return true;
+    }
+
+    // /goal — set / show / clear an ongoing objective. While set, the manager
+    // prepends a reminder to each turn's prompt (see runSession).
+    if (text === "/goal" || text.startsWith("/goal ")) {
+      const arg = text.slice("/goal".length).trim();
+      if (!arg) {
+        const goal = getGoal(msg.sessionKey);
+        await connector.replyMessage(
+          target,
+          goal
+            ? `🎯 เป้าหมายปัจจุบัน:\n${goal}`
+            : "ยังไม่มีเป้าหมายค่ะ ตั้งด้วย `/goal <ข้อความ>` แล้วแว่นจะทำไปจนเสร็จเลย",
+        );
+        return true;
+      }
+      if (arg === "clear" || arg === "reset" || arg === "done") {
+        const had = clearGoal(msg.sessionKey);
+        await connector.replyMessage(target, had ? "🎯 ล้างเป้าหมายแล้วค่ะ" : "ไม่มีเป้าหมายให้ล้างค่ะ");
+        return true;
+      }
+      setGoal(msg.sessionKey, arg);
+      await connector.replyMessage(target, `🎯 ตั้งเป้าหมายแล้ว — แว่นจะทำไปเรื่อย ๆ จนสำเร็จค่ะ:\n${arg}`);
+      logger.info(`Goal set for ${msg.sessionKey}`);
+      return true;
+    }
+
+    // /compact — reduce context size. Acknowledge here, then fall through so the
+    // Claude engine's native-command path runs the actual /compact.
+    if (text === "/compact" || text.startsWith("/compact ")) {
+      await connector.replyMessage(target, "🗜️ กำลังบีบอัดบทสนทนา (compact) ให้ค่ะ…");
+      return false;
     }
 
     if (text === "/status" || text.startsWith("/status ")) {

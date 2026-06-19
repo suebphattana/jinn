@@ -182,7 +182,9 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   }
   args.push(prompt); // positional — MUST precede variadic --mcp-config
 
-  args.push("--chrome");
+  const printMode = process.env.JINN_CLAUDE_PRINT_MODE === "1";
+  if (printMode) args.push("--print", "--output-format", "text");
+  else args.push("--chrome");
   if (o.effortLevel && o.effortLevel !== "default") args.push("--effort", o.effortLevel);
   if (o.model) args.push("--model", o.model);
   args.push("--dangerously-skip-permissions");
@@ -454,6 +456,10 @@ function pasteAndSubmit(proc: pty.IPty, text: string): void {
   const payload = neutralizeForPaste(text);
   proc.write(`\x1b[200~${payload}\x1b[201~`);
   setTimeout(() => proc.write("\r"), 50);
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
 }
 
 export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngine {
@@ -869,10 +875,12 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  word-by-word streaming degrades. */
   private async startProxy(jinnSessionId: string): Promise<{ proxy: SsePtyProxy; port: number }> {
     const proxy = new SsePtyProxy(jinnSessionId, (e) => this.handleSseEvent(jinnSessionId, e), {
-      // ALL requests (main + subagent + background tasks) count here — this is
-      // how the gateway knows the CLI is still working after the turn settled.
       onUpstreamActivity: (info) => this.handleUpstreamActivity(jinnSessionId, info),
     });
+    if (process.env.JINN_DISABLE_SSE_PROXY === "1") {
+      logger.warn(`SSE proxy disabled for session ${jinnSessionId} (streaming degraded)`);
+      return { proxy, port: 0 };
+    }
     try {
       const port = await proxy.start();
       return { proxy, port };
@@ -914,6 +922,13 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       // poison it. Identity mismatch => benign cleanup, no interrupt.
       const e = this.active.get(jinnSessionId);
       if (e && e.boundProc === proc) {
+        if (process.env.JINN_CLAUDE_PRINT_MODE === "1") {
+          const recovered = stripAnsi(this.streams.getScrollback(jinnSessionId).toString("utf8")).trim();
+          if (recovered) {
+            e.resolver.completeRecovered(recovered);
+            return;
+          }
+        }
         e.resolver.interrupt("Interrupted: claude process exited");
       }
     });

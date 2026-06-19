@@ -89,6 +89,29 @@ The gateway watches `config.yaml`: connector tokens, engine selection, adminKey,
 authPassword all take effect on write (no restart). Only a code/dist change needs
 a restart. So provisioning can PUT config via the API or write the file directly.
 
+## On-box files & scripts (Linux spin-up checklist)
+
+Everything an instance needs to exist on the droplet, and where it comes from:
+
+| File / artifact | Path | Source | Notes |
+|-----------------|------|--------|-------|
+| Node runtime | e.g. `/opt/node24/bin/node` | image (apt / tarball) | Node 24. The systemd `ExecStart` points at it. |
+| Jinn repo (built) | e.g. `/home/<user>/repos/jinn` with `packages/jinn/dist/` | image (clone our fork + `pnpm install && pnpm build`) | `dist/` must exist; code changes need a rebuild + restart. |
+| `JINN_HOME` data dir | `/home/<user>/jinn-home` | `jinn setup` seeds it from `packages/jinn/template/` | Holds `config.yaml`, `tools/`, `logs/`, `cron/`, `org/`, `skills/`, etc. |
+| **`tools/safe-restart.sh`** | `$JINN_HOME/tools/safe-restart.sh` | shipped in the template → seeded by `jinn setup` | Restart wrapper. **Must be executable** (`chmod +x` — don't assume the copy preserved the bit). Reads `JINN_REJOIN_CHANNEL`; runs `sudo systemctl restart $JINN_SERVICE`. |
+| systemd unit | `/etc/systemd/system/<service>.service` | provisioning writes it | Per the unit contract above (`Restart=always`, `JINN_HOME`, optional `JINN_REJOIN_CHANNEL`). `daemon-reload` after writing. |
+| sudoers drop-in | `/etc/sudoers.d/<name>` | provisioning writes it | NOPASSWD scoped to exactly `systemctl restart <service>` (+ `is-active`/`status`/`daemon-reload` if you health-check). Only needed if the box uses `safe-restart.sh`; the `POST /api/restart` path needs no sudo. |
+| `config.yaml` | `$JINN_HOME/config.yaml` | provisioning writes (NOT baked) | adminKey, authPassword, `gateway.host`, engine, connectors. Hot-reloaded. |
+
+Recommended spin-up order (cloud-init): install Node → clone+build repo →
+`jinn setup` (seeds `$JINN_HOME` incl. `tools/safe-restart.sh`) → write
+`config.yaml` → write systemd unit + sudoers → `daemon-reload` →
+`systemctl enable --now <service>` → verify identity on the port.
+
+> Note: any `.sh` the assistant uses ad-hoc on a specific box (e.g. a
+> `discord-send-file.sh`) is NOT part of spin-up — only `safe-restart.sh` is a
+> required on-box script, and it ships via the template.
+
 ## Out of scope for this repo
 
 The image-build script and the cloud-init live on the provisioning side — they are

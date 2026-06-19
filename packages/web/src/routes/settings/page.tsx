@@ -60,7 +60,7 @@ interface Config {
     }
     discord?: {
       botToken?: string
-      allowFrom?: string | string[]
+      allowFrom?: string | Array<string | number>
       guildId?: string
       channelId?: string
     }
@@ -79,7 +79,7 @@ interface Config {
       type: "discord" | "slack" | "whatsapp" | "telegram"
       employee?: string
       botToken?: string
-      allowFrom?: string | string[]
+      allowFrom?: string | Array<string | number>
       guildId?: string
       channelId?: string
       appToken?: string
@@ -1415,11 +1415,12 @@ export default function SettingsPage() {
                         value={instance.type ?? "discord"}
                         onChange={(v) => {
                           const instances = [...(config.connectors?.instances || [])]
-                          instances[idx] = { ...instances[idx], type: v as "discord" | "slack" | "whatsapp" }
+                          instances[idx] = { ...instances[idx], type: v as "discord" | "telegram" | "slack" | "whatsapp" }
                           updateConfig(["connectors", "instances"], instances)
                         }}
                         options={[
                           { value: "discord", label: "Discord" },
+                          { value: "telegram", label: "Telegram" },
                           { value: "slack", label: "Slack" },
                           { value: "whatsapp", label: "WhatsApp" },
                         ]}
@@ -1485,6 +1486,38 @@ export default function SettingsPage() {
                               updateConfig(["connectors", "instances"], instances)
                             }}
                             placeholder="User IDs, comma-separated (optional)"
+                          />
+                        </FieldRow>
+                      </>
+                    )}
+                    {instance.type === "telegram" && (
+                      <>
+                        <FieldRow label="Bot Token">
+                          <SettingsInput
+                            type="password"
+                            value={instance.botToken ?? ""}
+                            onChange={(v) => {
+                              const instances = [...(config.connectors?.instances || [])]
+                              instances[idx] = { ...instances[idx], botToken: v }
+                              updateConfig(["connectors", "instances"], instances)
+                            }}
+                            placeholder="123456:ABC-DEF..."
+                          />
+                        </FieldRow>
+                        <FieldRow label="Allow From">
+                          <SettingsInput
+                            value={Array.isArray(instance.allowFrom) ? instance.allowFrom.join(", ") : instance.allowFrom ?? ""}
+                            onChange={(v) => {
+                              const instances = [...(config.connectors?.instances || [])]
+                              instances[idx] = {
+                                ...instances[idx],
+                                allowFrom: v.trim()
+                                  ? v.split(",").map((s: string) => Number(s.trim())).filter((n: number) => !isNaN(n))
+                                  : undefined,
+                              }
+                              updateConfig(["connectors", "instances"], instances)
+                            }}
+                            placeholder="Telegram user IDs, comma-separated (optional)"
                           />
                         </FieldRow>
                       </>

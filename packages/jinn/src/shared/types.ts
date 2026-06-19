@@ -555,6 +555,13 @@ export interface JinnConfig {
      *  single header name or a priority-ordered list. Unset = single-user
      *  no-op (sessions default to "web-user", header never read). */
     userHeader?: string | string[];
+    /** Web UI login password, stored as a sha256 hex hash. When unset, the web
+     *  UI requires no login (opt-in). Set/reset via POST /api/admin/reset-password. */
+    authPassword?: string;
+    /** Master admin key (plaintext) for fleet management: authenticates the
+     *  remote password-reset endpoint and lets trusted automation bypass login.
+     *  Held by the operator's external app, never given to end customers. */
+    adminKey?: string;
   };
   engines: {
     default: "claude" | "codex" | "antigravity" | "grok" | "pi" | "openrouter";

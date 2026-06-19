@@ -22,6 +22,7 @@ import { GrokEngine } from "../engines/grok.js";
 import { GrokInteractiveEngine } from "../engines/grok-interactive.js";
 import { OpenRouterEngine } from "../engines/openrouter.js";
 import { flushRejoinNotice } from "./rejoin.js";
+import { isAuthed, isPublicApiPath, authEnabled } from "./auth.js";
 import type { PtyViewEngine } from "../engines/pty-view-engine.js";
 import { HookRegistry } from "./hook-registry.js";
 import { writeGatewayInfo, readGatewayInfo, updateGatewayPtyPids } from "./gateway-info.js";
@@ -872,6 +873,12 @@ export async function startGateway(
 
     // API routes
     if (url.startsWith("/api/")) {
+      const pathname = url.split("?")[0];
+      if (!isPublicApiPath(pathname) && !isAuthed(req, currentConfig)) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
       handleApiRequest(req, res, apiContext);
       return;
     }
@@ -934,6 +941,11 @@ export async function startGateway(
 
   server.on("upgrade", (req, socket, head) => {
     const reqUrl = req.url || "";
+    // Gate websockets behind the same auth as the API (browser sends the cookie).
+    if (authEnabled(currentConfig) && !isAuthed(req, currentConfig)) {
+      socket.destroy();
+      return;
+    }
     if (reqUrl === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req);

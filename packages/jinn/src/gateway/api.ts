@@ -66,6 +66,7 @@ import { runCronJob } from "../cron/runner.js";
 import QRCode from "qrcode";
 import { startDeviceAuth, startPasteCodeAuth, submitAuthCode, getAuthStatus, supportsAuth, authMode, cancelDeviceAuth } from "./engine-auth.js";
 import { writeRejoinNotice } from "./rejoin.js";
+import { hashPassword, sessionToken, safeEqual, isAuthed, authEnabled, SESSION_COOKIE, ADMIN_HEADER } from "./auth.js";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, handleSessionAttachment, fileIdsToMedia, rehomeAttachmentsToSession, ensureFilesDir } from "./files.js";
 import { readJsonBody, readBodyRaw } from "./http-helpers.js";
@@ -372,6 +373,7 @@ export function isSensitiveConfigKey(key: string): boolean {
     normalized.includes("apikey") ||
     normalized.includes("privatekey") ||
     normalized.includes("password") ||
+    normalized.includes("adminkey") ||
     normalized === "authorization"
   );
 }
@@ -1519,6 +1521,69 @@ export async function handleApiRequest(
     if (method === "POST" && pathname === "/api/engine-limits/refresh") {
       const engine = url.searchParams.get("engine") || undefined;
       return json(res, await collectEngineLimits(context.getConfig(), { engine }));
+    }
+
+    // GET /api/auth/status — public: does this gateway require login, and is the
+    // caller already authenticated? The web UI uses this to decide whether to
+    // show the login screen.
+    if (method === "GET" && pathname === "/api/auth/status") {
+      const cfg = context.getConfig();
+      return json(res, { required: authEnabled(cfg), authed: isAuthed(req, cfg) });
+    }
+
+    // POST /api/login — public: exchange the shared password for a session cookie.
+    if (method === "POST" && pathname === "/api/login") {
+      const cfg = context.getConfig();
+      if (!authEnabled(cfg)) return json(res, { ok: true }); // no login required
+      const _p = await readJsonBody(req, res);
+      if (!_p.ok) return;
+      const password = (_p.body as { password?: string })?.password ?? "";
+      if (!safeEqual(hashPassword(password), cfg.gateway.authPassword)) {
+        return json(res, { ok: false, error: "Incorrect password" }, 401);
+      }
+      const token = sessionToken(cfg.gateway.authPassword!);
+      res.setHeader(
+        "Set-Cookie",
+        `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`,
+      );
+      return json(res, { ok: true });
+    }
+
+    // POST /api/logout — clear the session cookie.
+    if (method === "POST" && pathname === "/api/logout") {
+      res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`);
+      return json(res, { ok: true });
+    }
+
+    // POST /api/admin/reset-password — remote password reset for fleet management.
+    // Authenticated by the master admin key (header), NOT the login cookie — so
+    // the operator's external app can (re)set or clear a customer instance's web
+    // password. Empty/null password disables login. Requires adminKey configured.
+    if (method === "POST" && pathname === "/api/admin/reset-password") {
+      const cfg = context.getConfig();
+      const adminKey = cfg.gateway.adminKey;
+      const provided = req.headers[ADMIN_HEADER];
+      if (!adminKey || typeof provided !== "string" || !safeEqual(provided, adminKey)) {
+        return json(res, { ok: false, error: "forbidden" }, 403);
+      }
+      const _p = await readJsonBody(req, res);
+      if (!_p.ok) return;
+      const password = (_p.body as { password?: string | null })?.password;
+      let existing: Record<string, unknown> = {};
+      try {
+        existing = yaml.load(fs.readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown> || {};
+      } catch { /* start fresh */ }
+      const gw = (existing.gateway as Record<string, unknown>) || {};
+      if (password && password.trim()) {
+        gw.authPassword = hashPassword(password);
+      } else {
+        delete gw.authPassword; // clearing disables login
+      }
+      existing.gateway = gw;
+      saveConfigAtomic(existing);
+      context.reloadConfig?.();
+      logger.info(`Web password ${password && password.trim() ? "reset" : "cleared"} via admin key`);
+      return json(res, { ok: true, loginRequired: !!(password && password.trim()) });
     }
 
     // GET /api/instructions — the shared operating manual (CLAUDE.md / AGENTS.md).

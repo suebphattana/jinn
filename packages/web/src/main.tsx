@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ClientProviders } from './routes/client-providers'
+import { AuthGate } from './routes/auth-gate'
 import './routes/globals.css'
 
 const ChatPage = lazy(() => import('./routes/chat/page'))
@@ -19,6 +20,7 @@ const TalkPage = lazy(() => import('./routes/talk/page'))
 function App() {
   return (
     <BrowserRouter>
+      <AuthGate>
       <ClientProviders>
         <Suspense fallback={null}>
           <Routes>
@@ -37,6 +39,7 @@ function App() {
           </Routes>
         </Suspense>
       </ClientProviders>
+      </AuthGate>
     </BrowserRouter>
   )
 }

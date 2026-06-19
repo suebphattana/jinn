@@ -35,6 +35,7 @@ import { checkBudget } from "../gateway/budgets.js";
 import { markTranscriptSyncedThrough } from "../gateway/external-turns.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { handleRateLimit } from "./rate-limit-handler.js";
+import { LiveStatusStreamer, type LiveStatusMode } from "./live-status.js";
 
 export interface RouteOptions {
   employee?: Employee;
@@ -270,6 +271,20 @@ export class SessionManager {
       await connector.setTypingStatus(target.channel, threadTs, "is thinking...").catch(() => {});
     }
 
+    // Live progress streamer (Hermes-style step narration customers see). On by
+    // default; opt out via config.liveStatus.enabled=false. Only for
+    // edit-capable connectors (Discord) and never for cron turns. Declared
+    // before the try block so the catch/finally can finish() it.
+    const liveStatusCfg = this.config.liveStatus ?? {};
+    const liveStatusEnabled =
+      decorateMessages &&
+      liveStatusCfg.enabled !== false &&
+      capabilities.messageEdits === true;
+    const liveStatusMode: LiveStatusMode = liveStatusCfg.mode === "append" ? "append" : "edit";
+    const liveStatus = liveStatusEnabled
+      ? new LiveStatusStreamer(connector, target, liveStatusMode)
+      : undefined;
+
     // Resolve MCP config before try block so it's accessible in catch for cleanup
     let mcpConfigPath: string | undefined;
 
@@ -405,6 +420,7 @@ export class SessionManager {
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
         source: session.source,
+        onStream: liveStatus ? (delta) => liveStatus.handle(delta) : undefined,
         onLateRecovery: ({ result: lateText, sessionId: engineSid }) => {
           const live = getSession(session.id);
           if (!live || live.status === "running") return;
@@ -423,6 +439,9 @@ export class SessionManager {
           logger.info(`Session ${session.id} recovered by late Stop after a failed turn`);
         },
       });
+
+      // Turn resolved — stop narrating progress before the final reply lands.
+      liveStatus?.finish();
 
       const wasInterrupted = result.error?.startsWith("Interrupted");
 
@@ -707,6 +726,9 @@ export class SessionManager {
         await connector.removeReaction(target, "hourglass_flowing_sand").catch(() => {});
       }
     } finally {
+      // Idempotent: ensure the live streamer is stopped on every exit path
+      // (rate-limit return, error, interrupt).
+      liveStatus?.finish();
       // Clean up temp attachment files downloaded from Slack
       for (const filePath of attachments) {
         try {

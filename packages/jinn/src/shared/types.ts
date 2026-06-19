@@ -596,6 +596,17 @@ export interface JinnConfig {
     instances?: ConnectorInstance[];
   };
   logging: { file: boolean; stdout: boolean; level: string };
+  /** Live progress streaming to chat connectors — narrate each tool call (with
+   *  an abbreviated input) as work happens, so customers see what the assistant
+   *  is doing instead of only a typing indicator. On by default for connectors
+   *  that support message edits (e.g. Discord). */
+  liveStatus?: {
+    /** Master switch. Default true. Set false to opt out. */
+    enabled?: boolean;
+    /** "edit" = keep editing one status message (default); "append" = post a
+     *  new message per batch of tool calls. */
+    mode?: "edit" | "append";
+  };
   mcp?: McpGlobalConfig;
   sessions?: {
     maxDurationMinutes?: number;

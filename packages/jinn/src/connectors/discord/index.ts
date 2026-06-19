@@ -39,18 +39,18 @@ import {
 /** Native slash commands registered with Discord so they show in the "/" picker.
  *  Each maps to the same text command the session manager already handles. */
 const SLASH_COMMANDS: ApplicationCommandDataResolvable[] = [
-  { name: "new", description: "เริ่ม session ใหม่ (ล้างบทสนทนา)" },
-  { name: "reset", description: "รีเซ็ต session เริ่มใหม่ + ล้างเป้าหมาย" },
-  { name: "compact", description: "บีบอัดบทสนทนา ลดขนาด context" },
-  { name: "status", description: "ดูสถานะ session ปัจจุบัน" },
-  { name: "doctor", description: "ตรวจสุขภาพ engine และ connector" },
+  { name: "new", description: "Start a fresh session (clears the conversation)" },
+  { name: "reset", description: "Reset the session and clear any goal" },
+  { name: "compact", description: "Compact the conversation to reduce context" },
+  { name: "status", description: "Show current session status" },
+  { name: "doctor", description: "Check engine and connector health" },
   {
     name: "goal",
-    description: "ตั้ง / ดู / ล้าง เป้าหมายของ session",
+    description: "Set / show / clear an ongoing goal",
     options: [
       {
         name: "text",
-        description: "เป้าหมาย (เว้นว่าง = ดูเป้าหมายปัจจุบัน, พิมพ์ 'clear' = ล้าง)",
+        description: "Goal text (empty to view, 'clear' to remove)",
         type: 3, // STRING
         required: false,
       },
@@ -58,18 +58,18 @@ const SLASH_COMMANDS: ApplicationCommandDataResolvable[] = [
   },
   {
     name: "model",
-    description: "เปลี่ยนโมเดลของ session นี้",
+    description: "Change this session's model",
     options: [
-      { name: "name", description: "ชื่อโมเดล เช่น opus / sonnet", type: 3, required: true },
+      { name: "name", description: "Model name, e.g. opus / sonnet", type: 3, required: true },
     ],
   },
   {
     name: "effort",
-    description: "ตั้งระดับ effort (reasoning) ของ session — มีผลข้อความถัดไป",
+    description: "Set the reasoning-effort level for this session",
     options: [
       {
         name: "level",
-        description: "ระดับ effort (เว้นว่าง = ดู/เลือกจากปุ่ม)",
+        description: "Effort level (empty to view / pick from buttons)",
         type: 3, // STRING
         required: false,
         choices: [

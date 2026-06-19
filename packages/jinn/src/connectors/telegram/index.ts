@@ -71,12 +71,12 @@ export class TelegramConnector implements Connector {
       // "/cmd" text messages, which the session manager already handles.
       try {
         await (this.bot as any).setMyCommands([
-          { command: "new", description: "เริ่ม session ใหม่" },
-          { command: "reset", description: "รีเซ็ต session + ล้างเป้าหมาย" },
-          { command: "compact", description: "บีบอัดบทสนทนา ลด context" },
-          { command: "goal", description: "ตั้ง/ดู/ล้างเป้าหมาย" },
-          { command: "effort", description: "ตั้งระดับ effort (reasoning)" },
-          { command: "status", description: "ดูสถานะ session" },
+          { command: "new", description: "Start a fresh session" },
+          { command: "reset", description: "Reset session and clear goal" },
+          { command: "compact", description: "Compact the conversation" },
+          { command: "goal", description: "Set / show / clear a goal" },
+          { command: "effort", description: "Set reasoning-effort level" },
+          { command: "status", description: "Show session status" },
         ]);
       } catch (err) {
         logger.warn(`[telegram] setMyCommands failed: ${err instanceof Error ? err.message : err}`);

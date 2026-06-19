@@ -741,7 +741,7 @@ export class SessionManager {
     if (text === "/reset" || text.startsWith("/reset ")) {
       this.resetSession(msg.sessionKey);
       clearGoal(msg.sessionKey);
-      await connector.replyMessage(target, "🔄 รีเซ็ต session แล้ว เริ่มใหม่ได้เลยค่ะ");
+      await connector.replyMessage(target, "Session reset and goal cleared. Starting fresh.");
       logger.info(`Session reset (/reset) for ${msg.sessionKey}`);
       return true;
     }
@@ -755,18 +755,18 @@ export class SessionManager {
         await connector.replyMessage(
           target,
           goal
-            ? `🎯 เป้าหมายปัจจุบัน:\n${goal}`
-            : "ยังไม่มีเป้าหมายค่ะ ตั้งด้วย `/goal <ข้อความ>` แล้วแว่นจะทำไปจนเสร็จเลย",
+            ? `🎯 Current goal:\n${goal}`
+            : "No goal set. Use `/goal <text>` to set one — it'll be pursued until done.",
         );
         return true;
       }
       if (arg === "clear" || arg === "reset" || arg === "done") {
         const had = clearGoal(msg.sessionKey);
-        await connector.replyMessage(target, had ? "🎯 ล้างเป้าหมายแล้วค่ะ" : "ไม่มีเป้าหมายให้ล้างค่ะ");
+        await connector.replyMessage(target, had ? "🎯 Goal cleared." : "No goal to clear.");
         return true;
       }
       setGoal(msg.sessionKey, arg);
-      await connector.replyMessage(target, `🎯 ตั้งเป้าหมายแล้ว — แว่นจะทำไปเรื่อย ๆ จนสำเร็จค่ะ:\n${arg}`);
+      await connector.replyMessage(target, `🎯 Goal set — I'll keep working toward it:\n${arg}`);
       logger.info(`Goal set for ${msg.sessionKey}`);
       return true;
     }
@@ -774,7 +774,7 @@ export class SessionManager {
     // /compact — reduce context size. Acknowledge here, then fall through so the
     // Claude engine's native-command path runs the actual /compact.
     if (text === "/compact" || text.startsWith("/compact ")) {
-      await connector.replyMessage(target, "🗜️ กำลังบีบอัดบทสนทนา (compact) ให้ค่ะ…");
+      await connector.replyMessage(target, "🗜️ Compacting the conversation…");
       return false;
     }
 
@@ -790,7 +790,7 @@ export class SessionManager {
       if (valid.length === 0) {
         await connector.replyMessage(
           target,
-          `โมเดลปัจจุบัน (${session.model ?? session.engine}) ไม่รองรับการตั้ง effort ค่ะ`,
+          `The current model (${session.model ?? session.engine}) doesn't support effort levels.`,
         );
         return true;
       }
@@ -799,19 +799,19 @@ export class SessionManager {
       if (!arg) {
         await connector.replyMessage(
           target,
-          `⚡ effort ปัจจุบัน: **${session.effortLevel ?? "default"}**\nเลือกระดับได้เลยค่ะ:\n${buttons}`,
+          `⚡ Current effort: **${session.effortLevel ?? "default"}**\nChoose a level:\n${buttons}`,
         );
         return true;
       }
       if (!valid.includes(arg)) {
         await connector.replyMessage(
           target,
-          `"${arg}" ใช้กับโมเดลนี้ไม่ได้ค่ะ — เลือก: ${valid.join(", ")}\n${buttons}`,
+          `"${arg}" isn't valid for this model — choose: ${valid.join(", ")}\n${buttons}`,
         );
         return true;
       }
       updateSession(session.id, { effortLevel: arg, lastActivity: new Date().toISOString() });
-      await connector.replyMessage(target, `⚡ ตั้ง effort = **${arg}** แล้วค่ะ (มีผลกับข้อความถัดไป)`);
+      await connector.replyMessage(target, `⚡ Effort set to **${arg}** (applies from the next message).`);
       logger.info(`Effort set to ${arg} for ${msg.sessionKey}`);
       return true;
     }

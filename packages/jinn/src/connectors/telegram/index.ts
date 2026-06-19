@@ -75,6 +75,7 @@ export class TelegramConnector implements Connector {
           { command: "reset", description: "รีเซ็ต session + ล้างเป้าหมาย" },
           { command: "compact", description: "บีบอัดบทสนทนา ลด context" },
           { command: "goal", description: "ตั้ง/ดู/ล้างเป้าหมาย" },
+          { command: "effort", description: "ตั้งระดับ effort (reasoning)" },
           { command: "status", description: "ดูสถานะ session" },
         ]);
       } catch (err) {

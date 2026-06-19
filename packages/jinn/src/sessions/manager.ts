@@ -778,6 +778,44 @@ export class SessionManager {
       return false;
     }
 
+    // /effort — set the reasoning-effort level for this session. Valid levels
+    // depend on the engine+model; applies from the next message.
+    if (text === "/effort" || text.startsWith("/effort ")) {
+      const session = getSessionBySessionKey(msg.sessionKey);
+      if (!session) {
+        await connector.replyMessage(target, "No active session for this conversation.");
+        return true;
+      }
+      const valid = effortLevelsForModel(this.config, session.engine, session.model ?? undefined);
+      if (valid.length === 0) {
+        await connector.replyMessage(
+          target,
+          `โมเดลปัจจุบัน (${session.model ?? session.engine}) ไม่รองรับการตั้ง effort ค่ะ`,
+        );
+        return true;
+      }
+      const buttons = `[buttons: ${valid.map((l) => `/effort ${l}`).join(" | ")}]`;
+      const arg = text.slice("/effort".length).trim().toLowerCase();
+      if (!arg) {
+        await connector.replyMessage(
+          target,
+          `⚡ effort ปัจจุบัน: **${session.effortLevel ?? "default"}**\nเลือกระดับได้เลยค่ะ:\n${buttons}`,
+        );
+        return true;
+      }
+      if (!valid.includes(arg)) {
+        await connector.replyMessage(
+          target,
+          `"${arg}" ใช้กับโมเดลนี้ไม่ได้ค่ะ — เลือก: ${valid.join(", ")}\n${buttons}`,
+        );
+        return true;
+      }
+      updateSession(session.id, { effortLevel: arg, lastActivity: new Date().toISOString() });
+      await connector.replyMessage(target, `⚡ ตั้ง effort = **${arg}** แล้วค่ะ (มีผลกับข้อความถัดไป)`);
+      logger.info(`Effort set to ${arg} for ${msg.sessionKey}`);
+      return true;
+    }
+
     if (text === "/status" || text.startsWith("/status ")) {
       const session = getSessionBySessionKey(msg.sessionKey);
       if (!session) {

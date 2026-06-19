@@ -63,6 +63,24 @@ const SLASH_COMMANDS: ApplicationCommandDataResolvable[] = [
       { name: "name", description: "ชื่อโมเดล เช่น opus / sonnet", type: 3, required: true },
     ],
   },
+  {
+    name: "effort",
+    description: "ตั้งระดับ effort (reasoning) ของ session — มีผลข้อความถัดไป",
+    options: [
+      {
+        name: "level",
+        description: "ระดับ effort (เว้นว่าง = ดู/เลือกจากปุ่ม)",
+        type: 3, // STRING
+        required: false,
+        choices: [
+          { name: "low", value: "low" },
+          { name: "medium", value: "medium" },
+          { name: "high", value: "high" },
+          { name: "xhigh", value: "xhigh" },
+        ],
+      },
+    ],
+  },
 ];
 
 export interface DiscordSttConfig {
@@ -398,6 +416,7 @@ export class DiscordConnector implements Connector {
     const arg =
       interaction.options.getString("text") ??
       interaction.options.getString("name") ??
+      interaction.options.getString("level") ??
       interaction.options.getString("args") ??
       "";
     const text = arg ? `/${name} ${arg}` : `/${name}`;

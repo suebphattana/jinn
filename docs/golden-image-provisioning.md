@@ -104,3 +104,39 @@ Done by the operator after a droplet is up, via the web UI / config:
 - Engine subscription login (ChatGPT / Claude) — Settings → Engine Configuration.
 - Discord bots must be invited with the **`applications.commands`** scope for the
   slash-command picker to appear.
+
+## 7. Non-root model & installing software
+
+Jinn runs Claude Code with `--dangerously-skip-permissions`, which **refuses to
+run as root**. So the gateway runs as a **non-root user** and cannot read
+root-owned files. This is intentional containment: a bug / prompt-injection can
+only affect the bot's own user, never the OS or other tenants.
+
+**Implication for provisioning:** do all root-level setup ONCE in the image, so
+the bot needs no root at runtime. Make everything the bot touches user-owned:
+
+- Create the non-root service user; `chown -R <user>` the repo (`/home/<user>/repos/jinn`)
+  and `$JINN_HOME` so the bot can self-modify, rebuild, and write config.
+- Bake commonly-needed **system** deps into the image (`ffmpeg`, `build-essential`,
+  `git`, `curl`, Node 24, `pnpm`, optionally `cmake`/`python3-yaml`) — anything
+  that needs `apt`.
+- The gateway port (7777) is >1024, so no privileged-port root needed; nginx (the
+  only root-owned piece) is provisioned once.
+
+**Installing software at runtime — the bot does NOT need root for most of it:**
+- npm/pnpm global with a user prefix (`pnpm i -g <pkg> --prefix ~/.local`),
+  `pip --user`, `cargo install`, `go install`, version managers (nvm/pyenv/rustup),
+  building from source into a user dir, or dropping a prebuilt binary in
+  `~/.local/bin` / `$JINN_HOME/bin`. (claude, codex, whisper-cli are installed this
+  way.) Put `~/.local/bin` on the service `PATH` (or reference absolute paths in
+  config, e.g. `engines.<engine>.bin`).
+- Only genuine **system-level** installs (apt packages, system services) need root.
+  Prefer baking them into the image (above). If a specific one is needed routinely,
+  add a **narrow sudoers allowlist** for that exact command — never broad `sudo`.
+
+**Sudo policy:** keep it minimal. The reference box grants only
+`systemctl restart|status|is-active|daemon-reload jinn-pipe.service`. The bot can
+even self-restart with **no sudo** via `POST /api/restart` (it exits; `Restart=always`
+brings it back) — so customer images can ship with an empty sudoers if desired.
+For maximum isolation, run the whole gateway inside a container (the bot can then
+install anything inside it without touching the host).

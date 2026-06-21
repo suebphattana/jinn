@@ -804,7 +804,21 @@ export async function startGateway(
   // that turn into the messages DB from the transcript tail so chat mode sees it.
   hookRegistry.setUnclaimedHookHandler((jinnSessionId, payload) => {
     try {
-      syncExternalTurn(jinnSessionId, emit, payload);
+      // Relay any recovered assistant text to the session's connector — without
+      // this, CLI-native / print-mode-recovered turns land in the web UI
+      // transcript but never reach Discord/Telegram (the chat falls behind).
+      const relayToConnector = (texts: string[]): void => {
+        const session = getSession(jinnSessionId);
+        if (!session) return;
+        const connector = connectorMap.get(session.connector ?? session.source ?? "");
+        if (!connector?.replyMessage) return;
+        const target = connector.reconstructTarget(session.replyContext ?? {});
+        if (!target.channel) return;
+        for (const text of texts) {
+          if (text.trim()) void connector.replyMessage(target, text).catch(() => {});
+        }
+      };
+      syncExternalTurn(jinnSessionId, emit, payload, relayToConnector);
     } catch (err) {
       logger.warn(`Unclaimed-Stop sync failed for session ${jinnSessionId}: ${err instanceof Error ? err.message : err}`);
     }

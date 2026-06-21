@@ -234,6 +234,11 @@ export function syncExternalTurn(
   sessionId: string,
   emit: (event: string, payload: unknown) => void,
   payload?: HookPayload,
+  // Relay assistant text that the live connector reply path (manager.run) never
+  // sent — newly-synced CLI-native turns and the suffix of a truncated row that
+  // got upgraded. Without this, recovered/print-mode messages reach the web UI
+  // transcript but never the Discord/Telegram connector ("web UI ahead of chat").
+  onRelay?: (texts: string[]) => void,
 ): number {
   const session = getSession(sessionId);
   if (!session) {
@@ -269,6 +274,7 @@ export function syncExternalTurn(
     insertMessage(sessionId, "assistant", hookText);
     setAnchor(sessionId, new Date().toISOString());
     emit("session:external-turn", { sessionId });
+    onRelay?.([hookText]);
     logger.info(
       `External turn persisted for session ${sessionId} from hook payload (transcript unreadable: ${transcriptPath ?? "not found"})`,
     );
@@ -293,10 +299,17 @@ export function syncExternalTurn(
   if (matchedPersistedTurn) {
     // run() already stored this turn — overwrite any truncated row with the
     // complete transcript text, write no new rows.
+    const upgradedSuffixes: string[] = [];
     const txn = db.transaction(() => {
       entries.forEach((e, i) => {
         const persisted = matchedPersistedTurn[i];
         if (persisted.role === e.role && e.content.length > persisted.content.length) {
+          // The connector already sent the truncated `persisted.content`; relay
+          // only the missing suffix so chat catches up without re-sending.
+          if (e.role === "assistant") {
+            const suffix = e.content.slice(persisted.content.length).trim();
+            if (suffix) upgradedSuffixes.push(suffix);
+          }
           updateMessageContent(persisted.id, e.content);
         }
       });
@@ -305,6 +318,7 @@ export function syncExternalTurn(
     const newAnchor = entries[entries.length - 1].timestampIso;
     setAnchor(sessionId, newAnchor);
     emit("session:external-turn", { sessionId });
+    if (upgradedSuffixes.length) onRelay?.(upgradedSuffixes);
     logger.info(
       `Reconciled ${entries.length} already-persisted turn message(s) in place for session ${sessionId} (anchor → ${newAnchor}, no duplicates inserted)`,
     );
@@ -323,6 +337,9 @@ export function syncExternalTurn(
   const newAnchor = entries[entries.length - 1].timestampIso;
   setAnchor(sessionId, newAnchor);
   emit("session:external-turn", { sessionId });
+  // run() never saw these — relay the assistant turns to the connector.
+  const relay = entries.filter((e) => e.role === "assistant" && e.content.trim()).map((e) => e.content);
+  if (relay.length) onRelay?.(relay);
   logger.info(
     `Synced ${entries.length} external (CLI-native) message(s) for session ${sessionId} (anchor → ${newAnchor})`,
   );

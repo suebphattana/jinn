@@ -145,6 +145,17 @@ describe("syncExternalTurn", () => {
     expect(events).toEqual([{ event: "session:external-turn", payload: { sessionId: id } }]);
   });
 
+  it("relays newly-synced assistant text to the connector via onRelay (web UI ↔ chat parity)", () => {
+    const id = makeSession();
+    const file = writeTranscript([
+      { type: "user", text: "cli prompt", ts: iso(10_000) },
+      { type: "assistant", text: "recovered answer", ts: iso(5_000) },
+    ]);
+    const relayed: string[] = [];
+    ext.syncExternalTurn(id, emit, { hook_event_name: "Stop", transcript_path: file }, (texts) => relayed.push(...texts));
+    expect(relayed).toEqual(["recovered answer"]); // user prompt is not relayed
+  });
+
   it("is idempotent — a repeated Stop for the same turn inserts nothing (anchor dedup)", () => {
     const id = makeSession();
     const file = writeTranscript([

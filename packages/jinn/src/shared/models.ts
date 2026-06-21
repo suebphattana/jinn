@@ -59,6 +59,7 @@ export const OPENROUTER_MODELS: ModelInfo[] = [
   { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash", supportsEffort: false, effortLevels: [], contextWindow: 163840 },
   { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", supportsEffort: false, effortLevels: [], contextWindow: 200000 },
   { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash", supportsEffort: false, effortLevels: [], contextWindow: 1000000 },
+  { id: "z-ai/glm-5.2", label: "GLM 5.2", supportsEffort: false, effortLevels: [], contextWindow: 1048576 },
 ];
 
 export const CODEX_DEFAULT_MODEL = "gpt-5.5";

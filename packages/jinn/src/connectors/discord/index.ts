@@ -1,5 +1,6 @@
 import {
   Client,
+  Status,
   GatewayIntentBits,
   Partials,
   ActionRowBuilder,
@@ -109,6 +110,11 @@ export interface DiscordConnectorConfig {
   stt?: DiscordSttConfig;
 }
 
+/** How often the watchdog checks the gateway connection. */
+const WATCHDOG_INTERVAL_MS = 60_000;
+/** If the WebSocket stays not-ready longer than this, force a reconnect. */
+const RECOVER_AFTER_MS = 120_000;
+
 export class DiscordConnector implements Connector {
   name: string;
   instanceId: string;
@@ -122,6 +128,11 @@ export class DiscordConnector implements Connector {
   private typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
   private buttons = new ButtonRegistry();
   private sttChain: Promise<unknown> = Promise.resolve();
+  // Connection watchdog — recovers a silently-wedged gateway link (the bot goes
+  // deaf with no error event, /api/status still "running"). See start()/recover().
+  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private notReadySince: number | null = null;
+  private recovering = false;
 
   constructor(config: DiscordConnectorConfig) {
     this.name = config.id || "discord";
@@ -166,8 +177,35 @@ export class DiscordConnector implements Connector {
     this.client.on("ready", () => {
       logger.info(`Discord connector ready as ${this.client.user?.tag}`);
       this.status = "running";
+      this.lastError = null;
+      this.notReadySince = null;
       // Register native slash commands so they appear in Discord's "/" picker.
       void this.registerSlashCommands();
+    });
+
+    // --- Connection lifecycle: observe shard health and recover from drops. ---
+    // discord.js auto-reconnects most drops, but a shard can stay down (exhausted
+    // retries) or the session can be `invalidated` (it gives up entirely). Without
+    // handling these the bot goes silently deaf while /api/status still says
+    // "running" — the exact "ไม่ขึ้นอะไรเลย" wedge. Log them and let the watchdog
+    // force a reconnect if the link stays down.
+    this.client.on("shardDisconnect", (event, shardId) => {
+      logger.warn(`Discord shard ${shardId} disconnected (code ${event?.code ?? "?"})`);
+    });
+    this.client.on("shardReconnecting", (shardId) => {
+      logger.info(`Discord shard ${shardId} reconnecting…`);
+    });
+    this.client.on("shardResume", (shardId) => {
+      logger.info(`Discord shard ${shardId} resumed`);
+      this.status = "running";
+      this.notReadySince = null;
+    });
+    this.client.on("shardError", (err, shardId) => {
+      logger.warn(`Discord shard ${shardId} error: ${err.message}`);
+    });
+    this.client.on("invalidated", () => {
+      logger.error("Discord session invalidated — forcing reconnect");
+      void this.recover("session invalidated");
     });
 
     this.client.on("messageCreate", async (message) => {
@@ -197,16 +235,67 @@ export class DiscordConnector implements Connector {
     });
 
     await this.client.login(this.config.botToken);
+    this.startWatchdog();
   }
 
   async stop(): Promise<void> {
     this.status = "stopped";
+    if (this.watchdog) {
+      clearInterval(this.watchdog);
+      this.watchdog = null;
+    }
     for (const interval of this.typingIntervals.values()) {
       clearInterval(interval);
     }
     this.typingIntervals.clear();
     await this.client.destroy();
     logger.info("Discord connector stopped");
+  }
+
+  /** Periodically verify the gateway link is live. A drop discord.js can't
+   *  auto-recover (exhausted retries / invalidated / silent zombie) otherwise
+   *  leaves the bot deaf with no event. If the WebSocket stays not-ready past
+   *  RECOVER_AFTER_MS, force a destroy+relogin. */
+  private startWatchdog(): void {
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = setInterval(() => {
+      if (this.status === "stopped" || this.recovering) return;
+      if (this.client.ws.status === Status.Ready) {
+        this.notReadySince = null;
+        return;
+      }
+      const now = Date.now();
+      if (this.notReadySince == null) {
+        this.notReadySince = now;
+        logger.warn(`Discord link not ready (ws status=${this.client.ws.status}); watching`);
+        return;
+      }
+      if (now - this.notReadySince >= RECOVER_AFTER_MS) {
+        void this.recover(`ws not ready for ${Math.round((now - this.notReadySince) / 1000)}s`);
+      }
+    }, WATCHDOG_INTERVAL_MS);
+    // Don't keep the process alive solely for the watchdog.
+    this.watchdog.unref?.();
+  }
+
+  /** Force a clean reconnect (destroy + re-login). Idempotent while in flight. */
+  private async recover(reason: string): Promise<void> {
+    if (this.recovering || this.status === "stopped") return;
+    this.recovering = true;
+    logger.warn(`Discord connector recovering: ${reason}`);
+    try {
+      try { await this.client.destroy(); } catch { /* already down */ }
+      await this.client.login(this.config.botToken);
+      logger.info("Discord connector reconnected");
+      this.lastError = null;
+      this.notReadySince = null;
+    } catch (err) {
+      this.status = "error";
+      this.lastError = `recovery failed: ${err instanceof Error ? err.message : err}`;
+      logger.error(`Discord connector recovery failed: ${this.lastError}`);
+    } finally {
+      this.recovering = false;
+    }
   }
 
   getCapabilities(): ConnectorCapabilities {
@@ -220,11 +309,30 @@ export class DiscordConnector implements Connector {
   }
 
   getHealth(): ConnectorHealth {
-    return {
-      status: this.status === "running" ? "running" : this.status === "error" ? "error" : "stopped",
-      detail: this.lastError ?? undefined,
-      capabilities: this.getCapabilities(),
-    };
+    // Report the LIVE WebSocket state, not a sticky field — a silently-dropped
+    // gateway link must surface as "error" so health checks/watchdog can see it
+    // (previously this stayed "running" while the bot was deaf).
+    let status: ConnectorHealth["status"];
+    let detail = this.lastError ?? undefined;
+    const notReadyMs = this.notReadySince == null ? 0 : Date.now() - this.notReadySince;
+    if (this.status === "stopped") {
+      status = "stopped";
+    } else if (this.status === "error") {
+      status = "error";
+    } else if (this.client.ws.status === Status.Ready) {
+      status = "running";
+    } else if (this.recovering) {
+      status = "error";
+      detail = detail ?? "reconnecting";
+    } else if (notReadyMs >= WATCHDOG_INTERVAL_MS) {
+      // Sustained not-ready (the watchdog has been tracking it) — real wedge.
+      status = "error";
+      detail = detail ?? `gateway not ready for ${Math.round(notReadyMs / 1000)}s (ws status=${this.client.ws.status})`;
+    } else {
+      // Boot handshake or a brief reconnect blip — optimistic, not yet a wedge.
+      status = "running";
+    }
+    return { status, detail, capabilities: this.getCapabilities() };
   }
 
   reconstructTarget(replyContext: Record<string, unknown> | null | undefined): Target {
